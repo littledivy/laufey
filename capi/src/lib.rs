@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::sync::Notify;
 
@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/wef/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const WEF_API_VERSION: u32 = 22;
+pub const WEF_API_VERSION: u32 = 24;
 
 pub const WEF_WINDOW_HANDLE_UNKNOWN: i32 = 0;
 pub const WEF_WINDOW_HANDLE_APPKIT: i32 = 1;
@@ -68,6 +68,9 @@ static TRAY_CLICK_HANDLERS: OnceLock<
 > = OnceLock::new();
 static TRAY_DBLCLICK_HANDLERS: OnceLock<
   Mutex<HashMap<u32, Box<dyn Fn() + Send + Sync>>>,
+> = OnceLock::new();
+static NOTIFICATION_HANDLERS: OnceLock<
+  Mutex<HashMap<u32, Arc<dyn Fn(NotificationEvent) + Send + Sync>>>,
 > = OnceLock::new();
 
 enum BindingHandler {
@@ -1644,6 +1647,362 @@ pub fn prompt(
   } else {
     None
   }
+}
+
+// --- Notifications ---
+
+pub const WEF_NOTIFICATION_SHOWN: i32 = 0;
+pub const WEF_NOTIFICATION_CLICKED: i32 = 1;
+pub const WEF_NOTIFICATION_CLOSED: i32 = 2;
+pub const WEF_NOTIFICATION_ACTION: i32 = 3;
+
+/// What happened to a notification.
+#[derive(Debug, Clone)]
+pub enum NotificationEvent {
+  /// The OS displayed the banner.
+  Shown,
+  /// The user clicked the notification body.
+  Clicked,
+  /// The user dismissed the notification or it expired.
+  Closed,
+  /// The user clicked an action button. The string is the action `id`.
+  Action(String),
+}
+
+/// An action button on a notification.
+#[derive(Clone, Debug)]
+pub struct NotificationAction {
+  pub id: String,
+  pub title: String,
+}
+
+/// Builder for a system notification. Mirrors a subset of the Web
+/// Notifications API constructor options. Construct with
+/// [`Notification::new`] / [`Notification::builder`], chain options, then
+/// [`Notification::show`].
+#[derive(Clone, Debug, Default)]
+pub struct Notification {
+  title: String,
+  body: Option<String>,
+  icon: Option<Vec<u8>>,
+  tag: Option<String>,
+  silent: Option<bool>,
+  require_interaction: Option<bool>,
+  actions: Vec<NotificationAction>,
+}
+
+/// Handle to a shown notification. Use [`NotificationHandle::close`] to
+/// dismiss it programmatically. Dropping the handle does NOT close the
+/// notification — they're fire-and-forget on the OS side.
+#[derive(Debug, Clone, Copy)]
+pub struct NotificationHandle {
+  id: u32,
+}
+
+impl NotificationHandle {
+  pub fn id(&self) -> u32 {
+    self.id
+  }
+
+  pub fn close(&self) {
+    if self.id == 0 {
+      return;
+    }
+    let api = api();
+    if let Some(f) = api.close_notification {
+      unsafe { f(api.backend_data, self.id) };
+    }
+    if let Some(m) = NOTIFICATION_HANDLERS.get() {
+      m.lock().unwrap().remove(&self.id);
+    }
+  }
+}
+
+impl Notification {
+  /// Create a new notification with the given title (required field).
+  pub fn new(title: impl Into<String>) -> Self {
+    Self {
+      title: title.into(),
+      ..Default::default()
+    }
+  }
+
+  /// Alias for [`Notification::new`].
+  pub fn builder(title: impl Into<String>) -> Self {
+    Self::new(title)
+  }
+
+  pub fn body(mut self, body: impl Into<String>) -> Self {
+    self.body = Some(body.into());
+    self
+  }
+
+  /// Set the notification icon (PNG bytes).
+  pub fn icon(mut self, png_bytes: impl Into<Vec<u8>>) -> Self {
+    self.icon = Some(png_bytes.into());
+    self
+  }
+
+  /// Replace any existing notification with the same tag instead of
+  /// stacking a new one (Web Notifications spec semantics).
+  pub fn tag(mut self, tag: impl Into<String>) -> Self {
+    self.tag = Some(tag.into());
+    self
+  }
+
+  /// Suppress the system notification sound.
+  pub fn silent(mut self, silent: bool) -> Self {
+    self.silent = Some(silent);
+    self
+  }
+
+  /// Keep the notification visible until the user dismisses it (instead
+  /// of auto-expiring). Honored where the platform supports it.
+  pub fn require_interaction(mut self, require: bool) -> Self {
+    self.require_interaction = Some(require);
+    self
+  }
+
+  /// Add an action button. Multiple calls add multiple buttons.
+  /// Ignored on platforms that don't surface action buttons.
+  pub fn action(
+    mut self,
+    id: impl Into<String>,
+    title: impl Into<String>,
+  ) -> Self {
+    self.actions.push(NotificationAction {
+      id: id.into(),
+      title: title.into(),
+    });
+    self
+  }
+
+  fn to_value(&self) -> Value {
+    let mut dict = HashMap::new();
+    dict.insert("title".to_string(), Value::String(self.title.clone()));
+    if let Some(body) = &self.body {
+      dict.insert("body".to_string(), Value::String(body.clone()));
+    }
+    if let Some(icon) = &self.icon {
+      dict.insert("icon".to_string(), Value::Binary(icon.clone()));
+    }
+    if let Some(tag) = &self.tag {
+      dict.insert("tag".to_string(), Value::String(tag.clone()));
+    }
+    if let Some(silent) = self.silent {
+      dict.insert("silent".to_string(), Value::Bool(silent));
+    }
+    if let Some(require) = self.require_interaction {
+      dict.insert("require_interaction".to_string(), Value::Bool(require));
+    }
+    if !self.actions.is_empty() {
+      let actions = self
+        .actions
+        .iter()
+        .map(|a| {
+          let mut d = HashMap::new();
+          d.insert("id".to_string(), Value::String(a.id.clone()));
+          d.insert("title".to_string(), Value::String(a.title.clone()));
+          Value::Dict(d)
+        })
+        .collect();
+      dict.insert("actions".to_string(), Value::List(actions));
+    }
+    Value::Dict(dict)
+  }
+
+  /// Show the notification. Returns a handle that can be used to close
+  /// it programmatically. Returns a handle with id 0 if the backend
+  /// doesn't support notifications.
+  pub fn show(self) -> NotificationHandle {
+    self.show_with_handler::<fn(NotificationEvent)>(None)
+  }
+
+  /// Show the notification and register a callback for events
+  /// (shown / clicked / closed / action).
+  pub fn on_event<F>(self, handler: F) -> NotificationHandle
+  where
+    F: Fn(NotificationEvent) + Send + Sync + 'static,
+  {
+    self.show_with_handler(Some(handler))
+  }
+
+  fn show_with_handler<F>(self, handler: Option<F>) -> NotificationHandle
+  where
+    F: Fn(NotificationEvent) + Send + Sync + 'static,
+  {
+    let api = api();
+    let Some(show_fn) = api.show_notification else {
+      return NotificationHandle { id: 0 };
+    };
+    let raw = self.to_value().to_raw();
+    let (cb, user_data): (
+      Option<unsafe extern "C" fn(*mut c_void, u32, c_int, *const c_char)>,
+      *mut c_void,
+    ) = if handler.is_some() {
+      (Some(notification_event_callback), std::ptr::null_mut())
+    } else {
+      (None, std::ptr::null_mut())
+    };
+    let id = unsafe { show_fn(api.backend_data, raw, cb, user_data) };
+    if id != 0 {
+      if let Some(h) = handler {
+        notification_handlers()
+          .lock()
+          .unwrap()
+          .insert(id, Arc::new(h));
+      }
+    }
+    NotificationHandle { id }
+  }
+}
+
+fn notification_handlers() -> &'static Mutex<
+  HashMap<u32, Arc<dyn Fn(NotificationEvent) + Send + Sync>>,
+> {
+  NOTIFICATION_HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+unsafe extern "C" fn notification_event_callback(
+  _user_data: *mut c_void,
+  notification_id: u32,
+  reason: c_int,
+  action_id_or_null: *const c_char,
+) {
+  let event = match reason {
+    WEF_NOTIFICATION_SHOWN => NotificationEvent::Shown,
+    WEF_NOTIFICATION_CLICKED => NotificationEvent::Clicked,
+    WEF_NOTIFICATION_CLOSED => NotificationEvent::Closed,
+    WEF_NOTIFICATION_ACTION => {
+      let id = if action_id_or_null.is_null() {
+        String::new()
+      } else {
+        CStr::from_ptr(action_id_or_null)
+          .to_string_lossy()
+          .into_owned()
+      };
+      NotificationEvent::Action(id)
+    }
+    _ => return,
+  };
+  let is_terminal = matches!(event, NotificationEvent::Closed);
+  // Clone the Arc out of the map so the handler runs without the lock
+  // held — handlers may legitimately call back into the wef API.
+  let handler = notification_handlers()
+    .lock()
+    .unwrap()
+    .get(&notification_id)
+    .cloned();
+  if let Some(h) = handler {
+    h(event);
+  }
+  if is_terminal {
+    notification_handlers().lock().unwrap().remove(&notification_id);
+  }
+}
+
+// --- Permissions / runtime authorization ---
+
+pub const WEF_PERMISSION_INVALID: i32 = 0;
+pub const WEF_PERMISSION_NOTIFICATIONS: i32 = 1;
+
+pub const WEF_PERMISSION_STATUS_GRANTED: i32 = 0;
+pub const WEF_PERMISSION_STATUS_DENIED: i32 = 1;
+pub const WEF_PERMISSION_STATUS_PROMPT: i32 = 2;
+pub const WEF_PERMISSION_STATUS_UNSUPPORTED: i32 = 3;
+
+/// Capability for which authorization can be requested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum PermissionKind {
+  Notifications = WEF_PERMISSION_NOTIFICATIONS,
+}
+
+/// Result of [`request_permission`] / [`query_permission`]. Mirrors the
+/// Web Permissions API state set with an extra `Unsupported` variant for
+/// environments where the capability cannot be authorized at all (e.g.
+/// an unbundled macOS process, or a backend that has no concept of the
+/// kind on this platform).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum PermissionStatus {
+  Granted = WEF_PERMISSION_STATUS_GRANTED,
+  Denied = WEF_PERMISSION_STATUS_DENIED,
+  Prompt = WEF_PERMISSION_STATUS_PROMPT,
+  Unsupported = WEF_PERMISSION_STATUS_UNSUPPORTED,
+}
+
+impl PermissionStatus {
+  fn from_raw(v: c_int) -> Self {
+    match v {
+      WEF_PERMISSION_STATUS_GRANTED => Self::Granted,
+      WEF_PERMISSION_STATUS_DENIED => Self::Denied,
+      WEF_PERMISSION_STATUS_PROMPT => Self::Prompt,
+      _ => Self::Unsupported,
+    }
+  }
+}
+
+unsafe extern "C" fn permission_trampoline(
+  user_data: *mut c_void,
+  status: c_int,
+) {
+  let cb =
+    Box::from_raw(user_data as *mut Box<dyn FnOnce(PermissionStatus) + Send>);
+  cb(PermissionStatus::from_raw(status));
+}
+
+fn dispatch_permission<F>(
+  f: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      c_int,
+      Option<unsafe extern "C" fn(*mut c_void, c_int)>,
+      *mut c_void,
+    ),
+  >,
+  kind: PermissionKind,
+  callback: F,
+) where
+  F: FnOnce(PermissionStatus) + Send + 'static,
+{
+  let api = api();
+  let Some(f) = f else {
+    callback(PermissionStatus::Unsupported);
+    return;
+  };
+  let boxed: Box<Box<dyn FnOnce(PermissionStatus) + Send>> =
+    Box::new(Box::new(callback));
+  let user_data = Box::into_raw(boxed) as *mut c_void;
+  unsafe {
+    f(
+      api.backend_data,
+      kind as c_int,
+      Some(permission_trampoline),
+      user_data,
+    )
+  };
+}
+
+/// Query the current authorization status of `kind` without prompting
+/// the user. The callback runs on the UI thread.
+pub fn query_permission<F>(kind: PermissionKind, callback: F)
+where
+  F: FnOnce(PermissionStatus) + Send + 'static,
+{
+  dispatch_permission(api().query_permission, kind, callback);
+}
+
+/// Request authorization for `kind`. If the current status is
+/// [`PermissionStatus::Prompt`] the OS displays a system prompt;
+/// otherwise the cached decision is returned without re-prompting (the
+/// OS does not show a second prompt once the user has decided). The
+/// callback runs on the UI thread.
+pub fn request_permission<F>(kind: PermissionKind, callback: F)
+where
+  F: FnOnce(PermissionStatus) + Send + 'static,
+{
+  dispatch_permission(api().request_permission, kind, callback);
 }
 
 pub const WEF_KEY_PRESSED: i32 = 0;

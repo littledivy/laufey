@@ -12,6 +12,55 @@ extern NSMenu* g_wv_dock_menu;
 extern wef_dock_reopen_fn g_wv_dock_reopen_fn;
 extern void* g_wv_dock_reopen_data;
 
+// Cmd+C/V/X/A on macOS dispatch through the main menu's performKeyEquivalent:
+// — Cocoa matches the keystroke against menu items, then sends their action
+// (cut:/copy:/paste:/selectAll:) up the responder chain to the WKWebView,
+// which forwards it to the page. Without these items in the main menu, the
+// standard editing shortcuts have nowhere to land.
+NSMenu* BuildDefaultEditSubmenu() {
+  NSMenu* edit = [[NSMenu alloc] initWithTitle:@"Edit"];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                           action:@selector(undo:)
+                                    keyEquivalent:@"z"]];
+  NSMenuItem* redo = [[NSMenuItem alloc] initWithTitle:@"Redo"
+                                                action:@selector(redo:)
+                                         keyEquivalent:@"Z"];
+  [redo setKeyEquivalentModifierMask:(NSEventModifierFlagCommand |
+                                      NSEventModifierFlagShift)];
+  [edit addItem:redo];
+  [edit addItem:[NSMenuItem separatorItem]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Cut"
+                                           action:@selector(cut:)
+                                    keyEquivalent:@"x"]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Copy"
+                                           action:@selector(copy:)
+                                    keyEquivalent:@"c"]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Paste"
+                                           action:@selector(paste:)
+                                    keyEquivalent:@"v"]];
+  [edit addItem:[NSMenuItem separatorItem]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Select All"
+                                           action:@selector(selectAll:)
+                                    keyEquivalent:@"a"]];
+  return edit;
+}
+
+static bool MenuTreeHasCopyAction(NSMenu* menu) {
+  for (NSMenuItem* item in [menu itemArray]) {
+    if ([item action] == @selector(copy:)) return true;
+    if ([item submenu] && MenuTreeHasCopyAction([item submenu])) return true;
+  }
+  return false;
+}
+
+// Force an Edit submenu into the menubar if the embedder didn't include one.
+void EnsureEditMenu(NSMenu* menubar) {
+  if (MenuTreeHasCopyAction(menubar)) return;
+  NSMenuItem* editItem = [[NSMenuItem alloc] init];
+  [editItem setSubmenu:BuildDefaultEditSubmenu()];
+  [menubar addItem:editItem];
+}
+
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, assign) WefBackend* backend;
 @property(nonatomic, copy) NSString* runtimePath;
@@ -187,7 +236,6 @@ int main(int argc, char* argv[]) {
     NSMenu* menubar = [[NSMenu alloc] init];
     NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
     [menubar addItem:appMenuItem];
-    [NSApp setMainMenu:menubar];
 
     NSMenu* appMenu = [[NSMenu alloc] init];
     NSMenuItem* quitItem =
@@ -196,6 +244,9 @@ int main(int argc, char* argv[]) {
                             keyEquivalent:@"q"];
     [appMenu addItem:quitItem];
     [appMenuItem setSubmenu:appMenu];
+
+    EnsureEditMenu(menubar);
+    [NSApp setMainMenu:menubar];
 
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];

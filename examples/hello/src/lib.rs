@@ -9,45 +9,8 @@ fn hello_main() {
       println!("dock reopen fired; has_visible_windows = {}", has_visible);
     });
 
-    // Demo tray icon — lives for the whole runtime. Keeping it in a
-    // top-level `let` (rather than letting it Drop) is important: Drop
-    // removes the native icon.
-    let _tray = TrayIcon::new()
-      .icon(TRAY_PNG)
-      .tooltip("WEF demo")
-      .menu(
-        &[
-          MenuItem::Item {
-            label: "Say hello".into(),
-            id: Some("tray-hello".into()),
-            accelerator: None,
-            enabled: true,
-          },
-          MenuItem::Separator,
-          MenuItem::Item {
-            label: "Quit".into(),
-            id: Some("tray-quit".into()),
-            accelerator: None,
-            enabled: true,
-          },
-        ],
-        |id| {
-          println!("tray menu clicked: {}", id);
-          if id == "tray-quit" {
-            just_wef::quit();
-          }
-        },
-      )
-      .on_click(|| {
-        println!("tray left-clicked");
-      })
-      .on_double_click(|| {
-        println!("tray double-clicked");
-      });
-    // A dark-mode variant (the same PNG for demo — a real app would ship
-    // an inverted icon). When the system switches appearance, the tray
-    // swaps automatically.
-    _tray.set_icon_dark(TRAY_PNG);
+    // BADGE-DIAGNOSIS: tray temporarily disabled.
+    // let _tray = ...;
 
     let _win = Window::new(800, 600)
       .title("WEF - Bindings Demo")

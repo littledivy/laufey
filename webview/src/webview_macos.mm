@@ -1,6 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
 #import <WebKit/WebKit.h>
 
 #include "runtime_loader.h"
@@ -13,6 +14,12 @@
 @class WefScriptMessageHandler;
 @class WefWindowDelegate;
 @class WefUIDelegate;
+
+// Defined in main_mac.mm — appends a default Edit submenu (Cut/Copy/Paste/
+// Select All/Undo/Redo) to the given menubar if no submenu in the tree
+// already exposes -copy:. Cmd+C/V on macOS dispatch via the main menu, so
+// this has to be present for them to work at all.
+extern void EnsureEditMenu(NSMenu* menubar);
 
 // Per-window state
 struct MacWindowState {
@@ -102,6 +109,17 @@ class WKWebViewBackend : public WefBackend {
                                  void* user_data) override;
   void SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                        size_t len) override;
+
+  uint32_t ShowNotification(wef_value_t* options,
+                            const wef_backend_api_t* api,
+                            wef_notification_event_fn on_event,
+                            void* user_data) override;
+  void CloseNotification(uint32_t notification_id) override;
+
+  void QueryPermission(int kind, wef_permission_callback_fn cb,
+                       void* user_data) override;
+  void RequestPermission(int kind, wef_permission_callback_fn cb,
+                         void* user_data) override;
 
   void HandleJsMessage(uint32_t window_id, uint64_t call_id,
                        const std::string& method, wef::ValuePtr args);
@@ -1689,6 +1707,7 @@ void WKWebViewBackend::SetApplicationMenu(uint32_t window_id,
         BuildMenuFromValue(menu_template, api, [WefMenuTarget shared],
                            @selector(menuItemClicked:));
     if (menubar) {
+      EnsureEditMenu(menubar);
       // Store the menu for this window
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
@@ -2192,6 +2211,373 @@ void WKWebViewBackend::SetTrayClickHandler(uint32_t tray_id,
     it->second.click_fn = handler;
     it->second.click_data = user_data;
   });
+}
+
+// --- Notifications (macOS WebView) ---
+//
+// Same approach as the CEF macOS backend: NSUserNotification (deprecated
+// in macOS 11 but functional in 15; chosen over UNUserNotificationCenter
+// to avoid the framework's bundle-id / entitlement / runtime-auth dance).
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+namespace {
+
+struct WvMacNotifEntry {
+  NSUserNotification* notif;
+  NSString* tag;
+  wef_notification_event_fn on_event;
+  void* user_data;
+  std::vector<std::string> action_ids;
+};
+
+std::map<uint32_t, WvMacNotifEntry>& WvMacNotifMap() {
+  static std::map<uint32_t, WvMacNotifEntry> map;
+  return map;
+}
+std::map<void*, uint32_t>& WvNSNotifToId() {
+  static std::map<void*, uint32_t> map;
+  return map;
+}
+std::atomic<uint32_t> g_wv_next_notif_id{1};
+
+}  // namespace
+
+@interface WefWvNotifDelegate : NSObject <NSUserNotificationCenterDelegate>
++ (instancetype)shared;
+@end
+
+@implementation WefWvNotifDelegate
++ (instancetype)shared {
+  static WefWvNotifDelegate* instance = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    instance = [[WefWvNotifDelegate alloc] init];
+  });
+  return instance;
+}
+- (BOOL)userNotificationCenter:(NSUserNotificationCenter*)center
+     shouldPresentNotification:(NSUserNotification*)notification {
+  (void)center;
+  (void)notification;
+  return YES;
+}
+- (void)userNotificationCenter:(NSUserNotificationCenter*)center
+        didDeliverNotification:(NSUserNotification*)notification {
+  (void)center;
+  auto& m = WvNSNotifToId();
+  auto it = m.find((__bridge void*)notification);
+  if (it == m.end())
+    return;
+  uint32_t nid = it->second;
+  auto& nm = WvMacNotifMap();
+  auto nit = nm.find(nid);
+  if (nit != nm.end() && nit->second.on_event) {
+    nit->second.on_event(nit->second.user_data, nid, WEF_NOTIFICATION_SHOWN,
+                         nullptr);
+  }
+}
+- (void)userNotificationCenter:(NSUserNotificationCenter*)center
+       didActivateNotification:(NSUserNotification*)notification {
+  (void)center;
+  auto& m = WvNSNotifToId();
+  auto it = m.find((__bridge void*)notification);
+  if (it == m.end())
+    return;
+  uint32_t nid = it->second;
+  auto& nm = WvMacNotifMap();
+  auto nit = nm.find(nid);
+  if (nit == nm.end() || !nit->second.on_event)
+    return;
+  switch (notification.activationType) {
+    case NSUserNotificationActivationTypeContentsClicked:
+      nit->second.on_event(nit->second.user_data, nid,
+                           WEF_NOTIFICATION_CLICKED, nullptr);
+      break;
+    case NSUserNotificationActivationTypeActionButtonClicked: {
+      const char* aid = nullptr;
+      std::string aid_storage;
+      if (!nit->second.action_ids.empty()) {
+        aid_storage = nit->second.action_ids[0];
+        aid = aid_storage.c_str();
+      }
+      nit->second.on_event(nit->second.user_data, nid,
+                           WEF_NOTIFICATION_ACTION, aid);
+      break;
+    }
+    case NSUserNotificationActivationTypeAdditionalActionClicked: {
+      NSUserNotificationAction* action =
+          notification.additionalActivationAction;
+      if (action && action.identifier) {
+        std::string aid = [action.identifier UTF8String];
+        nit->second.on_event(nit->second.user_data, nid,
+                             WEF_NOTIFICATION_ACTION, aid.c_str());
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+@end
+
+static void EnsureWvNotifDelegate() {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    [[NSUserNotificationCenter defaultUserNotificationCenter]
+        setDelegate:[WefWvNotifDelegate shared]];
+  });
+}
+
+uint32_t WKWebViewBackend::ShowNotification(
+    wef_value_t* options, const wef_backend_api_t* api,
+    wef_notification_event_fn on_event, void* user_data) {
+  if (!options)
+    return 0;
+  if (!api->value_is_dict(options)) {
+    api->value_free(options);
+    return 0;
+  }
+
+  auto get_string = [&](const char* key) -> std::string {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_string(v))
+      return std::string();
+    size_t len = 0;
+    char* s = api->value_get_string(v, &len);
+    if (!s)
+      return std::string();
+    std::string out(s, len);
+    api->value_free_string(s);
+    return out;
+  };
+  auto get_bool = [&](const char* key, bool dfl) -> bool {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_bool(v))
+      return dfl;
+    return api->value_get_bool(v);
+  };
+
+  std::string title = get_string("title");
+  std::string body = get_string("body");
+  std::string tag = get_string("tag");
+  bool silent = get_bool("silent", false);
+
+  std::vector<std::pair<std::string, std::string>> actions;
+  wef_value_t* actions_val = api->value_dict_get(options, "actions");
+  if (actions_val && api->value_is_list(actions_val)) {
+    size_t n = api->value_list_size(actions_val);
+    for (size_t i = 0; i < n; ++i) {
+      wef_value_t* a = api->value_list_get(actions_val, i);
+      if (!a || !api->value_is_dict(a))
+        continue;
+      auto aid = [&]() -> std::string {
+        wef_value_t* v = api->value_dict_get(a, "id");
+        if (!v || !api->value_is_string(v))
+          return std::string();
+        size_t len = 0;
+        char* s = api->value_get_string(v, &len);
+        if (!s)
+          return std::string();
+        std::string out(s, len);
+        api->value_free_string(s);
+        return out;
+      }();
+      auto atitle = [&]() -> std::string {
+        wef_value_t* v = api->value_dict_get(a, "title");
+        if (!v || !api->value_is_string(v))
+          return std::string();
+        size_t len = 0;
+        char* s = api->value_get_string(v, &len);
+        if (!s)
+          return std::string();
+        std::string out(s, len);
+        api->value_free_string(s);
+        return out;
+      }();
+      if (!aid.empty() && !atitle.empty())
+        actions.emplace_back(aid, atitle);
+    }
+  }
+  api->value_free(options);
+
+  uint32_t nid = g_wv_next_notif_id.fetch_add(1, std::memory_order_relaxed);
+
+  NSString* nsTitle = [NSString stringWithUTF8String:title.c_str()];
+  NSString* nsBody = [NSString stringWithUTF8String:body.c_str()];
+  NSString* nsTag = tag.empty() ? nil : [NSString stringWithUTF8String:tag.c_str()];
+
+  std::vector<std::string> action_ids;
+  std::vector<std::string> action_titles;
+  action_ids.reserve(actions.size());
+  action_titles.reserve(actions.size());
+  for (auto& a : actions) {
+    action_ids.push_back(a.first);
+    action_titles.push_back(a.second);
+  }
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    EnsureWvNotifDelegate();
+    NSUserNotificationCenter* center =
+        [NSUserNotificationCenter defaultUserNotificationCenter];
+    if (nsTag) {
+      NSArray<NSUserNotification*>* delivered = [center deliveredNotifications];
+      for (NSUserNotification* d in delivered) {
+        if (d.identifier && [d.identifier isEqualToString:nsTag])
+          [center removeDeliveredNotification:d];
+      }
+    }
+
+    NSUserNotification* notif = [[NSUserNotification alloc] init];
+    notif.title = nsTitle;
+    notif.informativeText = nsBody;
+    if (nsTag)
+      notif.identifier = nsTag;
+    notif.soundName = silent ? nil : NSUserNotificationDefaultSoundName;
+
+    if (!action_ids.empty()) {
+      notif.hasActionButton = YES;
+      notif.actionButtonTitle =
+          [NSString stringWithUTF8String:action_titles[0].c_str()];
+      if (action_ids.size() > 1) {
+        NSMutableArray<NSUserNotificationAction*>* extras =
+            [NSMutableArray array];
+        for (size_t i = 1; i < action_ids.size(); ++i) {
+          NSUserNotificationAction* act = [NSUserNotificationAction
+              actionWithIdentifier:[NSString stringWithUTF8String:action_ids[i]
+                                                                  .c_str()]
+                             title:[NSString stringWithUTF8String:action_titles[i]
+                                                                  .c_str()]];
+          [extras addObject:act];
+        }
+        notif.additionalActions = extras;
+      }
+    }
+
+    WvMacNotifEntry e = {};
+    e.notif = notif;
+    e.tag = nsTag;
+    e.on_event = on_event;
+    e.user_data = user_data;
+    e.action_ids = action_ids;
+    WvMacNotifMap()[nid] = e;
+    WvNSNotifToId()[(__bridge void*)notif] = nid;
+
+    [center deliverNotification:notif];
+  });
+
+  return nid;
+}
+
+void WKWebViewBackend::CloseNotification(uint32_t notification_id) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    auto& nm = WvMacNotifMap();
+    auto it = nm.find(notification_id);
+    if (it == nm.end())
+      return;
+    NSUserNotification* notif = it->second.notif;
+    wef_notification_event_fn cb = it->second.on_event;
+    void* ud = it->second.user_data;
+    if (notif) {
+      NSUserNotificationCenter* center =
+          [NSUserNotificationCenter defaultUserNotificationCenter];
+      [center removeDeliveredNotification:notif];
+      WvNSNotifToId().erase((__bridge void*)notif);
+    }
+    nm.erase(it);
+    if (cb)
+      cb(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
+  });
+}
+
+#pragma clang diagnostic pop
+
+// --- Permissions (UNUserNotificationCenter) ---
+//
+// Mirrors cef/src/runtime_loader_mac.mm — the process posts notifications
+// via NSUserNotification today, but authorization is owned by
+// UNUserNotificationCenter (the modern API). Asking via UN here is
+// correct regardless of what posts the banner: macOS routes both APIs
+// through the same per-bundle authorization record. The webview backend
+// targets the *process*, not the WKWebView — runtime-initiated
+// notifications are app-scoped, not page-scoped.
+
+static int MapUNStatusWv(UNAuthorizationStatus s) {
+  switch (s) {
+    case UNAuthorizationStatusNotDetermined:
+      return WEF_PERMISSION_STATUS_PROMPT;
+    case UNAuthorizationStatusDenied:
+      return WEF_PERMISSION_STATUS_DENIED;
+    case UNAuthorizationStatusAuthorized:
+    case UNAuthorizationStatusProvisional:
+      return WEF_PERMISSION_STATUS_GRANTED;
+    default:
+      return WEF_PERMISSION_STATUS_UNSUPPORTED;
+  }
+}
+
+static bool WvProcessIsBundled() {
+  NSBundle* mb = [NSBundle mainBundle];
+  if (!mb || ![mb bundleIdentifier])
+    return false;
+  NSString* path = [mb bundlePath];
+  return path && [path hasSuffix:@".app"];
+}
+
+static void FirePermOnMainWv(wef_permission_callback_fn cb, void* ud,
+                             int status) {
+  if (!cb)
+    return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    cb(ud, status);
+  });
+}
+
+void WKWebViewBackend::QueryPermission(int kind,
+                                       wef_permission_callback_fn cb,
+                                       void* user_data) {
+  if (kind != WEF_PERMISSION_NOTIFICATIONS || !WvProcessIsBundled()) {
+    FirePermOnMainWv(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    return;
+  }
+  UNUserNotificationCenter* center =
+      [UNUserNotificationCenter currentNotificationCenter];
+  [center getNotificationSettingsWithCompletionHandler:^(
+              UNNotificationSettings* settings) {
+    FirePermOnMainWv(cb, user_data, MapUNStatusWv(settings.authorizationStatus));
+  }];
+}
+
+void WKWebViewBackend::RequestPermission(int kind,
+                                         wef_permission_callback_fn cb,
+                                         void* user_data) {
+  if (kind != WEF_PERMISSION_NOTIFICATIONS || !WvProcessIsBundled()) {
+    FirePermOnMainWv(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    return;
+  }
+  UNUserNotificationCenter* center =
+      [UNUserNotificationCenter currentNotificationCenter];
+  UNAuthorizationOptions opts = UNAuthorizationOptionAlert |
+                                 UNAuthorizationOptionSound |
+                                 UNAuthorizationOptionBadge;
+  [center requestAuthorizationWithOptions:opts
+                        completionHandler:^(BOOL granted, NSError* error) {
+                          (void)error;
+                          [center getNotificationSettingsWithCompletionHandler:^(
+                                      UNNotificationSettings* settings) {
+                            int status;
+                            if (granted) {
+                              status = MapUNStatusWv(settings.authorizationStatus);
+                            } else {
+                              status = (settings.authorizationStatus ==
+                                        UNAuthorizationStatusNotDetermined)
+                                           ? WEF_PERMISSION_STATUS_DENIED
+                                           : MapUNStatusWv(
+                                                 settings.authorizationStatus);
+                            }
+                            FirePermOnMainWv(cb, user_data, status);
+                          }];
+                        }];
 }
 
 WefBackend* CreateWefBackend() {

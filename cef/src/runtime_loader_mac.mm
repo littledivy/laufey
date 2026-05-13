@@ -10,6 +10,13 @@
 #include <vector>
 
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
+
+// Defined in main_mac.mm — appends a default Edit submenu (Cut/Copy/Paste/
+// Select All/Undo/Redo) to the given menubar if no submenu in the tree
+// already exposes -copy:. Cmd+C/V on macOS dispatch via the main menu, so
+// this has to be present for them to work at all.
+extern void EnsureEditMenu(NSMenu* menubar);
 
 // --- NSWindow Helpers (called from app.cc to avoid Obj-C in cross-platform
 // code) ---
@@ -690,6 +697,7 @@ void Backend_SetApplicationMenu_Mac(void* data, uint32_t window_id,
         BuildMenuFromValue(menu_template, api, [WefMenuTarget shared],
                            @selector(menuItemClicked:));
     if (menubar) {
+      EnsureEditMenu(menubar);
       // Store per-window
       {
         std::lock_guard<std::mutex> lock(g_window_menus_mutex);
@@ -746,7 +754,15 @@ void Backend_SetDockBadge_Mac(void* /*data*/, const char* badge_or_null) {
                      ? [NSString stringWithUTF8String:badge_or_null]
                      : nil;
   dispatch_async(dispatch_get_main_queue(), ^{
-    [[NSApp dockTile] setBadgeLabel:ns];
+    NSDockTile* tile = [NSApp dockTile];
+    [tile setBadgeLabel:ns];
+    [tile display];
+    NSRunningApplication* me = [NSRunningApplication currentApplication];
+    NSLog(@"[wef-debug] policy=%ld active=%d hidden=%d finishedLaunching=%d "
+          @"bundleURL=%@ bundleId=%@ owns_dock_tile=%d badge_after=%@",
+          (long)[NSApp activationPolicy], me.active, me.hidden,
+          me.finishedLaunching, me.bundleURL, me.bundleIdentifier,
+          (tile == [NSApp dockTile]), tile.badgeLabel);
   });
 }
 
@@ -1093,4 +1109,384 @@ void Backend_SetTrayDoubleClickHandler_Mac(void* /*data*/, uint32_t tray_id,
     it->second.dblclick_fn = handler;
     it->second.dblclick_data = user_data;
   });
+}
+
+// --- Notifications (macOS) ---
+//
+// Uses NSUserNotification (deprecated in macOS 11+ but still functional in
+// macOS 15 and works without UNUserNotificationCenter's entitlement /
+// runtime-authorization dance). NSUserNotification supports a single
+// `actionButtonTitle` plus an `additionalActions` dropdown.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+struct MacNotifEntry {
+  NSUserNotification* notif;
+  NSString* tag;
+  wef_notification_event_fn on_event;
+  void* user_data;
+  std::vector<std::string> action_ids;
+};
+
+static std::map<uint32_t, MacNotifEntry>& MacNotifMap() {
+  static std::map<uint32_t, MacNotifEntry> map;
+  return map;
+}
+
+static std::map<void*, uint32_t>& NSNotifToId() {
+  static std::map<void*, uint32_t> map;
+  return map;
+}
+
+static std::atomic<uint32_t> g_next_notif_id_mac{1};
+
+@interface WefNotifDelegate : NSObject <NSUserNotificationCenterDelegate>
++ (instancetype)shared;
+@end
+
+@implementation WefNotifDelegate
++ (instancetype)shared {
+  static WefNotifDelegate* instance = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    instance = [[WefNotifDelegate alloc] init];
+  });
+  return instance;
+}
+
+- (BOOL)userNotificationCenter:(NSUserNotificationCenter*)center
+     shouldPresentNotification:(NSUserNotification*)notification {
+  (void)center;
+  (void)notification;
+  return YES;
+}
+
+- (void)userNotificationCenter:(NSUserNotificationCenter*)center
+        didDeliverNotification:(NSUserNotification*)notification {
+  (void)center;
+  auto& m = NSNotifToId();
+  auto it = m.find((__bridge void*)notification);
+  if (it == m.end())
+    return;
+  uint32_t nid = it->second;
+  auto& nm = MacNotifMap();
+  auto nit = nm.find(nid);
+  if (nit != nm.end() && nit->second.on_event) {
+    nit->second.on_event(nit->second.user_data, nid, WEF_NOTIFICATION_SHOWN,
+                         nullptr);
+  }
+}
+
+- (void)userNotificationCenter:(NSUserNotificationCenter*)center
+       didActivateNotification:(NSUserNotification*)notification {
+  (void)center;
+  auto& m = NSNotifToId();
+  auto it = m.find((__bridge void*)notification);
+  if (it == m.end())
+    return;
+  uint32_t nid = it->second;
+  auto& nm = MacNotifMap();
+  auto nit = nm.find(nid);
+  if (nit == nm.end() || !nit->second.on_event)
+    return;
+
+  switch (notification.activationType) {
+    case NSUserNotificationActivationTypeContentsClicked:
+      nit->second.on_event(nit->second.user_data, nid,
+                           WEF_NOTIFICATION_CLICKED, nullptr);
+      break;
+    case NSUserNotificationActivationTypeActionButtonClicked: {
+      // The "main" action button is the first action in the list.
+      const char* aid = nullptr;
+      std::string aid_storage;
+      if (!nit->second.action_ids.empty()) {
+        aid_storage = nit->second.action_ids[0];
+        aid = aid_storage.c_str();
+      }
+      nit->second.on_event(nit->second.user_data, nid,
+                           WEF_NOTIFICATION_ACTION, aid);
+      break;
+    }
+    case NSUserNotificationActivationTypeAdditionalActionClicked: {
+      NSUserNotificationAction* action = notification.additionalActivationAction;
+      if (action && action.identifier) {
+        std::string aid = [action.identifier UTF8String];
+        nit->second.on_event(nit->second.user_data, nid,
+                             WEF_NOTIFICATION_ACTION, aid.c_str());
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+@end
+
+static void EnsureNotifDelegate() {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    [[NSUserNotificationCenter defaultUserNotificationCenter]
+        setDelegate:[WefNotifDelegate shared]];
+  });
+}
+
+// Helper: read a string field out of a wef_value_t dict.
+static std::string ReadDictString(const wef_backend_api_t* api,
+                                  wef_value_t* dict, const char* key) {
+  wef_value_t* v = api->value_dict_get(dict, key);
+  if (!v || !api->value_is_string(v))
+    return std::string();
+  size_t len = 0;
+  char* s = api->value_get_string(v, &len);
+  if (!s)
+    return std::string();
+  std::string out(s, len);
+  api->value_free_string(s);
+  return out;
+}
+
+static bool ReadDictBool(const wef_backend_api_t* api, wef_value_t* dict,
+                         const char* key, bool dfl) {
+  wef_value_t* v = api->value_dict_get(dict, key);
+  if (!v || !api->value_is_bool(v))
+    return dfl;
+  return api->value_get_bool(v);
+}
+
+uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
+                                      wef_notification_event_fn on_event,
+                                      void* user_data) {
+  if (!options)
+    return 0;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  const wef_backend_api_t* api = &loader->GetBackendApi();
+  if (!api->value_is_dict(options)) {
+    api->value_free(options);
+    return 0;
+  }
+
+  std::string title = ReadDictString(api, options, "title");
+  std::string body = ReadDictString(api, options, "body");
+  std::string tag = ReadDictString(api, options, "tag");
+  bool silent = ReadDictBool(api, options, "silent", false);
+
+  std::vector<std::pair<std::string, std::string>> actions;
+  wef_value_t* actions_val = api->value_dict_get(options, "actions");
+  if (actions_val && api->value_is_list(actions_val)) {
+    size_t n = api->value_list_size(actions_val);
+    for (size_t i = 0; i < n; ++i) {
+      wef_value_t* a = api->value_list_get(actions_val, i);
+      if (!a || !api->value_is_dict(a))
+        continue;
+      std::string aid = ReadDictString(api, a, "id");
+      std::string atitle = ReadDictString(api, a, "title");
+      if (!aid.empty() && !atitle.empty()) {
+        actions.emplace_back(aid, atitle);
+      }
+    }
+  }
+
+  api->value_free(options);
+
+  uint32_t nid =
+      g_next_notif_id_mac.fetch_add(1, std::memory_order_relaxed);
+
+  NSString* nsTitle = [NSString stringWithUTF8String:title.c_str()];
+  NSString* nsBody = [NSString stringWithUTF8String:body.c_str()];
+  NSString* nsTag = tag.empty() ? nil : [NSString stringWithUTF8String:tag.c_str()];
+
+  std::vector<std::string> action_ids;
+  std::vector<std::string> action_titles;
+  action_ids.reserve(actions.size());
+  action_titles.reserve(actions.size());
+  for (auto& a : actions) {
+    action_ids.push_back(a.first);
+    action_titles.push_back(a.second);
+  }
+
+  dispatch_async(dispatch_get_main_queue(), ^{
+    EnsureNotifDelegate();
+    NSUserNotificationCenter* center =
+        [NSUserNotificationCenter defaultUserNotificationCenter];
+
+    if (nsTag) {
+      // "tag" semantics: replace any existing notification with the same id.
+      NSArray<NSUserNotification*>* delivered = [center deliveredNotifications];
+      for (NSUserNotification* d in delivered) {
+        if (d.identifier && [d.identifier isEqualToString:nsTag]) {
+          [center removeDeliveredNotification:d];
+        }
+      }
+    }
+
+    NSUserNotification* notif = [[NSUserNotification alloc] init];
+    notif.title = nsTitle;
+    notif.informativeText = nsBody;
+    if (nsTag)
+      notif.identifier = nsTag;
+    notif.soundName = silent ? nil : NSUserNotificationDefaultSoundName;
+
+    if (!action_ids.empty()) {
+      notif.hasActionButton = YES;
+      notif.actionButtonTitle =
+          [NSString stringWithUTF8String:action_titles[0].c_str()];
+      if (action_ids.size() > 1) {
+        NSMutableArray<NSUserNotificationAction*>* extras =
+            [NSMutableArray array];
+        for (size_t i = 1; i < action_ids.size(); ++i) {
+          NSUserNotificationAction* act = [NSUserNotificationAction
+              actionWithIdentifier:[NSString stringWithUTF8String:action_ids[i]
+                                                                  .c_str()]
+                             title:[NSString stringWithUTF8String:action_titles[i]
+                                                                  .c_str()]];
+          [extras addObject:act];
+        }
+        notif.additionalActions = extras;
+      }
+    }
+
+    MacNotifEntry entry = {};
+    entry.notif = notif;
+    entry.tag = nsTag;
+    entry.on_event = on_event;
+    entry.user_data = user_data;
+    entry.action_ids = action_ids;
+    MacNotifMap()[nid] = entry;
+    NSNotifToId()[(__bridge void*)notif] = nid;
+
+    [center deliverNotification:notif];
+  });
+
+  return nid;
+}
+
+void Backend_CloseNotification_Mac(void* /*data*/, uint32_t notification_id) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    auto& nm = MacNotifMap();
+    auto it = nm.find(notification_id);
+    if (it == nm.end())
+      return;
+    NSUserNotification* notif = it->second.notif;
+    wef_notification_event_fn cb = it->second.on_event;
+    void* ud = it->second.user_data;
+    if (notif) {
+      NSUserNotificationCenter* center =
+          [NSUserNotificationCenter defaultUserNotificationCenter];
+      [center removeDeliveredNotification:notif];
+      NSNotifToId().erase((__bridge void*)notif);
+    }
+    nm.erase(it);
+    if (cb) {
+      cb(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
+    }
+  });
+}
+
+#pragma clang diagnostic pop
+
+// --- Permissions (UNUserNotificationCenter) ---
+//
+// UN is the modern (10.14+) replacement for NSUserNotification's
+// implicit "always granted" model. It requires the process to run
+// inside a bundled .app with a CFBundleIdentifier; without one
+// `getNotificationSettings:` returns garbage and `requestAuthorization:`
+// fails immediately. We detect that case and report UNSUPPORTED so the
+// embedder (Deno) can branch on it instead of seeing a phantom DENIED.
+
+static int MapUNStatus(UNAuthorizationStatus s) {
+  switch (s) {
+    case UNAuthorizationStatusNotDetermined:
+      return WEF_PERMISSION_STATUS_PROMPT;
+    case UNAuthorizationStatusDenied:
+      return WEF_PERMISSION_STATUS_DENIED;
+    case UNAuthorizationStatusAuthorized:
+    case UNAuthorizationStatusProvisional:
+      return WEF_PERMISSION_STATUS_GRANTED;
+    default:
+      return WEF_PERMISSION_STATUS_UNSUPPORTED;
+  }
+}
+
+static bool MacProcessIsBundled() {
+  NSBundle* mb = [NSBundle mainBundle];
+  if (!mb)
+    return false;
+  if (![mb bundleIdentifier])
+    return false;
+  // Reject the synthetic bundle `cargo run` etc. produces for a bare
+  // exe (path doesn't end in .app).
+  NSString* path = [mb bundlePath];
+  return path && [path hasSuffix:@".app"];
+}
+
+static void FirePermissionOnMain(wef_permission_callback_fn cb, void* ud,
+                                 int status) {
+  if (!cb)
+    return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    cb(ud, status);
+  });
+}
+
+void Backend_QueryPermission_Mac(void* /*data*/, int kind,
+                                 wef_permission_callback_fn cb,
+                                 void* user_data) {
+  if (kind != WEF_PERMISSION_NOTIFICATIONS) {
+    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    return;
+  }
+  if (!MacProcessIsBundled()) {
+    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    return;
+  }
+  UNUserNotificationCenter* center =
+      [UNUserNotificationCenter currentNotificationCenter];
+  [center getNotificationSettingsWithCompletionHandler:^(
+              UNNotificationSettings* settings) {
+    int status = MapUNStatus(settings.authorizationStatus);
+    FirePermissionOnMain(cb, user_data, status);
+  }];
+}
+
+void Backend_RequestPermission_Mac(void* /*data*/, int kind,
+                                   wef_permission_callback_fn cb,
+                                   void* user_data) {
+  if (kind != WEF_PERMISSION_NOTIFICATIONS) {
+    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    return;
+  }
+  if (!MacProcessIsBundled()) {
+    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    return;
+  }
+  UNUserNotificationCenter* center =
+      [UNUserNotificationCenter currentNotificationCenter];
+  UNAuthorizationOptions opts = UNAuthorizationOptionAlert |
+                                 UNAuthorizationOptionSound |
+                                 UNAuthorizationOptionBadge;
+  [center requestAuthorizationWithOptions:opts
+                        completionHandler:^(BOOL granted, NSError* error) {
+                          (void)error;
+                          // After the user picks, fetch the real status -
+                          // `granted` is BOOL but the cached state can be
+                          // PROVISIONAL or EPHEMERAL which we still want
+                          // mapped through MapUNStatus.
+                          [center getNotificationSettingsWithCompletionHandler:^(
+                                      UNNotificationSettings* settings) {
+                            int status;
+                            if (granted) {
+                              status = MapUNStatus(settings.authorizationStatus);
+                            } else {
+                              // The OS rejected; map by current settings
+                              // (NotDetermined collapses to DENIED here
+                              // because the request was rejected).
+                              status = (settings.authorizationStatus ==
+                                        UNAuthorizationStatusNotDetermined)
+                                           ? WEF_PERMISSION_STATUS_DENIED
+                                           : MapUNStatus(
+                                                 settings.authorizationStatus);
+                            }
+                            FirePermissionOnMain(cb, user_data, status);
+                          }];
+                        }];
 }

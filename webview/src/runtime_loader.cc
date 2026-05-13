@@ -700,6 +700,49 @@ static void Backend_SetTrayIconDark(void* data, uint32_t tray_id,
     backend->SetTrayIconDark(tray_id, png_bytes, len);
 }
 
+static uint32_t Backend_ShowNotification(void* data, wef_value_t* options,
+                                         wef_notification_event_fn on_event,
+                                         void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  WefBackend* backend = loader->GetBackend();
+  if (!backend) {
+    if (options) {
+      loader->GetBackendApi().value_free(options);
+    }
+    return 0;
+  }
+  return backend->ShowNotification(options, &loader->GetBackendApi(), on_event,
+                                   user_data);
+}
+
+static void Backend_CloseNotification(void* data, uint32_t notification_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (WefBackend* backend = loader->GetBackend())
+    backend->CloseNotification(notification_id);
+}
+
+static void Backend_QueryPermission(void* data, int kind,
+                                    wef_permission_callback_fn cb,
+                                    void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (WefBackend* backend = loader->GetBackend()) {
+    backend->QueryPermission(kind, cb, user_data);
+  } else if (cb) {
+    cb(user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+  }
+}
+
+static void Backend_RequestPermission(void* data, int kind,
+                                      wef_permission_callback_fn cb,
+                                      void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (WefBackend* backend = loader->GetBackend()) {
+    backend->RequestPermission(kind, cb, user_data);
+  } else if (cb) {
+    cb(user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+  }
+}
+
 void RuntimeLoader::InitializeBackendApi() {
   memset(&backend_api_, 0, sizeof(backend_api_));
   backend_api_.version = WEF_API_VERSION;
@@ -814,6 +857,12 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_tray_double_click_handler =
       Backend_SetTrayDoubleClickHandler;
   backend_api_.set_tray_icon_dark = Backend_SetTrayIconDark;
+
+  backend_api_.show_notification = Backend_ShowNotification;
+  backend_api_.close_notification = Backend_CloseNotification;
+
+  backend_api_.query_permission = Backend_QueryPermission;
+  backend_api_.request_permission = Backend_RequestPermission;
 }
 
 RuntimeLoader::RuntimeLoader() {

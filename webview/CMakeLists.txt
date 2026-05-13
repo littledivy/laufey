@@ -44,10 +44,12 @@ if(PLATFORM_MACOS)
 
   find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
   find_library(WEBKIT_FRAMEWORK WebKit REQUIRED)
+  find_library(USERNOTIFICATIONS_FRAMEWORK UserNotifications REQUIRED)
 
   target_link_libraries(${WEF_TARGET}
     ${COCOA_FRAMEWORK}
     ${WEBKIT_FRAMEWORK}
+    ${USERNOTIFICATIONS_FRAMEWORK}
   )
 
   target_compile_options(${WEF_TARGET} PRIVATE -fobjc-arc)

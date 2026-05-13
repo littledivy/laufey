@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define WEF_API_VERSION 22
+#define WEF_API_VERSION 24
 
 // Window handle types for get_window_handle_type
 #define WEF_WINDOW_HANDLE_UNKNOWN 0
@@ -83,6 +83,47 @@ typedef void (*wef_dock_reopen_fn)(void* user_data, bool has_visible_windows);
 // Callback fired when the user left-clicks a tray / status-bar icon.
 // (Right-click is reserved for the tray's menu.)
 typedef void (*wef_tray_click_fn)(void* user_data, uint32_t tray_id);
+
+// Notification event reasons (passed as `reason` to wef_notification_event_fn).
+#define WEF_NOTIFICATION_SHOWN 0
+#define WEF_NOTIFICATION_CLICKED 1
+#define WEF_NOTIFICATION_CLOSED 2
+#define WEF_NOTIFICATION_ACTION 3
+
+// Callback fired for events on a notification previously shown via
+// `show_notification`. `action_id_or_null` is non-NULL only for
+// WEF_NOTIFICATION_ACTION (the id of the action button the user clicked).
+typedef void (*wef_notification_event_fn)(void* user_data,
+                                          uint32_t notification_id, int reason,
+                                          const char* action_id_or_null);
+
+// --- Permissions / runtime authorization ---
+//
+// Capability kinds. `0` is reserved as INVALID so that an uninitialized int
+// can't be mistaken for a real kind. Add new kinds at the end; this is
+// part of the wire ABI.
+#define WEF_PERMISSION_INVALID 0
+#define WEF_PERMISSION_NOTIFICATIONS 1
+
+// Authorization state returned by permission callbacks.
+//   GRANTED:     the runtime may use the capability.
+//   DENIED:      the user (or policy) declined; do not prompt again -- the
+//                OS won't show it.
+//   PROMPT:      the user has not yet decided; calling request_permission
+//                will display a system prompt.
+//   UNSUPPORTED: this capability is not authorizable in the current
+//                environment (e.g. unbundled macOS process with no
+//                CFBundleIdentifier, or a backend that has no concept of
+//                the kind on this platform).
+#define WEF_PERMISSION_STATUS_GRANTED 0
+#define WEF_PERMISSION_STATUS_DENIED 1
+#define WEF_PERMISSION_STATUS_PROMPT 2
+#define WEF_PERMISSION_STATUS_UNSUPPORTED 3
+
+// Callback invoked with the result of request_permission / query_permission.
+// Always fired on the UI thread (backends hop via their UI dispatch if the
+// underlying OS API completes on a background queue).
+typedef void (*wef_permission_callback_fn)(void* user_data, int status);
 
 // Callback for mouse click events.
 typedef void (*wef_mouse_click_fn)(
@@ -439,6 +480,62 @@ struct wef_backend_api {
   // clear the dark variant (then the primary icon is used in both modes).
   void (*set_tray_icon_dark)(void* backend_data, uint32_t tray_id,
                              const void* png_bytes, size_t len);
+
+  // --- Notifications (system / desktop) ---
+  //
+  // App-scoped. `options` is a wef_value_t dict mirroring (a subset of)
+  // the Web Notification API constructor options:
+  //   "title"               string  (required)
+  //   "body"                string
+  //   "icon"                binary  (PNG bytes)
+  //   "tag"                 string  — replaces an existing notification
+  //                                   with the same tag rather than
+  //                                   creating a new one
+  //   "silent"              bool    — suppress system notification sound
+  //   "require_interaction" bool    — keep visible until user dismisses
+  //   "actions"             list of dicts, each {"id": string,
+  //                                   "title": string} — action buttons.
+  //                                   Ignored on platforms that don't
+  //                                   support them.
+  //
+  // Ownership: the backend takes ownership of `options` (calls value_free
+  // on it), matching the convention used by set_application_menu /
+  // show_context_menu / set_tray_menu.
+  //
+  // Returns a notification_id > 0 used by close_notification and as the
+  // first arg to the event callback. Returns 0 on failure (including when
+  // notifications aren't supported on the current platform / backend).
+  //
+  // Pass NULL for `on_event` for fire-and-forget. Backends that don't
+  // support tracking events for a given OS API may invoke only some of
+  // the WEF_NOTIFICATION_* reasons.
+  uint32_t (*show_notification)(void* backend_data, wef_value_t* options,
+                                wef_notification_event_fn on_event,
+                                void* user_data);
+
+  // Close a notification previously shown via show_notification. No-op
+  // if the id is unknown or the notification has already been dismissed.
+  void (*close_notification)(void* backend_data, uint32_t notification_id);
+
+  // --- Permissions / runtime authorization ---
+  //
+  // Ask the OS for the current authorization status of a capability
+  // (`kind` is WEF_PERMISSION_*). Does NOT prompt the user. The callback
+  // is invoked on the UI thread with one of WEF_PERMISSION_STATUS_*.
+  // If this function pointer is NULL the runtime treats every kind as
+  // UNSUPPORTED.
+  void (*query_permission)(void* backend_data, int kind,
+                           wef_permission_callback_fn cb, void* user_data);
+
+  // Request authorization for a capability. If the current status is
+  // PROMPT the OS will display a system prompt; otherwise the cached
+  // decision is returned without re-prompting (the OS will not show a
+  // second prompt for a kind the user has already decided -- this is an
+  // OS-level constraint, not a wef one). The callback fires on the UI
+  // thread. NULL function pointer is equivalent to a stub that reports
+  // UNSUPPORTED.
+  void (*request_permission)(void* backend_data, int kind,
+                             wef_permission_callback_fn cb, void* user_data);
 };
 
 #ifdef __cplusplus

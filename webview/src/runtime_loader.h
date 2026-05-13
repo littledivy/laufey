@@ -395,6 +395,34 @@ class WefBackend {
                                          void* /*user_data*/) {}
   virtual void SetTrayIconDark(uint32_t /*tray_id*/, const void* /*png_bytes*/,
                                size_t /*len*/) {}
+
+  // --- Notifications ---
+  // Default: not supported. Subclasses override per-platform.
+  virtual uint32_t ShowNotification(
+      wef_value_t* options, const wef_backend_api_t* /*api*/,
+      wef_notification_event_fn /*on_event*/, void* /*user_data*/) {
+    // Subclass owns the options pointer if it accepts the call. Default
+    // path frees so we don't leak.
+    (void)options;
+    return 0;
+  }
+  virtual void CloseNotification(uint32_t /*notification_id*/) {}
+
+  // --- Permissions / runtime authorization ---
+  // Default: synchronously report UNSUPPORTED. macOS subclass overrides
+  // to drive UNUserNotificationCenter. Windows/Linux subclasses report
+  // GRANTED for WEF_PERMISSION_NOTIFICATIONS (the balloon / libnotify
+  // APIs they use have no permission model).
+  virtual void QueryPermission(int /*kind*/, wef_permission_callback_fn cb,
+                               void* user_data) {
+    if (cb)
+      cb(user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+  }
+  virtual void RequestPermission(int /*kind*/, wef_permission_callback_fn cb,
+                                 void* user_data) {
+    if (cb)
+      cb(user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+  }
 };
 
 WefBackend* CreateWefBackend();

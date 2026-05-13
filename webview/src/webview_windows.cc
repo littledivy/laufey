@@ -476,6 +476,25 @@ class WebView2Backend : public WefBackend {
   void SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                        size_t len) override;
 
+  uint32_t ShowNotification(wef_value_t* options,
+                            const wef_backend_api_t* api,
+                            wef_notification_event_fn on_event,
+                            void* user_data) override;
+  void CloseNotification(uint32_t notification_id) override;
+
+  // Shell_NotifyIcon balloons have no permission model — always granted.
+  void QueryPermission(int kind, wef_permission_callback_fn cb,
+                       void* user_data) override {
+    if (cb)
+      cb(user_data, kind == WEF_PERMISSION_NOTIFICATIONS
+                        ? WEF_PERMISSION_STATUS_GRANTED
+                        : WEF_PERMISSION_STATUS_UNSUPPORTED);
+  }
+  void RequestPermission(int kind, wef_permission_callback_fn cb,
+                         void* user_data) override {
+    QueryPermission(kind, cb, user_data);
+  }
+
   void HandleJsMessage(uint32_t window_id, const std::wstring& json);
 
  private:
@@ -1317,8 +1336,31 @@ void WebView2Backend::SetDockBadge(const char* badge_or_null) {
 // ============================================================================
 
 #define WM_WV_TRAYICON (WM_APP + 2)
+#define WM_WV_NOTIFICATION (WM_APP + 3)
 
 namespace {
+struct WvWinNotifEntry {
+  UINT uid;
+  HICON hicon;
+  std::string tag;
+  wef_notification_event_fn on_event;
+  void* user_data;
+};
+std::mutex& WvNotifMutexWin() {
+  static std::mutex m;
+  return m;
+}
+std::map<uint32_t, WvWinNotifEntry>& WvNotifMapWin() {
+  static std::map<uint32_t, WvWinNotifEntry> m;
+  return m;
+}
+std::map<UINT, uint32_t>& WvNotifUidToId() {
+  static std::map<UINT, uint32_t> m;
+  return m;
+}
+std::atomic<uint32_t> g_wv_next_notif_id_win{1};
+std::atomic<UINT> g_wv_next_notif_uid{0x4000};
+
 struct WvWinTrayEntry {
   UINT uid;
   HICON hicon_light;
@@ -1394,6 +1436,59 @@ LRESULT CALLBACK WvTrayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (msg == WM_SETTINGCHANGE) {
     if (lp && wcscmp((LPCWSTR)lp, L"ImmersiveColorSet") == 0) {
       WvReapplyAllIcons();
+    }
+    return 0;
+  }
+  if (msg == WM_WV_NOTIFICATION) {
+    UINT uid = (UINT)wp;
+    UINT event = LOWORD(lp);
+    uint32_t nid = 0;
+    {
+      std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+      auto it = WvNotifUidToId().find(uid);
+      if (it != WvNotifUidToId().end())
+        nid = it->second;
+    }
+    if (!nid)
+      return 0;
+    int reason = -1;
+    if (event == NIN_BALLOONSHOW)
+      reason = WEF_NOTIFICATION_SHOWN;
+    else if (event == NIN_BALLOONUSERCLICK)
+      reason = WEF_NOTIFICATION_CLICKED;
+    else if (event == NIN_BALLOONHIDE || event == NIN_BALLOONTIMEOUT)
+      reason = WEF_NOTIFICATION_CLOSED;
+    if (reason < 0)
+      return 0;
+    wef_notification_event_fn fn = nullptr;
+    void* user_data = nullptr;
+    bool is_terminal =
+        (reason == WEF_NOTIFICATION_CLOSED ||
+         reason == WEF_NOTIFICATION_CLICKED);
+    {
+      std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+      auto it = WvNotifMapWin().find(nid);
+      if (it != WvNotifMapWin().end()) {
+        fn = it->second.on_event;
+        user_data = it->second.user_data;
+      }
+    }
+    if (fn)
+      fn(user_data, nid, reason, nullptr);
+    if (is_terminal) {
+      std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+      auto it = WvNotifMapWin().find(nid);
+      if (it != WvNotifMapWin().end()) {
+        NOTIFYICONDATAW del = {};
+        del.cbSize = sizeof(del);
+        del.hWnd = hwnd;
+        del.uID = it->second.uid;
+        Shell_NotifyIconW(NIM_DELETE, &del);
+        if (it->second.hicon)
+          DestroyIcon(it->second.hicon);
+        WvNotifUidToId().erase(it->second.uid);
+        WvNotifMapWin().erase(it);
+      }
     }
     return 0;
   }
@@ -1785,6 +1880,186 @@ void WebView2Backend::SetTrayClickHandler(uint32_t tray_id,
     it->second.click_fn = handler;
     it->second.click_data = user_data;
   }
+}
+
+// ============================================================================
+// Notifications (WebView2 Windows)
+// ============================================================================
+//
+// Same Shell_NotifyIcon balloon approach as the CEF Windows backend.
+// Click → CLICKED; dismiss/timeout → CLOSED. Action buttons (NIIF balloons
+// don't have them) are ignored.
+
+static HICON WvLoadDefaultAppIcon() {
+  HICON h = (HICON)LoadImageW(GetModuleHandleW(nullptr), IDI_APPLICATION,
+                              IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE);
+  return h;
+}
+
+uint32_t WebView2Backend::ShowNotification(
+    wef_value_t* options, const wef_backend_api_t* api,
+    wef_notification_event_fn on_event, void* user_data) {
+  if (!options)
+    return 0;
+  if (!api->value_is_dict(options)) {
+    api->value_free(options);
+    return 0;
+  }
+
+  auto get_string = [&](const char* key) -> std::string {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_string(v))
+      return std::string();
+    size_t len = 0;
+    char* s = api->value_get_string(v, &len);
+    if (!s)
+      return std::string();
+    std::string out(s, len);
+    api->value_free_string(s);
+    return out;
+  };
+  auto get_bool = [&](const char* key, bool dfl) -> bool {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_bool(v))
+      return dfl;
+    return api->value_get_bool(v);
+  };
+  auto get_binary = [&](const char* key) -> std::vector<BYTE> {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_binary(v))
+      return {};
+    size_t len = 0;
+    const void* ptr = api->value_get_binary(v, &len);
+    if (!ptr || len == 0)
+      return {};
+    return std::vector<BYTE>((const BYTE*)ptr, (const BYTE*)ptr + len);
+  };
+
+  std::string title = get_string("title");
+  std::string body = get_string("body");
+  std::string tag = get_string("tag");
+  bool silent = get_bool("silent", false);
+  std::vector<BYTE> icon_png = get_binary("icon");
+
+  api->value_free(options);
+
+  // Tag → replace existing notification with the same tag.
+  if (!tag.empty()) {
+    std::vector<uint32_t> to_drop;
+    {
+      std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+      for (auto& [id, e] : WvNotifMapWin()) {
+        if (e.tag == tag)
+          to_drop.push_back(id);
+      }
+    }
+    for (uint32_t old : to_drop) {
+      std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+      auto it = WvNotifMapWin().find(old);
+      if (it == WvNotifMapWin().end())
+        continue;
+      HWND hwnd = g_wv_tray_hwnd;
+      if (hwnd) {
+        NOTIFYICONDATAW del = {};
+        del.cbSize = sizeof(del);
+        del.hWnd = hwnd;
+        del.uID = it->second.uid;
+        Shell_NotifyIconW(NIM_DELETE, &del);
+      }
+      if (it->second.hicon)
+        DestroyIcon(it->second.hicon);
+      WvNotifUidToId().erase(it->second.uid);
+      WvNotifMapWin().erase(it);
+    }
+  }
+
+  uint32_t nid =
+      g_wv_next_notif_id_win.fetch_add(1, std::memory_order_relaxed);
+  UINT uid = g_wv_next_notif_uid.fetch_add(1, std::memory_order_relaxed);
+
+  std::wstring wtitle, wbody;
+  if (!title.empty()) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, nullptr, 0);
+    wtitle.resize(n > 0 ? n - 1 : 0);
+    if (n > 0)
+      MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, wtitle.data(), n);
+  }
+  if (!body.empty()) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, body.c_str(), -1, nullptr, 0);
+    wbody.resize(n > 0 ? n - 1 : 0);
+    if (n > 0)
+      MultiByteToWideChar(CP_UTF8, 0, body.c_str(), -1, wbody.data(), n);
+  }
+
+  HWND hwnd = EnsureWvTrayWindow();
+  if (!hwnd)
+    return 0;
+
+  HICON hicon = nullptr;
+  if (!icon_png.empty()) {
+    hicon =
+        WvDecodePngToHicon(icon_png.data(), icon_png.size(),
+                           GetSystemMetrics(SM_CXICON));
+  }
+  if (!hicon)
+    hicon = WvLoadDefaultAppIcon();
+
+  NOTIFYICONDATAW nd = {};
+  nd.cbSize = sizeof(nd);
+  nd.hWnd = hwnd;
+  nd.uID = uid;
+  nd.uFlags = NIF_MESSAGE | NIF_ICON | NIF_INFO;
+  nd.uCallbackMessage = WM_WV_NOTIFICATION;
+  nd.hIcon = hicon;
+  wcsncpy_s(nd.szInfoTitle, wtitle.c_str(), _TRUNCATE);
+  wcsncpy_s(nd.szInfo, wbody.c_str(), _TRUNCATE);
+  nd.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+  if (silent)
+    nd.dwInfoFlags |= NIIF_NOSOUND;
+
+  if (!Shell_NotifyIconW(NIM_ADD, &nd)) {
+    if (hicon)
+      DestroyIcon(hicon);
+    return 0;
+  }
+
+  std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+  WvWinNotifEntry e = {};
+  e.uid = uid;
+  e.hicon = hicon;
+  e.tag = tag;
+  e.on_event = on_event;
+  e.user_data = user_data;
+  WvNotifMapWin()[nid] = e;
+  WvNotifUidToId()[uid] = nid;
+  return nid;
+}
+
+void WebView2Backend::CloseNotification(uint32_t notification_id) {
+  HWND hwnd = g_wv_tray_hwnd;
+  wef_notification_event_fn fn = nullptr;
+  void* ud = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(WvNotifMutexWin());
+    auto it = WvNotifMapWin().find(notification_id);
+    if (it == WvNotifMapWin().end())
+      return;
+    if (hwnd) {
+      NOTIFYICONDATAW del = {};
+      del.cbSize = sizeof(del);
+      del.hWnd = hwnd;
+      del.uID = it->second.uid;
+      Shell_NotifyIconW(NIM_DELETE, &del);
+    }
+    if (it->second.hicon)
+      DestroyIcon(it->second.hicon);
+    WvNotifUidToId().erase(it->second.uid);
+    fn = it->second.on_event;
+    ud = it->second.user_data;
+    WvNotifMapWin().erase(it);
+  }
+  if (fn)
+    fn(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
 }
 
 // ============================================================================

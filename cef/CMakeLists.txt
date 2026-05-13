@@ -72,14 +72,6 @@ if(OS_MAC)
   set(CEF_HELPER_OUTPUT_NAME "wef Helper")
 
   option(OPTION_USE_ARC "Build with ARC (automatic Reference Counting) on macOS." ON)
-  if(OPTION_USE_ARC)
-    list(APPEND CEF_COMPILER_FLAGS
-      -fobjc-arc
-    )
-    set_target_properties(${target} PROPERTIES
-      CLANG_ENABLE_OBJC_ARC "YES"
-    )
-  endif()
 
   set(CEF_APP "${CEF_TARGET_OUT_DIR}/${CEF_TARGET}.app")
 
@@ -88,7 +80,18 @@ if(OS_MAC)
 
   add_executable(${CEF_TARGET} MACOSX_BUNDLE ${WEF_RESOURCES_SRCS} ${WEF_SRCS_COMMON} ${WEF_SRCS_MAC})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+  if(OPTION_USE_ARC)
+    # CEF's SET_EXECUTABLE_TARGET_PROPERTIES applies CEF_COMPILER_FLAGS only
+    # to COMPILE_LANGUAGE:C/CXX, so .mm files miss -fobjc-arc otherwise. Apply
+    # it explicitly here — without ARC, ObjC pointers stored in C++ structs
+    # like TrayEntry are not retained, leading to use-after-free crashes when
+    # the dispatched main-queue blocks dereference them.
+    target_compile_options(${CEF_TARGET} PRIVATE
+      $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fobjc-arc>
+    )
+  endif()
+  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS}
+    "-framework UserNotifications")
   target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${WEF_INCLUDE_DIR}")
   set_target_properties(${CEF_TARGET} PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in

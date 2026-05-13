@@ -3,6 +3,8 @@
 pub use winit;
 
 pub mod dock;
+pub mod notification;
+pub mod permission;
 pub mod tray;
 
 use std::cell::RefCell;
@@ -26,7 +28,7 @@ use winit::window::{Window, WindowLevel};
 
 // --- Constants ---
 
-pub const WEF_API_VERSION: u32 = 21;
+pub const WEF_API_VERSION: u32 = 24;
 
 #[allow(dead_code)]
 pub const WEF_WINDOW_HANDLE_UNKNOWN: c_int = 0;
@@ -355,6 +357,31 @@ pub struct WefBackendApi {
   >,
   pub set_tray_icon_dark:
     Option<unsafe extern "C" fn(*mut c_void, u32, *const c_void, usize)>,
+  pub show_notification: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      *mut WefValue,
+      Option<notification::WefNotificationEventFn>,
+      *mut c_void,
+    ) -> u32,
+  >,
+  pub close_notification: Option<unsafe extern "C" fn(*mut c_void, u32)>,
+  pub query_permission: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      c_int,
+      Option<permission::WefPermissionCallbackFn>,
+      *mut c_void,
+    ),
+  >,
+  pub request_permission: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      c_int,
+      Option<permission::WefPermissionCallbackFn>,
+      *mut c_void,
+    ),
+  >,
 }
 
 unsafe impl Send for WefBackendApi {}
@@ -966,6 +993,10 @@ pub fn create_api_base() -> WefBackendApi {
     set_tray_click_handler: None,
     set_tray_double_click_handler: None,
     set_tray_icon_dark: None,
+    show_notification: None,
+    close_notification: None,
+    query_permission: None,
+    request_permission: None,
   }
 }
 
@@ -2374,6 +2405,46 @@ macro_rules! define_common_backend_fns {
         );
       }
     }
+
+    unsafe extern "C" fn backend_show_notification(
+      _data: *mut ::std::ffi::c_void,
+      options: *mut $crate::WefValue,
+      on_event: ::std::option::Option<
+        $crate::notification::WefNotificationEventFn,
+      >,
+      user_data: *mut ::std::ffi::c_void,
+    ) -> u32 {
+      $crate::notification::show_notification(options, on_event, user_data)
+    }
+
+    unsafe extern "C" fn backend_close_notification(
+      _data: *mut ::std::ffi::c_void,
+      notification_id: u32,
+    ) {
+      $crate::notification::close_notification(notification_id);
+    }
+
+    unsafe extern "C" fn backend_query_permission(
+      _data: *mut ::std::ffi::c_void,
+      kind: ::std::ffi::c_int,
+      cb: ::std::option::Option<
+        $crate::permission::WefPermissionCallbackFn,
+      >,
+      user_data: *mut ::std::ffi::c_void,
+    ) {
+      $crate::permission::query_permission(kind, cb, user_data);
+    }
+
+    unsafe extern "C" fn backend_request_permission(
+      _data: *mut ::std::ffi::c_void,
+      kind: ::std::ffi::c_int,
+      cb: ::std::option::Option<
+        $crate::permission::WefPermissionCallbackFn,
+      >,
+      user_data: *mut ::std::ffi::c_void,
+    ) {
+      $crate::permission::request_permission(kind, cb, user_data);
+    }
   };
 }
 
@@ -2430,6 +2501,10 @@ macro_rules! fill_common_api {
     $api.set_tray_double_click_handler =
       Some(backend_set_tray_double_click_handler);
     $api.set_tray_icon_dark = Some(backend_set_tray_icon_dark);
+    $api.show_notification = Some(backend_show_notification);
+    $api.close_notification = Some(backend_close_notification);
+    $api.query_permission = Some(backend_query_permission);
+    $api.request_permission = Some(backend_request_permission);
   };
 }
 

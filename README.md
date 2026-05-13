@@ -200,3 +200,66 @@ Winit polls once per event-loop tick.
 | Get window handle      | ❌  | ❌      | ✅    |
 | Get display handle     | ❌  | ❌      | ✅    |
 | Get window handle type | ❌  | ❌      | ✅    |
+
+#### Notifications
+
+System notifications mirror (a subset of) the Web Notifications API: title,
+body, icon, tag (replaces an existing notification with the same id),
+silent, requireInteraction, and action buttons. They are app-scoped.
+
+| Feature                  | CEF            | WebView        | Winit |
+| ------------------------ | -------------- | -------------- | ----- |
+| Show / close             | ✅             | ✅             | ✅    |
+| Title, body              | ✅             | ✅             | ✅    |
+| Icon                     | Windows        | Windows        | ❌    |
+| Tag (replace)            | ✅             | ✅             | Linux |
+| Silent                   | macOS, Windows | macOS, Windows | ❌    |
+| Require interaction      | Linux          | Linux          | Linux |
+| Action buttons           | macOS          | macOS          | ❌    |
+| Shown / closed callbacks | ✅             | ✅             | ✅    |
+| Clicked callback         | macOS, Windows | macOS, Windows | ❌    |
+| Action callback          | macOS          | macOS          | ❌    |
+
+Implementation per platform:
+
+- **macOS** (CEF, WebView): `NSUserNotification` for posting — deprecated
+  in macOS 11 but functional through 15 and chosen for v1 because
+  posting doesn't require authorization. Authorization queries
+  (`request_permission` / `query_permission` below) route through
+  `UNUserNotificationCenter`, the modern API, so the embedder still gets
+  the system prompt UX. Action buttons surface through
+  `actionButtonTitle` plus the `additionalActions` dropdown.
+- **Windows** (CEF, WebView): `Shell_NotifyIcon` balloon. On Windows 10
+  and 11 the shell intercepts the balloon and renders a system toast
+  (with Action Center grouping). NIIF balloons don't support action
+  buttons — the `actions` field is ignored.
+- **Linux** (CEF, WebView): shells out to `notify-send`, which is
+  fire-and-forget — only the synthetic `shown` and `closed` events fire,
+  click / action events are not surfaced. Action buttons are ignored.
+- **Winit** (all platforms): `notify-rust`. Show + close + a synthetic
+  `shown` callback. Click / action events are not surfaced on any
+  platform because the watcher pattern needed to surface them portably
+  isn't built; use CEF or WebView if you need full interactivity.
+
+#### Permissions / runtime authorization
+
+Wef exposes a generic `request_permission(kind) → granted | denied |
+prompt | unsupported` API mirroring the Web Permissions API state set.
+Bundle id, entitlements, and code-signing remain the embedder's
+responsibility — wef itself doesn't hard-code any bundle identifier at
+runtime, so apps that package their own `.app` (e.g. via Deno) can
+configure CFBundleIdentifier + entitlements freely and the
+authorization prompts target the embedder's identity.
+
+| Feature                       | CEF | WebView | Winit |
+| ----------------------------- | --- | ------- | ----- |
+| Query / request notifications | ✅  | ✅      | ✅    |
+
+On macOS all three backends call `UNUserNotificationCenter`. Unbundled
+processes (no `CFBundleIdentifier`, or a binary that doesn't live in an
+`.app`) report `UNSUPPORTED` rather than `DENIED` so the embedder can
+distinguish "the user said no" from "this environment can't be
+authorized." On Windows (`Shell_NotifyIcon` balloons) and Linux
+(`libnotify` / `notify-send`) the underlying APIs have no permission
+model — both `query_permission` and `request_permission` report
+`GRANTED` synchronously.

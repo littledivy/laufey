@@ -896,6 +896,16 @@ extern void Backend_SetTrayDoubleClickHandler_Mac(void* data, uint32_t tray_id,
                                                   void* user_data);
 extern void Backend_SetTrayIconDark_Mac(void* data, uint32_t tray_id,
                                         const void* png_bytes, size_t len);
+extern uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
+                                             wef_notification_event_fn on_event,
+                                             void* user_data);
+extern void Backend_CloseNotification_Mac(void* data, uint32_t notification_id);
+extern void Backend_QueryPermission_Mac(void* data, int kind,
+                                        wef_permission_callback_fn cb,
+                                        void* user_data);
+extern void Backend_RequestPermission_Mac(void* data, int kind,
+                                          wef_permission_callback_fn cb,
+                                          void* user_data);
 #elif defined(__linux__)
 // Defined in runtime_loader_linux.cc
 extern void Backend_ShowContextMenu_Linux(void* data, uint32_t window_id, int x,
@@ -921,6 +931,40 @@ extern void Backend_SetTrayDoubleClickHandler_Linux(void* data,
                                                     void* user_data);
 extern void Backend_SetTrayIconDark_Linux(void* data, uint32_t tray_id,
                                           const void* png_bytes, size_t len);
+extern "C" uint32_t Backend_ShowNotification_Linux(
+    void* data, wef_value_t* options, wef_notification_event_fn on_event,
+    void* user_data);
+extern "C" void Backend_CloseNotification_Linux(void* data,
+                                                uint32_t notification_id);
+#endif
+
+// --- Permissions / runtime authorization ---
+//
+// macOS routes to UNUserNotificationCenter (see runtime_loader_mac.mm).
+// Windows uses Shell_NotifyIcon balloons today which have no permission
+// model; Linux uses libnotify which is equally permission-less. Both
+// report GRANTED synchronously for WEF_PERMISSION_NOTIFICATIONS and
+// UNSUPPORTED for any other kind.
+#if !defined(__APPLE__)
+static void Backend_QueryPermission_Stub(void* /*data*/, int kind,
+                                         wef_permission_callback_fn cb,
+                                         void* user_data) {
+  if (!cb)
+    return;
+  cb(user_data, kind == WEF_PERMISSION_NOTIFICATIONS
+                    ? WEF_PERMISSION_STATUS_GRANTED
+                    : WEF_PERMISSION_STATUS_UNSUPPORTED);
+}
+
+static void Backend_RequestPermission_Stub(void* /*data*/, int kind,
+                                           wef_permission_callback_fn cb,
+                                           void* user_data) {
+  if (!cb)
+    return;
+  cb(user_data, kind == WEF_PERMISSION_NOTIFICATIONS
+                    ? WEF_PERMISSION_STATUS_GRANTED
+                    : WEF_PERMISSION_STATUS_UNSUPPORTED);
+}
 #endif
 
 // --- Dock / taskbar (Windows + Linux) ---
@@ -1026,6 +1070,34 @@ static void Backend_BounceDock_Win(void* data, int type) {
 // WM_TRAYICON (one per process). PNG → HICON via WIC.
 
 #define WM_WEF_TRAYICON (WM_APP + 1)
+#define WM_WEF_NOTIFICATION (WM_APP + 2)
+
+// Notifications get a separate uid space from tray icons so they don't
+// collide on the shared g_tray_msg_hwnd.
+struct WinNotifEntry {
+  UINT uid;
+  HICON hicon;  // hidden icon for the balloon (one per notification)
+  std::string tag;
+  wef_notification_event_fn on_event;
+  void* user_data;
+  bool require_interaction;
+};
+static std::mutex& NotifMutexWin() {
+  static std::mutex m;
+  return m;
+}
+static std::map<uint32_t, WinNotifEntry>& NotifMapWin() {
+  static std::map<uint32_t, WinNotifEntry> map;
+  return map;
+}
+// uid (Shell_NotifyIcon ID) → notification_id (our id space)
+static std::map<UINT, uint32_t>& NotifUidToIdWin() {
+  static std::map<UINT, uint32_t> map;
+  return map;
+}
+static std::atomic<uint32_t> g_next_notif_id_win{1};
+// uids start above any reasonable tray-id range to avoid colliding.
+static std::atomic<UINT> g_next_notif_uid{0x4000};
 
 struct WinTrayEntry {
   UINT uid;
@@ -1063,6 +1135,62 @@ static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (msg == WM_SETTINGCHANGE) {
     if (lp && wcscmp((LPCWSTR)lp, L"ImmersiveColorSet") == 0) {
       ReapplyAllWinTrayIcons();
+    }
+    return 0;
+  }
+  if (msg == WM_WEF_NOTIFICATION) {
+    UINT uid = (UINT)wp;
+    UINT event = LOWORD(lp);
+    uint32_t nid = 0;
+    {
+      std::lock_guard<std::mutex> lock(NotifMutexWin());
+      auto it = NotifUidToIdWin().find(uid);
+      if (it != NotifUidToIdWin().end())
+        nid = it->second;
+    }
+    if (!nid)
+      return 0;
+    int reason = -1;
+    if (event == NIN_BALLOONSHOW)
+      reason = WEF_NOTIFICATION_SHOWN;
+    else if (event == NIN_BALLOONUSERCLICK)
+      reason = WEF_NOTIFICATION_CLICKED;
+    else if (event == NIN_BALLOONHIDE || event == NIN_BALLOONTIMEOUT)
+      reason = WEF_NOTIFICATION_CLOSED;
+    if (reason < 0)
+      return 0;
+    wef_notification_event_fn fn = nullptr;
+    void* user_data = nullptr;
+    bool is_terminal =
+        (reason == WEF_NOTIFICATION_CLOSED ||
+         reason == WEF_NOTIFICATION_CLICKED);
+    {
+      std::lock_guard<std::mutex> lock(NotifMutexWin());
+      auto it = NotifMapWin().find(nid);
+      if (it != NotifMapWin().end()) {
+        fn = it->second.on_event;
+        user_data = it->second.user_data;
+      }
+    }
+    if (fn)
+      fn(user_data, nid, reason, nullptr);
+    if (is_terminal) {
+      // Tear down the Shell_NotifyIcon on terminal events so the hidden
+      // icon doesn't accumulate. require_interaction has no equivalent
+      // on Windows balloons (the system-level toast governs lifetime).
+      std::lock_guard<std::mutex> lock(NotifMutexWin());
+      auto it = NotifMapWin().find(nid);
+      if (it != NotifMapWin().end()) {
+        NOTIFYICONDATAW nid_data = {};
+        nid_data.cbSize = sizeof(nid_data);
+        nid_data.hWnd = hwnd;
+        nid_data.uID = it->second.uid;
+        Shell_NotifyIconW(NIM_DELETE, &nid_data);
+        if (it->second.hicon)
+          DestroyIcon(it->second.hicon);
+        NotifUidToIdWin().erase(it->second.uid);
+        NotifMapWin().erase(it);
+      }
     }
     return 0;
   }
@@ -1562,6 +1690,208 @@ void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
                           tray_id, handler, user_data));
 }
 
+// --- Notifications (Windows) ---
+//
+// Implemented as a hidden Shell_NotifyIcon balloon. On Windows 10/11 the
+// shell intercepts the balloon and renders a system toast (with grouping,
+// Action Center entry, etc.). Click → CLICKED, dismiss/timeout → CLOSED.
+// Action buttons aren't supported by NIIF balloons — `actions` from the
+// options dict are silently ignored on Windows.
+
+static HICON LoadDefaultAppIcon() {
+  HICON h = (HICON)LoadImageW(GetModuleHandleW(nullptr), IDI_APPLICATION,
+                              IMAGE_ICON, 0, 0, LR_SHARED | LR_DEFAULTSIZE);
+  return h;
+}
+
+static uint32_t Backend_ShowNotification_Win(
+    void* data, wef_value_t* options, wef_notification_event_fn on_event,
+    void* user_data) {
+  if (!options)
+    return 0;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  const wef_backend_api_t* api = &loader->GetBackendApi();
+  if (!api->value_is_dict(options)) {
+    api->value_free(options);
+    return 0;
+  }
+
+  auto get_string = [&](const char* key) -> std::string {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_string(v))
+      return std::string();
+    size_t len = 0;
+    char* s = api->value_get_string(v, &len);
+    if (!s)
+      return std::string();
+    std::string out(s, len);
+    api->value_free_string(s);
+    return out;
+  };
+  auto get_bool = [&](const char* key, bool dfl) -> bool {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_bool(v))
+      return dfl;
+    return api->value_get_bool(v);
+  };
+  auto get_binary = [&](const char* key) -> std::vector<BYTE> {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_binary(v))
+      return {};
+    size_t len = 0;
+    const void* ptr = api->value_get_binary(v, &len);
+    if (!ptr || len == 0)
+      return {};
+    return std::vector<BYTE>((const BYTE*)ptr, (const BYTE*)ptr + len);
+  };
+
+  std::string title = get_string("title");
+  std::string body = get_string("body");
+  std::string tag = get_string("tag");
+  bool silent = get_bool("silent", false);
+  std::vector<BYTE> icon_png = get_binary("icon");
+
+  api->value_free(options);
+
+  // Tag-based replacement: drop any existing notification with the same tag.
+  if (!tag.empty()) {
+    std::vector<uint32_t> to_drop;
+    {
+      std::lock_guard<std::mutex> lock(NotifMutexWin());
+      for (auto& [id, e] : NotifMapWin()) {
+        if (e.tag == tag)
+          to_drop.push_back(id);
+      }
+    }
+    for (uint32_t old : to_drop) {
+      // Re-enter through Backend_CloseNotification_Win below for cleanup
+      // symmetry — defined later in this section, but the closure captures
+      // it through the function-pointer table so a forward call is fine.
+      // Simpler: tear down inline.
+      std::lock_guard<std::mutex> lock(NotifMutexWin());
+      auto it = NotifMapWin().find(old);
+      if (it == NotifMapWin().end())
+        continue;
+      HWND hwnd = g_tray_msg_hwnd;
+      if (hwnd) {
+        NOTIFYICONDATAW del = {};
+        del.cbSize = sizeof(del);
+        del.hWnd = hwnd;
+        del.uID = it->second.uid;
+        Shell_NotifyIconW(NIM_DELETE, &del);
+      }
+      if (it->second.hicon)
+        DestroyIcon(it->second.hicon);
+      NotifUidToIdWin().erase(it->second.uid);
+      NotifMapWin().erase(it);
+    }
+  }
+
+  uint32_t nid = g_next_notif_id_win.fetch_add(1, std::memory_order_relaxed);
+  UINT uid = g_next_notif_uid.fetch_add(1, std::memory_order_relaxed);
+
+  std::wstring wtitle, wbody;
+  if (!title.empty()) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, nullptr, 0);
+    wtitle.resize(n > 0 ? n - 1 : 0);
+    if (n > 0)
+      MultiByteToWideChar(CP_UTF8, 0, title.c_str(), -1, wtitle.data(), n);
+  }
+  if (!body.empty()) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, body.c_str(), -1, nullptr, 0);
+    wbody.resize(n > 0 ? n - 1 : 0);
+    if (n > 0)
+      MultiByteToWideChar(CP_UTF8, 0, body.c_str(), -1, wbody.data(), n);
+  }
+
+  CefPostTask(
+      TID_UI,
+      base::BindOnce(
+          [](uint32_t nid, UINT uid, std::wstring wtitle, std::wstring wbody,
+             std::string tag, bool silent, std::vector<BYTE> icon_png,
+             wef_notification_event_fn on_event, void* user_data) {
+            HWND hwnd = EnsureTrayMessageWindow();
+            if (!hwnd)
+              return;
+
+            HICON hicon = nullptr;
+            if (!icon_png.empty()) {
+              hicon = DecodePngToHicon(icon_png.data(), icon_png.size(),
+                                       GetSystemMetrics(SM_CXICON));
+            }
+            if (!hicon)
+              hicon = LoadDefaultAppIcon();
+
+            NOTIFYICONDATAW nd = {};
+            nd.cbSize = sizeof(nd);
+            nd.hWnd = hwnd;
+            nd.uID = uid;
+            nd.uFlags = NIF_MESSAGE | NIF_ICON | NIF_INFO;
+            nd.uCallbackMessage = WM_WEF_NOTIFICATION;
+            nd.hIcon = hicon;
+            wcsncpy_s(nd.szInfoTitle, wtitle.c_str(), _TRUNCATE);
+            wcsncpy_s(nd.szInfo, wbody.c_str(), _TRUNCATE);
+            nd.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+            if (silent)
+              nd.dwInfoFlags |= NIIF_NOSOUND;
+
+            // Add (or modify) the icon, then NIM_MODIFY with NIF_INFO to
+            // trigger the balloon. Using a single ADD with NIF_INFO works
+            // on modern Windows.
+            if (!Shell_NotifyIconW(NIM_ADD, &nd)) {
+              if (hicon)
+                DestroyIcon(hicon);
+              return;
+            }
+
+            std::lock_guard<std::mutex> lock(NotifMutexWin());
+            WinNotifEntry e = {};
+            e.uid = uid;
+            e.hicon = hicon;
+            e.tag = tag;
+            e.on_event = on_event;
+            e.user_data = user_data;
+            NotifMapWin()[nid] = e;
+            NotifUidToIdWin()[uid] = nid;
+          },
+          nid, uid, std::move(wtitle), std::move(wbody), std::move(tag), silent,
+          std::move(icon_png), on_event, user_data));
+
+  return nid;
+}
+
+static void Backend_CloseNotification_Win(void* /*data*/,
+                                          uint32_t notification_id) {
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](uint32_t nid) {
+                            HWND hwnd = g_tray_msg_hwnd;
+                            wef_notification_event_fn fn = nullptr;
+                            void* ud = nullptr;
+                            {
+                              std::lock_guard<std::mutex> lock(NotifMutexWin());
+                              auto it = NotifMapWin().find(nid);
+                              if (it == NotifMapWin().end())
+                                return;
+                              if (hwnd) {
+                                NOTIFYICONDATAW del = {};
+                                del.cbSize = sizeof(del);
+                                del.hWnd = hwnd;
+                                del.uID = it->second.uid;
+                                Shell_NotifyIconW(NIM_DELETE, &del);
+                              }
+                              if (it->second.hicon)
+                                DestroyIcon(it->second.hicon);
+                              NotifUidToIdWin().erase(it->second.uid);
+                              fn = it->second.on_event;
+                              ud = it->second.user_data;
+                              NotifMapWin().erase(it);
+                            }
+                            if (fn)
+                              fn(ud, nid, WEF_NOTIFICATION_CLOSED, nullptr);
+                          },
+                          notification_id));
+}
+
 #elif defined(__linux__)
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -1957,6 +2287,27 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_tray_double_click_handler =
       Backend_SetTrayDoubleClickHandler_Linux;
   backend_api_.set_tray_icon_dark = Backend_SetTrayIconDark_Linux;
+#endif
+
+  // --- Notifications ---
+#if defined(__APPLE__)
+  backend_api_.show_notification = Backend_ShowNotification_Mac;
+  backend_api_.close_notification = Backend_CloseNotification_Mac;
+#elif defined(_WIN32)
+  backend_api_.show_notification = Backend_ShowNotification_Win;
+  backend_api_.close_notification = Backend_CloseNotification_Win;
+#elif defined(__linux__)
+  backend_api_.show_notification = Backend_ShowNotification_Linux;
+  backend_api_.close_notification = Backend_CloseNotification_Linux;
+#endif
+
+  // --- Permissions ---
+#if defined(__APPLE__)
+  backend_api_.query_permission = Backend_QueryPermission_Mac;
+  backend_api_.request_permission = Backend_RequestPermission_Mac;
+#else
+  backend_api_.query_permission = Backend_QueryPermission_Stub;
+  backend_api_.request_permission = Backend_RequestPermission_Stub;
 #endif
 }
 

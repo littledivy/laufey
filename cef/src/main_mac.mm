@@ -82,6 +82,70 @@ extern void* g_dock_reopen_data;
 }
 @end
 
+// Cmd+C/V/X/A on macOS dispatch through the main menu's performKeyEquivalent:
+// — Cocoa matches the keystroke against menu items, then sends their action
+// (cut:/copy:/paste:/selectAll:) up the responder chain to Chromium's content
+// view, which forwards it to the page. Without these items in the main menu,
+// the standard editing shortcuts have nowhere to land. Embedder-provided
+// menus get this Edit submenu force-appended in
+// runtime_loader_mac.mm so the shortcuts keep working.
+NSMenu* BuildDefaultEditSubmenu() {
+  NSMenu* edit = [[NSMenu alloc] initWithTitle:@"Edit"];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                           action:@selector(undo:)
+                                    keyEquivalent:@"z"]];
+  NSMenuItem* redo = [[NSMenuItem alloc] initWithTitle:@"Redo"
+                                                action:@selector(redo:)
+                                         keyEquivalent:@"Z"];
+  [redo setKeyEquivalentModifierMask:(NSEventModifierFlagCommand |
+                                      NSEventModifierFlagShift)];
+  [edit addItem:redo];
+  [edit addItem:[NSMenuItem separatorItem]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Cut"
+                                           action:@selector(cut:)
+                                    keyEquivalent:@"x"]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Copy"
+                                           action:@selector(copy:)
+                                    keyEquivalent:@"c"]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Paste"
+                                           action:@selector(paste:)
+                                    keyEquivalent:@"v"]];
+  [edit addItem:[NSMenuItem separatorItem]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Select All"
+                                           action:@selector(selectAll:)
+                                    keyEquivalent:@"a"]];
+  return edit;
+}
+
+static bool MenuTreeHasCopyAction(NSMenu* menu) {
+  for (NSMenuItem* item in [menu itemArray]) {
+    if ([item action] == @selector(copy:)) return true;
+    if ([item submenu] && MenuTreeHasCopyAction([item submenu])) return true;
+  }
+  return false;
+}
+
+// Force an Edit submenu into the menubar if the embedder didn't include one.
+// Without copy:/paste: items somewhere in the menu, Cmd+C/V silently no-op.
+void EnsureEditMenu(NSMenu* menubar) {
+  if (MenuTreeHasCopyAction(menubar)) return;
+  NSMenuItem* editItem = [[NSMenuItem alloc] init];
+  [editItem setSubmenu:BuildDefaultEditSubmenu()];
+  [menubar addItem:editItem];
+}
+
+static void InstallDefaultEditMenu() {
+  NSMenu* mainMenu = [[NSMenu alloc] init];
+
+  // Empty placeholder so AppKit fills slot 0 with the bold app name.
+  NSMenuItem* appItem = [[NSMenuItem alloc] init];
+  [appItem setSubmenu:[[NSMenu alloc] init]];
+  [mainMenu addItem:appItem];
+
+  EnsureEditMenu(mainMenu);
+  [NSApp setMainMenu:mainMenu];
+}
+
 static int run_headless(const char* runtimePath) {
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
 
@@ -163,6 +227,17 @@ int main(int argc, char* argv[]) {
     [WefApplication sharedApplication];
     CHECK([NSApp isKindOfClass:[WefApplication class]]);
 
+    // The bundle's CFBundleExecutable is a sh launcher that exec's this
+    // binary, so LaunchServices doesn't auto-register us as a foreground
+    // app. Call this before CefInitialize so CEF's startup sees a
+    // properly-registered NSApp — otherwise NSDockTile.setBadgeLabel: is
+    // silently ignored.
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+
+    [[NSApp dockTile] setBadgeLabel:@"PRE"];
+    NSLog(@"[wef-debug] PRE-CEF badge set, label=%@",
+          [[NSApp dockTile] badgeLabel]);
+
     CefSettings settings;
     settings.no_sandbox = true;
 
@@ -183,7 +258,18 @@ int main(int argc, char* argv[]) {
       return CefGetExitCode();
     }
 
-    NSApp.delegate = [[WefAppDelegate alloc] init];
+    InstallDefaultEditMenu();
+
+    // NSApp.delegate is a weak property — keep a strong reference here so
+    // the delegate isn't released immediately under ARC.
+    static WefAppDelegate* delegate = [[WefAppDelegate alloc] init];
+    NSApp.delegate = delegate;
+
+    [NSApp activateIgnoringOtherApps:YES];
+
+    [[NSApp dockTile] setBadgeLabel:@"POST"];
+    NSLog(@"[wef-debug] POST-CEF badge set, label=%@",
+          [[NSApp dockTile] badgeLabel]);
 
     CefRunMessageLoop();
 

@@ -625,6 +625,25 @@ class WebKitGTKBackend : public WefBackend {
   void SetTrayClickHandler(uint32_t tray_id, wef_tray_click_fn handler,
                            void* user_data) override;
 
+  uint32_t ShowNotification(wef_value_t* options,
+                            const wef_backend_api_t* api,
+                            wef_notification_event_fn on_event,
+                            void* user_data) override;
+  void CloseNotification(uint32_t notification_id) override;
+
+  // libnotify / notify-send have no permission model — always granted.
+  void QueryPermission(int kind, wef_permission_callback_fn cb,
+                       void* user_data) override {
+    if (cb)
+      cb(user_data, kind == WEF_PERMISSION_NOTIFICATIONS
+                        ? WEF_PERMISSION_STATUS_GRANTED
+                        : WEF_PERMISSION_STATUS_UNSUPPORTED);
+  }
+  void RequestPermission(int kind, wef_permission_callback_fn cb,
+                         void* user_data) override {
+    QueryPermission(kind, cb, user_data);
+  }
+
   void HandleJsMessage(uint32_t window_id, const char* json);
 
  private:
@@ -1863,6 +1882,124 @@ void WebKitGTKBackend::SetTrayClickHandler(uint32_t /*tray_id*/,
                                            void* /*user_data*/) {
   // AppIndicator has no left-click event; the indicator's menu pops up on
   // any click. Left-click handlers are a no-op on Linux.
+}
+
+// ============================================================================
+// Notifications (WebKitGTK Linux)
+// ============================================================================
+//
+// Same as the CEF Linux backend: shell out to `notify-send`. notify-send
+// is fire-and-forget, so on_event only sees SHOWN (synthetic, fired
+// immediately after spawn) and CLOSED (synthetic, fired from
+// CloseNotification). Click / action events are not surfaced.
+
+namespace {
+
+struct WvLinuxNotifEntry {
+  std::string tag;
+  wef_notification_event_fn on_event;
+  void* user_data;
+};
+std::mutex& WvNotifMutexLinux() {
+  static std::mutex m;
+  return m;
+}
+std::map<uint32_t, WvLinuxNotifEntry>& WvNotifMapLinux() {
+  static std::map<uint32_t, WvLinuxNotifEntry> map;
+  return map;
+}
+std::atomic<uint32_t> g_wv_next_notif_id_linux{1};
+
+std::string WvShellEscape(const std::string& s) {
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'')
+      out += "'\\''";
+    else
+      out += c;
+  }
+  out += "'";
+  return out;
+}
+
+}  // namespace
+
+uint32_t WebKitGTKBackend::ShowNotification(
+    wef_value_t* options, const wef_backend_api_t* api,
+    wef_notification_event_fn on_event, void* user_data) {
+  if (!options)
+    return 0;
+  if (!api->value_is_dict(options)) {
+    api->value_free(options);
+    return 0;
+  }
+
+  auto get_string = [&](const char* key) -> std::string {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_string(v))
+      return std::string();
+    size_t len = 0;
+    char* s = api->value_get_string(v, &len);
+    if (!s)
+      return std::string();
+    std::string out(s, len);
+    api->value_free_string(s);
+    return out;
+  };
+  auto get_bool = [&](const char* key, bool dfl) -> bool {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_bool(v))
+      return dfl;
+    return api->value_get_bool(v);
+  };
+
+  std::string title = get_string("title");
+  std::string body = get_string("body");
+  std::string tag = get_string("tag");
+  bool require_interaction = get_bool("require_interaction", false);
+  api->value_free(options);
+
+  uint32_t nid =
+      g_wv_next_notif_id_linux.fetch_add(1, std::memory_order_relaxed);
+
+  std::string cmd = "notify-send";
+  if (require_interaction)
+    cmd += " --urgency=critical";
+  if (!tag.empty()) {
+    cmd += " --hint=string:x-canonical-private-synchronous:";
+    cmd += WvShellEscape(tag);
+  }
+  cmd += " -- ";
+  cmd += WvShellEscape(title);
+  cmd += " ";
+  cmd += WvShellEscape(body);
+  cmd += " &";
+  int rc = std::system(cmd.c_str());
+  (void)rc;
+
+  {
+    std::lock_guard<std::mutex> lock(WvNotifMutexLinux());
+    WvNotifMapLinux()[nid] = {tag, on_event, user_data};
+  }
+  if (on_event)
+    on_event(user_data, nid, WEF_NOTIFICATION_SHOWN, nullptr);
+  return nid;
+}
+
+void WebKitGTKBackend::CloseNotification(uint32_t notification_id) {
+  wef_notification_event_fn fn = nullptr;
+  void* ud = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(WvNotifMutexLinux());
+    auto it = WvNotifMapLinux().find(notification_id);
+    if (it == WvNotifMapLinux().end())
+      return;
+    fn = it->second.on_event;
+    ud = it->second.user_data;
+    WvNotifMapLinux().erase(it);
+  }
+  if (fn)
+    fn(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
 }
 
 // ============================================================================

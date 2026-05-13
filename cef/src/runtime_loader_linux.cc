@@ -528,3 +528,133 @@ void Backend_SetTrayIconDark_Linux(void* /*data*/, uint32_t /*tray_id*/,
                                    const void* /*png_bytes*/, size_t /*len*/) {}
 
 #endif  // WEF_HAVE_APPINDICATOR
+
+// ---------------------------------------------------------------------------
+// Notifications (Linux): shells out to `notify-send`, which exists on
+// effectively every modern desktop Linux. Doesn't surface click / action /
+// close events back to us (notify-send is fire-and-forget), so on_event is
+// only invoked synchronously with SHOWN immediately after spawn and CLOSED
+// from close_notification. Actions in the options dict are ignored.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct LinuxNotifEntry {
+  std::string tag;
+  wef_notification_event_fn on_event;
+  void* user_data;
+};
+
+std::mutex& NotifMutexLinux() {
+  static std::mutex m;
+  return m;
+}
+std::map<uint32_t, LinuxNotifEntry>& NotifMapLinux() {
+  static std::map<uint32_t, LinuxNotifEntry> map;
+  return map;
+}
+std::atomic<uint32_t> g_next_notif_id_linux{1};
+
+std::string ShellEscape(const std::string& s) {
+  // Wrap in single quotes; escape any embedded single quotes.
+  std::string out = "'";
+  for (char c : s) {
+    if (c == '\'')
+      out += "'\\''";
+    else
+      out += c;
+  }
+  out += "'";
+  return out;
+}
+
+}  // namespace
+
+extern "C" uint32_t Backend_ShowNotification_Linux(
+    void* data, wef_value_t* options, wef_notification_event_fn on_event,
+    void* user_data) {
+  if (!options)
+    return 0;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  const wef_backend_api_t* api = &loader->GetBackendApi();
+  if (!api->value_is_dict(options)) {
+    api->value_free(options);
+    return 0;
+  }
+
+  auto get_string = [&](const char* key) -> std::string {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_string(v))
+      return std::string();
+    size_t len = 0;
+    char* s = api->value_get_string(v, &len);
+    if (!s)
+      return std::string();
+    std::string out(s, len);
+    api->value_free_string(s);
+    return out;
+  };
+  auto get_bool = [&](const char* key, bool dfl) -> bool {
+    wef_value_t* v = api->value_dict_get(options, key);
+    if (!v || !api->value_is_bool(v))
+      return dfl;
+    return api->value_get_bool(v);
+  };
+
+  std::string title = get_string("title");
+  std::string body = get_string("body");
+  std::string tag = get_string("tag");
+  bool require_interaction = get_bool("require_interaction", false);
+  api->value_free(options);
+
+  uint32_t nid = g_next_notif_id_linux.fetch_add(1, std::memory_order_relaxed);
+
+  std::string cmd = "notify-send";
+  if (require_interaction) {
+    cmd += " --urgency=critical";
+  }
+  if (!tag.empty()) {
+    // notify-send doesn't support a "replace this id" flag without
+    // libnotify-tools 0.7.10+; --hint=string:x-canonical-private-synchronous
+    // is honored by most servers and provides the desired collapse.
+    cmd += " --hint=string:x-canonical-private-synchronous:";
+    cmd += ShellEscape(tag);
+  }
+  cmd += " -- ";
+  cmd += ShellEscape(title);
+  cmd += " ";
+  cmd += ShellEscape(body);
+  cmd += " &";  // background; we don't wait for the notification daemon
+
+  int rc = std::system(cmd.c_str());
+  (void)rc;  // ignore — even on failure we still create the entry
+
+  {
+    std::lock_guard<std::mutex> lock(NotifMutexLinux());
+    NotifMapLinux()[nid] = {tag, on_event, user_data};
+  }
+  if (on_event) {
+    on_event(user_data, nid, WEF_NOTIFICATION_SHOWN, nullptr);
+  }
+  return nid;
+}
+
+extern "C" void Backend_CloseNotification_Linux(void* /*data*/,
+                                                uint32_t notification_id) {
+  wef_notification_event_fn fn = nullptr;
+  void* ud = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(NotifMutexLinux());
+    auto it = NotifMapLinux().find(notification_id);
+    if (it == NotifMapLinux().end())
+      return;
+    fn = it->second.on_event;
+    ud = it->second.user_data;
+    NotifMapLinux().erase(it);
+  }
+  // The OS notification has its own lifecycle — we can't programmatically
+  // close it via notify-send. Fire the CLOSED callback so the runtime can
+  // clean up its handler bookkeeping.
+  if (fn)
+    fn(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
+}
