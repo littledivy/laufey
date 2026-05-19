@@ -38,4 +38,31 @@ void SetDockVisibleMac(bool visible) {
   });
 }
 
+// --- Dock menu + reopen handler storage (read by each backend's AppDelegate)
+
+namespace {
+NSMenu* g_dock_menu = nil;
+wef_dock_reopen_fn g_dock_reopen_fn = nullptr;
+void* g_dock_reopen_data = nullptr;
+}  // namespace
+
+void SetDockMenuMac(NSMenu* menu) {
+  g_dock_menu = menu;
+}
+
+NSMenu* GetDockMenuMac() {
+  return g_dock_menu;
+}
+
+void SetDockReopenHandlerMac(wef_dock_reopen_fn handler, void* user_data) {
+  g_dock_reopen_fn = handler;
+  g_dock_reopen_data = user_data;
+}
+
+void FireDockReopenMac(bool has_visible_windows) {
+  if (g_dock_reopen_fn) {
+    g_dock_reopen_fn(g_dock_reopen_data, has_visible_windows);
+  }
+}
+
 }  // namespace wef_common

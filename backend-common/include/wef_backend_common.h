@@ -83,7 +83,71 @@ uint32_t ShowNotificationWin(const NotificationOptions& opts,
                              wef_notification_event_fn on_event,
                              void* user_data);
 void CloseNotificationWin(uint32_t notification_id);
+
+// ---------------------------------------------------------------------------
+// Tray / status-bar icon (Windows, Shell_NotifyIcon)
+// ---------------------------------------------------------------------------
+//
+// Hidden message-only window + Shell_NotifyIcon + WIC PNG decode.
+// Light/dark icons are resolved against the AppsUseLightTheme registry
+// value and re-applied automatically on WM_SETTINGCHANGE
+// (ImmersiveColorSet) notifications.
+//
+// All functions are synchronous — callers that need to dispatch to a
+// UI thread (e.g. CEF's TID_UI) should marshal before calling.
+//
+// CreateTrayIconWin returns the new id immediately (allocated atomically).
+// FinalizeTrayIconWin must then be called on the thread that pumps the
+// tray's message loop (CEF: TID_UI; webview: WebView2 UI thread) to do
+// the Shell_NotifyIcon setup. Splitting these lets the trampoline
+// return the id synchronously even when it has to marshal the actual
+// Shell_NotifyIcon work onto the UI thread.
+
+uint32_t CreateTrayIconWin();
+void FinalizeTrayIconWin(uint32_t tray_id);
+void DestroyTrayIconWin(uint32_t tray_id);
+void SetTrayIconWin(uint32_t tray_id, const void* png_bytes, size_t len);
+void SetTrayIconDarkWin(uint32_t tray_id, const void* png_bytes, size_t len);
+void SetTrayTooltipWin(uint32_t tray_id, const char* tooltip_or_null);
+void SetTrayMenuWin(uint32_t tray_id, wef_value_t* menu_template,
+                     const wef_backend_api_t* api,
+                     wef_menu_click_fn on_click, void* on_click_data);
+void SetTrayClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
+                              void* user_data);
+void SetTrayDoubleClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
+                                    void* user_data);
 #endif
+
+// ---------------------------------------------------------------------------
+// Title-prefix badge (Windows/Linux dock fallback)
+// ---------------------------------------------------------------------------
+//
+// macOS has NSDockTile.setBadgeLabel; Windows and Linux don't. The
+// Slack/Discord/Telegram convention is to prepend "(N) " to each
+// window's title. This helper centralizes the saved-titles bookkeeping
+// so each backend just iterates its windows, reads the current title
+// via its native API, calls this to compute what to set, then writes
+// the result back via its native API.
+//
+// `window_key` is any backend-chosen unique-per-window value (HWND
+// cast, GtkWindow* cast, internal id — anything). `badge` is the new
+// badge text; empty means clear. Returns the title to apply to the
+// window.
+//
+//   - badge non-empty, first time we see this window: save
+//     `current_title`, return "(badge) current_title".
+//   - badge non-empty, window already has a saved title: return
+//     "(badge) saved_title" (replaces any prior badge prefix).
+//   - badge empty, window has a saved title: forget it, return the
+//     saved title.
+//   - badge empty, no saved title: return `current_title` unchanged.
+std::string ApplyTitlePrefixBadge(uint64_t window_key,
+                                   const std::string& current_title,
+                                   const std::string& badge);
+
+// Forget the saved title for a window (call when a window closes so
+// the map doesn't grow unbounded).
+void ForgetTitlePrefixBadge(uint64_t window_key);
 
 // ---------------------------------------------------------------------------
 // Dialogs (alert / confirm / prompt)
@@ -194,6 +258,20 @@ void BounceDockMac(int type);
 // true → NSApplicationActivationPolicyRegular (dock + menu bar)
 // false → NSApplicationActivationPolicyAccessory (background, no dock)
 void SetDockVisibleMac(bool visible);
+
+// Stores the dock menu set by Backend_SetDockMenu_Mac /
+// WKWebViewBackend::SetDockMenu. Both backends' AppDelegate read this
+// value in applicationDockMenu:. Pass nil to clear.
+#ifdef __OBJC__
+void SetDockMenuMac(NSMenu* menu);
+NSMenu* GetDockMenuMac();
+#endif
+
+// Stores the dock-reopen handler set by Backend_SetDockReopenHandler_Mac /
+// WKWebViewBackend::SetDockReopenHandler. AppDelegate calls
+// FireDockReopenMac() from applicationShouldHandleReopen:hasVisibleWindows:.
+void SetDockReopenHandlerMac(wef_dock_reopen_fn handler, void* user_data);
+void FireDockReopenMac(bool has_visible_windows);
 
 // ---------------------------------------------------------------------------
 // NSMenu builder (macOS)

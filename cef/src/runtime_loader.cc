@@ -984,8 +984,6 @@ static void Backend_RequestPermission_Stub(void* /*data*/, int kind,
 // active, the badge is visually lost — that's a best-effort v1
 // limitation; calling set_dock_badge again re-applies it on top of the
 // (now-stale) saved original.
-static std::mutex g_cef_badge_mutex;
-static std::map<uint32_t, std::string> g_cef_saved_titles;
 
 static void Backend_SetDockBadge_TitlePrefix(void* data,
                                              const char* badge_or_null) {
@@ -1005,19 +1003,10 @@ static void Backend_SetDockBadge_TitlePrefix(void* data,
               auto win = bv->GetWindow();
               if (!win)
                 return;
-              std::lock_guard<std::mutex> lock(g_cef_badge_mutex);
-              if (!bg.empty()) {
-                if (g_cef_saved_titles.find(wid) == g_cef_saved_titles.end()) {
-                  g_cef_saved_titles[wid] = win->GetTitle().ToString();
-                }
-                win->SetTitle("(" + bg + ") " + g_cef_saved_titles[wid]);
-              } else {
-                auto it = g_cef_saved_titles.find(wid);
-                if (it != g_cef_saved_titles.end()) {
-                  win->SetTitle(it->second);
-                  g_cef_saved_titles.erase(it);
-                }
-              }
+              std::string current = win->GetTitle().ToString();
+              std::string next = wef_common::ApplyTitlePrefixBadge(wid, current,
+                                                                    bg);
+              win->SetTitle(next);
             },
             wid, browser, badge));
   });
@@ -1060,455 +1049,53 @@ static void Backend_BounceDock_Win(void* data, int type) {
 // Shell_NotifyIcon + a hidden message-only window that receives
 // WM_TRAYICON (one per process). PNG → HICON via WIC.
 
-#define WM_WEF_TRAYICON (WM_APP + 1)
-// Notifications now live in backend-common (its own message window).
-
-struct WinTrayEntry {
-  UINT uid;
-  HICON hicon_light;
-  HICON hicon_dark;
-  HMENU hmenu;  // tray context menu (right-click)
-  // Shared mapping from menu item command id -> (menu_click callback, item id
-  // string)
-  std::map<UINT, std::string> cmd_to_id;
-  wef_menu_click_fn menu_click_fn;
-  void* menu_click_data;
-  wef_tray_click_fn click_fn;
-  void* click_data;
-  wef_tray_click_fn dblclick_fn;
-  void* dblclick_data;
-};
-
-static std::mutex& TrayMutexWin() {
-  static std::mutex m;
-  return m;
-}
-static std::map<uint32_t, WinTrayEntry>& TrayMapWin() {
-  static std::map<uint32_t, WinTrayEntry> map;
-  return map;
-}
-static std::atomic<uint32_t> g_next_tray_id_win{1};
-static std::atomic<UINT> g_next_cmd_id{1000};
-static HWND g_tray_msg_hwnd = nullptr;
-
-// Forward declared so TrayWndProc can call it on WM_SETTINGCHANGE.
-static bool WinIsDarkMode();
-static void ReapplyAllWinTrayIcons();
-
-static LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-  if (msg == WM_SETTINGCHANGE) {
-    if (lp && wcscmp((LPCWSTR)lp, L"ImmersiveColorSet") == 0) {
-      ReapplyAllWinTrayIcons();
-    }
-    return 0;
-  }
-  if (msg == WM_WEF_TRAYICON) {
-    uint32_t tray_id = (uint32_t)wp;
-    UINT event = LOWORD(lp);
-    if (event == WM_LBUTTONDBLCLK) {
-      wef_tray_click_fn fn = nullptr;
-      void* data = nullptr;
-      {
-        std::lock_guard<std::mutex> lock(TrayMutexWin());
-        auto it = TrayMapWin().find(tray_id);
-        if (it != TrayMapWin().end()) {
-          fn = it->second.dblclick_fn;
-          data = it->second.dblclick_data;
-        }
-      }
-      if (fn)
-        fn(data, tray_id);
-      return 0;
-    }
-    if (event == WM_LBUTTONUP) {
-      wef_tray_click_fn fn = nullptr;
-      void* data = nullptr;
-      {
-        std::lock_guard<std::mutex> lock(TrayMutexWin());
-        auto it = TrayMapWin().find(tray_id);
-        if (it != TrayMapWin().end()) {
-          fn = it->second.click_fn;
-          data = it->second.click_data;
-        }
-      }
-      if (fn)
-        fn(data, tray_id);
-    } else if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
-      HMENU menu = nullptr;
-      {
-        std::lock_guard<std::mutex> lock(TrayMutexWin());
-        auto it = TrayMapWin().find(tray_id);
-        if (it != TrayMapWin().end())
-          menu = it->second.hmenu;
-      }
-      if (menu) {
-        POINT pt;
-        GetCursorPos(&pt);
-        SetForegroundWindow(hwnd);
-        UINT cmd =
-            TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
-                           pt.x, pt.y, 0, hwnd, nullptr);
-        if (cmd) {
-          wef_menu_click_fn fn = nullptr;
-          void* data = nullptr;
-          std::string item_id;
-          {
-            std::lock_guard<std::mutex> lock(TrayMutexWin());
-            auto it = TrayMapWin().find(tray_id);
-            if (it != TrayMapWin().end()) {
-              auto cit = it->second.cmd_to_id.find(cmd);
-              if (cit != it->second.cmd_to_id.end())
-                item_id = cit->second;
-              fn = it->second.menu_click_fn;
-              data = it->second.menu_click_data;
-            }
-          }
-          if (fn && !item_id.empty())
-            fn(data, tray_id, item_id.c_str());
-        }
-      }
-    }
-    return 0;
-  }
-  return DefWindowProc(hwnd, msg, wp, lp);
-}
-
-static HWND EnsureTrayMessageWindow() {
-  if (g_tray_msg_hwnd)
-    return g_tray_msg_hwnd;
-  WNDCLASSEXW wc = {};
-  wc.cbSize = sizeof(wc);
-  wc.lpfnWndProc = TrayWndProc;
-  wc.hInstance = GetModuleHandleW(nullptr);
-  wc.lpszClassName = L"WefTrayMessageWindow";
-  RegisterClassExW(&wc);
-  g_tray_msg_hwnd =
-      CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
-                      nullptr, wc.hInstance, nullptr);
-  return g_tray_msg_hwnd;
-}
-
-static HICON DecodePngToHicon(const void* bytes, size_t len, int desired) {
-  if (!bytes || len == 0)
-    return nullptr;
-  IWICImagingFactory* factory = nullptr;
-  if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) {
-    // Already initialized on this thread is fine.
-  }
-  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
-                              CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
-    return nullptr;
-  }
-  IWICStream* stream = nullptr;
-  factory->CreateStream(&stream);
-  stream->InitializeFromMemory((BYTE*)bytes, (DWORD)len);
-  IWICBitmapDecoder* decoder = nullptr;
-  factory->CreateDecoderFromStream(stream, nullptr,
-                                   WICDecodeMetadataCacheOnLoad, &decoder);
-  IWICBitmapFrameDecode* frame = nullptr;
-  if (decoder)
-    decoder->GetFrame(0, &frame);
-  IWICFormatConverter* conv = nullptr;
-  factory->CreateFormatConverter(&conv);
-  if (frame && conv) {
-    conv->Initialize(frame, GUID_WICPixelFormat32bppBGRA,
-                     WICBitmapDitherTypeNone, nullptr, 0.0,
-                     WICBitmapPaletteTypeCustom);
-  }
-  IWICBitmapScaler* scaler = nullptr;
-  factory->CreateBitmapScaler(&scaler);
-  UINT w = desired, h = desired;
-  if (conv)
-    scaler->Initialize(conv, w, h, WICBitmapInterpolationModeHighQualityCubic);
-  std::vector<BYTE> pixels(w * h * 4);
-  if (scaler)
-    scaler->CopyPixels(nullptr, w * 4, (UINT)pixels.size(), pixels.data());
-  HICON hicon = nullptr;
-  if (scaler) {
-    ICONINFO ii = {};
-    ii.fIcon = TRUE;
-    ii.xHotspot = 0;
-    ii.yHotspot = 0;
-    BITMAPV5HEADER bi = {};
-    bi.bV5Size = sizeof(bi);
-    bi.bV5Width = w;
-    bi.bV5Height = -(LONG)h;  // top-down
-    bi.bV5Planes = 1;
-    bi.bV5BitCount = 32;
-    bi.bV5Compression = BI_BITFIELDS;
-    bi.bV5RedMask = 0x00FF0000;
-    bi.bV5GreenMask = 0x0000FF00;
-    bi.bV5BlueMask = 0x000000FF;
-    bi.bV5AlphaMask = 0xFF000000;
-    HDC hdc = GetDC(nullptr);
-    void* bits = nullptr;
-    ii.hbmColor = CreateDIBSection(hdc, (BITMAPINFO*)&bi, DIB_RGB_COLORS, &bits,
-                                   nullptr, 0);
-    ReleaseDC(nullptr, hdc);
-    if (ii.hbmColor && bits)
-      memcpy(bits, pixels.data(), pixels.size());
-    ii.hbmMask = CreateBitmap(w, h, 1, 1, nullptr);
-    if (ii.hbmColor && ii.hbmMask)
-      hicon = CreateIconIndirect(&ii);
-    if (ii.hbmColor)
-      DeleteObject(ii.hbmColor);
-    if (ii.hbmMask)
-      DeleteObject(ii.hbmMask);
-  }
-  if (scaler)
-    scaler->Release();
-  if (conv)
-    conv->Release();
-  if (frame)
-    frame->Release();
-  if (decoder)
-    decoder->Release();
-  if (stream)
-    stream->Release();
-  if (factory)
-    factory->Release();
-  return hicon;
-}
-
-// Parse the wef_value_t template and build an HMENU, populating cmd_to_id.
-static HMENU BuildWinMenuFromValue(wef_value_t* val,
-                                   const wef_backend_api_t* api,
-                                   std::map<UINT, std::string>& cmd_to_id) {
-  if (!val || !api->value_is_list(val))
-    return nullptr;
-  HMENU menu = CreatePopupMenu();
-  size_t count = api->value_list_size(val);
-  for (size_t i = 0; i < count; ++i) {
-    wef_value_t* itemVal = api->value_list_get(val, i);
-    if (!itemVal || !api->value_is_dict(itemVal))
-      continue;
-
-    // Separator
-    wef_value_t* typeVal = api->value_dict_get(itemVal, "type");
-    if (typeVal && api->value_is_string(typeVal)) {
-      size_t len = 0;
-      char* typeStr = api->value_get_string(typeVal, &len);
-      if (typeStr && std::string(typeStr) == "separator") {
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        api->value_free_string(typeStr);
-        continue;
-      }
-      if (typeStr)
-        api->value_free_string(typeStr);
-    }
-
-    wef_value_t* labelVal = api->value_dict_get(itemVal, "label");
-    std::wstring wlabel;
-    if (labelVal && api->value_is_string(labelVal)) {
-      size_t len = 0;
-      char* s = api->value_get_string(labelVal, &len);
-      if (s) {
-        int n = MultiByteToWideChar(CP_UTF8, 0, s, (int)len, nullptr, 0);
-        wlabel.resize(n);
-        MultiByteToWideChar(CP_UTF8, 0, s, (int)len, wlabel.data(), n);
-        api->value_free_string(s);
-      }
-    }
-
-    wef_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
-    if (submenuVal && api->value_is_list(submenuVal)) {
-      HMENU sub = BuildWinMenuFromValue(submenuVal, api, cmd_to_id);
-      AppendMenuW(menu, MF_POPUP | MF_STRING, (UINT_PTR)sub, wlabel.c_str());
-      continue;
-    }
-
-    wef_value_t* idVal = api->value_dict_get(itemVal, "id");
-    std::string item_id;
-    if (idVal && api->value_is_string(idVal)) {
-      size_t len = 0;
-      char* s = api->value_get_string(idVal, &len);
-      if (s) {
-        item_id = std::string(s, len);
-        api->value_free_string(s);
-      }
-    }
-
-    UINT cmd = g_next_cmd_id.fetch_add(1, std::memory_order_relaxed);
-    UINT flags = MF_STRING;
-    wef_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
-    if (enabledVal && api->value_is_bool(enabledVal) &&
-        !api->value_get_bool(enabledVal)) {
-      flags |= MF_GRAYED;
-    }
-    AppendMenuW(menu, flags, cmd, wlabel.c_str());
-    if (!item_id.empty())
-      cmd_to_id[cmd] = item_id;
-  }
-  return menu;
-}
+// --- Tray (Windows) ---
+//
+// Thin trampolines over backend-common/src/tray_win.cc. CefPostTask
+// marshals to the UI thread since the common impl is synchronous.
 
 uint32_t Backend_CreateTrayIcon_Win(void* /*data*/) {
-  uint32_t tray_id = g_next_tray_id_win.fetch_add(1, std::memory_order_relaxed);
-  // Run on UI thread to create the icon.
+  // Allocate the id synchronously; do the Shell_NotifyIcon setup on the
+  // UI thread so the message-only window is owned by the thread that
+  // pumps messages for it.
+  uint32_t tray_id = wef_common::CreateTrayIconWin();
   CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid) {
-                            HWND hwnd = EnsureTrayMessageWindow();
-                            if (!hwnd)
-                              return;
-                            NOTIFYICONDATAW nid = {};
-                            nid.cbSize = sizeof(nid);
-                            nid.hWnd = hwnd;
-                            nid.uID = tid;
-                            nid.uFlags = NIF_MESSAGE;
-                            nid.uCallbackMessage = WM_WEF_TRAYICON;
-                            Shell_NotifyIconW(NIM_ADD, &nid);
-                            WinTrayEntry entry = {};
-                            entry.uid = tid;
-                            std::lock_guard<std::mutex> lock(TrayMutexWin());
-                            TrayMapWin()[tid] = std::move(entry);
-                          },
+                          [](uint32_t tid) { wef_common::FinalizeTrayIconWin(tid); },
                           tray_id));
   return tray_id;
 }
 
 void Backend_DestroyTrayIcon_Win(void* /*data*/, uint32_t tray_id) {
   CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid) {
-                            HWND hwnd = g_tray_msg_hwnd;
-                            if (!hwnd)
-                              return;
-                            NOTIFYICONDATAW nid = {};
-                            nid.cbSize = sizeof(nid);
-                            nid.hWnd = hwnd;
-                            nid.uID = tid;
-                            Shell_NotifyIconW(NIM_DELETE, &nid);
-                            std::lock_guard<std::mutex> lock(TrayMutexWin());
-                            auto it = TrayMapWin().find(tid);
-                            if (it != TrayMapWin().end()) {
-                              if (it->second.hicon_light)
-                                DestroyIcon(it->second.hicon_light);
-                              if (it->second.hicon_dark)
-                                DestroyIcon(it->second.hicon_dark);
-                              if (it->second.hmenu)
-                                DestroyMenu(it->second.hmenu);
-                              TrayMapWin().erase(it);
-                            }
-                          },
+                          [](uint32_t tid) { wef_common::DestroyTrayIconWin(tid); },
                           tray_id));
-}
-
-static bool WinIsDarkMode() {
-  DWORD data = 1, size = sizeof(data), kind = 0;
-  HKEY key = nullptr;
-  if (RegOpenKeyExW(HKEY_CURRENT_USER,
-                    L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\"
-                    L"Personalize",
-                    0, KEY_READ, &key) != 0) {
-    return false;
-  }
-  LONG rc = RegQueryValueExW(key, L"AppsUseLightTheme", nullptr, &kind,
-                             (LPBYTE)&data, &size);
-  RegCloseKey(key);
-  return (rc == 0 && kind == REG_DWORD && data == 0);
-}
-
-static void ApplyActiveIconWin(uint32_t tray_id) {
-  HWND hwnd = g_tray_msg_hwnd;
-  if (!hwnd)
-    return;
-  std::lock_guard<std::mutex> lock(TrayMutexWin());
-  auto it = TrayMapWin().find(tray_id);
-  if (it == TrayMapWin().end())
-    return;
-  HICON chosen = (WinIsDarkMode() && it->second.hicon_dark)
-                     ? it->second.hicon_dark
-                     : it->second.hicon_light;
-  if (!chosen)
-    return;
-  NOTIFYICONDATAW nid = {};
-  nid.cbSize = sizeof(nid);
-  nid.hWnd = hwnd;
-  nid.uID = tray_id;
-  nid.uFlags = NIF_ICON;
-  nid.hIcon = chosen;
-  Shell_NotifyIconW(NIM_MODIFY, &nid);
-}
-
-static void ReapplyAllWinTrayIcons() {
-  std::vector<uint32_t> ids;
-  {
-    std::lock_guard<std::mutex> lock(TrayMutexWin());
-    for (auto& [tid, e] : TrayMapWin())
-      ids.push_back(tid);
-  }
-  for (uint32_t id : ids)
-    ApplyActiveIconWin(id);
 }
 
 void Backend_SetTrayIcon_Win(void* /*data*/, uint32_t tray_id,
                              const void* png_bytes, size_t len) {
-  if (!png_bytes || len == 0)
-    return;
+  if (!png_bytes || len == 0) return;
   std::vector<BYTE> copy((const BYTE*)png_bytes, (const BYTE*)png_bytes + len);
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid, std::vector<BYTE> bytes) {
-                            HICON hicon =
-                                DecodePngToHicon(bytes.data(), bytes.size(),
-                                                 GetSystemMetrics(SM_CXSMICON));
-                            if (!hicon)
-                              return;
-                            {
-                              std::lock_guard<std::mutex> lock(TrayMutexWin());
-                              auto it = TrayMapWin().find(tid);
-                              if (it == TrayMapWin().end()) {
-                                DestroyIcon(hicon);
-                                return;
-                              }
-                              if (it->second.hicon_light)
-                                DestroyIcon(it->second.hicon_light);
-                              it->second.hicon_light = hicon;
-                            }
-                            ApplyActiveIconWin(tid);
-                          },
-                          tray_id, std::move(copy)));
+  CefPostTask(TID_UI,
+              base::BindOnce(
+                  [](uint32_t tid, std::vector<BYTE> b) {
+                    wef_common::SetTrayIconWin(tid, b.data(), b.size());
+                  },
+                  tray_id, std::move(copy)));
 }
 
 void Backend_SetTrayIconDark_Win(void* /*data*/, uint32_t tray_id,
                                  const void* png_bytes, size_t len) {
-  if (!png_bytes || len == 0) {
-    CefPostTask(TID_UI,
-                base::BindOnce(
-                    [](uint32_t tid) {
-                      {
-                        std::lock_guard<std::mutex> lock(TrayMutexWin());
-                        auto it = TrayMapWin().find(tid);
-                        if (it != TrayMapWin().end() && it->second.hicon_dark) {
-                          DestroyIcon(it->second.hicon_dark);
-                          it->second.hicon_dark = nullptr;
-                        }
-                      }
-                      ApplyActiveIconWin(tid);
-                    },
-                    tray_id));
-    return;
+  std::vector<BYTE> copy;
+  if (png_bytes && len > 0) {
+    copy.assign((const BYTE*)png_bytes, (const BYTE*)png_bytes + len);
   }
-  std::vector<BYTE> copy((const BYTE*)png_bytes, (const BYTE*)png_bytes + len);
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid, std::vector<BYTE> bytes) {
-                            HICON hicon =
-                                DecodePngToHicon(bytes.data(), bytes.size(),
-                                                 GetSystemMetrics(SM_CXSMICON));
-                            if (!hicon)
-                              return;
-                            {
-                              std::lock_guard<std::mutex> lock(TrayMutexWin());
-                              auto it = TrayMapWin().find(tid);
-                              if (it == TrayMapWin().end()) {
-                                DestroyIcon(hicon);
-                                return;
-                              }
-                              if (it->second.hicon_dark)
-                                DestroyIcon(it->second.hicon_dark);
-                              it->second.hicon_dark = hicon;
-                            }
-                            ApplyActiveIconWin(tid);
-                          },
-                          tray_id, std::move(copy)));
+  CefPostTask(TID_UI,
+              base::BindOnce(
+                  [](uint32_t tid, std::vector<BYTE> b) {
+                    wef_common::SetTrayIconDarkWin(
+                        tid, b.empty() ? nullptr : b.data(), b.size());
+                  },
+                  tray_id, std::move(copy)));
 }
 
 void Backend_SetTrayDoubleClickHandler_Win(void* /*data*/, uint32_t tray_id,
@@ -1516,39 +1103,20 @@ void Backend_SetTrayDoubleClickHandler_Win(void* /*data*/, uint32_t tray_id,
                                            void* user_data) {
   CefPostTask(TID_UI, base::BindOnce(
                           [](uint32_t tid, wef_tray_click_fn h, void* d) {
-                            std::lock_guard<std::mutex> lock(TrayMutexWin());
-                            auto it = TrayMapWin().find(tid);
-                            if (it != TrayMapWin().end()) {
-                              it->second.dblclick_fn = h;
-                              it->second.dblclick_data = d;
-                            }
+                            wef_common::SetTrayDoubleClickHandlerWin(tid, h, d);
                           },
                           tray_id, handler, user_data));
 }
 
 void Backend_SetTrayTooltip_Win(void* /*data*/, uint32_t tray_id,
                                 const char* tooltip_or_null) {
-  std::wstring wtip;
-  if (tooltip_or_null && *tooltip_or_null) {
-    int n = MultiByteToWideChar(CP_UTF8, 0, tooltip_or_null, -1, nullptr, 0);
-    wtip.resize(n > 0 ? n - 1 : 0);
-    if (n > 0)
-      MultiByteToWideChar(CP_UTF8, 0, tooltip_or_null, -1, wtip.data(), n);
-  }
+  std::string tip = tooltip_or_null ? tooltip_or_null : std::string();
   CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid, std::wstring t) {
-                            HWND hwnd = g_tray_msg_hwnd;
-                            if (!hwnd)
-                              return;
-                            NOTIFYICONDATAW nid = {};
-                            nid.cbSize = sizeof(nid);
-                            nid.hWnd = hwnd;
-                            nid.uID = tid;
-                            nid.uFlags = NIF_TIP;
-                            wcsncpy_s(nid.szTip, t.c_str(), _TRUNCATE);
-                            Shell_NotifyIconW(NIM_MODIFY, &nid);
+                          [](uint32_t tid, std::string t) {
+                            wef_common::SetTrayTooltipWin(
+                                tid, t.empty() ? nullptr : t.c_str());
                           },
-                          tray_id, std::move(wtip)));
+                          tray_id, std::move(tip)));
 }
 
 void Backend_SetTrayMenu_Win(void* data, uint32_t tray_id,
@@ -1556,31 +1124,14 @@ void Backend_SetTrayMenu_Win(void* data, uint32_t tray_id,
                              wef_menu_click_fn on_click, void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   const wef_backend_api_t* api = &loader->GetBackendApi();
-  CefPostTask(
-      TID_UI,
-      base::BindOnce(
-          [](uint32_t tid, wef_value_t* tmpl, const wef_backend_api_t* a,
-             wef_menu_click_fn cb, void* cb_data) {
-            std::map<UINT, std::string> cmd_to_id;
-            HMENU menu =
-                tmpl ? BuildWinMenuFromValue(tmpl, a, cmd_to_id) : nullptr;
-            if (tmpl)
-              a->value_free(tmpl);
-            std::lock_guard<std::mutex> lock(TrayMutexWin());
-            auto it = TrayMapWin().find(tid);
-            if (it == TrayMapWin().end()) {
-              if (menu)
-                DestroyMenu(menu);
-              return;
-            }
-            if (it->second.hmenu)
-              DestroyMenu(it->second.hmenu);
-            it->second.hmenu = menu;
-            it->second.cmd_to_id = std::move(cmd_to_id);
-            it->second.menu_click_fn = cb;
-            it->second.menu_click_data = cb_data;
-          },
-          tray_id, menu_template, api, on_click, on_click_data));
+  CefPostTask(TID_UI,
+              base::BindOnce(
+                  [](uint32_t tid, wef_value_t* tmpl,
+                     const wef_backend_api_t* a, wef_menu_click_fn cb,
+                     void* cb_data) {
+                    wef_common::SetTrayMenuWin(tid, tmpl, a, cb, cb_data);
+                  },
+                  tray_id, menu_template, api, on_click, on_click_data));
 }
 
 void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
@@ -1588,12 +1139,7 @@ void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
                                      void* user_data) {
   CefPostTask(TID_UI, base::BindOnce(
                           [](uint32_t tid, wef_tray_click_fn h, void* d) {
-                            std::lock_guard<std::mutex> lock(TrayMutexWin());
-                            auto it = TrayMapWin().find(tid);
-                            if (it != TrayMapWin().end()) {
-                              it->second.click_fn = h;
-                              it->second.click_data = d;
-                            }
+                            wef_common::SetTrayClickHandlerWin(tid, h, d);
                           },
                           tray_id, handler, user_data));
 }

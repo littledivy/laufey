@@ -12,6 +12,7 @@
 #include "include/wrapper/cef_library_loader.h"
 #include "app.h"
 #include "runtime_loader.h"
+#include "wef_backend_common.h"
 
 @interface WefApplication : NSApplication <CefAppProtocol> {
  @private
@@ -49,10 +50,8 @@
 }
 @end
 
-// Dock state lives in runtime_loader_mac.mm.
-extern NSMenu* g_dock_menu;
-extern wef_dock_reopen_fn g_dock_reopen_fn;
-extern void* g_dock_reopen_data;
+// Dock menu + reopen handler storage lives in backend-common
+// (wef_common::{Get,Set}DockMenuMac, {Set,Fire}DockReopenHandlerMac).
 
 @interface WefAppDelegate : NSObject <NSApplicationDelegate>
 @end
@@ -69,16 +68,14 @@ extern void* g_dock_reopen_data;
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender
                     hasVisibleWindows:(BOOL)hasVisibleWindows {
-  if (g_dock_reopen_fn) {
-    g_dock_reopen_fn(g_dock_reopen_data, hasVisibleWindows ? true : false);
-  }
+  wef_common::FireDockReopenMac(hasVisibleWindows ? true : false);
   // Always swallow the default "show last hidden window" behavior — the
   // embedder's callback decides what to do.
   return NO;
 }
 
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
-  return g_dock_menu;
+  return wef_common::GetDockMenuMac();
 }
 @end
 

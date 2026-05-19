@@ -3,14 +3,10 @@
 #import <Cocoa/Cocoa.h>
 
 #include "runtime_loader.h"
+#include "wef_backend_common.h"
 
 #include <iostream>
 #include <string>
-
-// Dock state lives in webview_macos.mm.
-extern NSMenu* g_wv_dock_menu;
-extern wef_dock_reopen_fn g_wv_dock_reopen_fn;
-extern void* g_wv_dock_reopen_data;
 
 // Cmd+C/V/X/A on macOS dispatch through the main menu's performKeyEquivalent:
 // — Cocoa matches the keystroke against menu items, then sends their action
@@ -136,17 +132,14 @@ void EnsureEditMenu(NSMenu* menubar) {
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender
                     hasVisibleWindows:(BOOL)hasVisibleWindows {
-  if (g_wv_dock_reopen_fn) {
-    g_wv_dock_reopen_fn(g_wv_dock_reopen_data,
-                        hasVisibleWindows ? true : false);
-  }
+  wef_common::FireDockReopenMac(hasVisibleWindows ? true : false);
   // Always swallow the default "show last hidden window" behavior — the
   // embedder's callback decides what to do.
   return NO;
 }
 
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
-  return g_wv_dock_menu;
+  return wef_common::GetDockMenuMac();
 }
 
 @end

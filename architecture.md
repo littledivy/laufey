@@ -83,34 +83,29 @@ Currently shared:
 | **Notifications** | `notifications_mac.mm` (UN)        | `notifications_win.cc` (NIIF)      | `notifications_linux.cc` (notify-send) |
 | **Dialogs**       | `dialog_mac.mm` (NSAlert)          | `dialog_win.cc` (MessageBoxW + PowerShell prompt) | `dialog_linux.cc` (gtk_message_dialog) |
 | **Permissions**   | `permissions_mac.mm` (UN auth)     | `permissions_stub.cc` (always granted) | `permissions_stub.cc` (always granted) |
-| **Dock (app-scoped)** | `dock_mac.mm` (badge / bounce / visible) | per-backend (FlashWindowEx)        | per-backend (gtk_window_set_urgency_hint) |
+| **Dock**          | `dock_mac.mm` (badge / bounce / visible / dock menu storage / reopen handler) | per-backend (FlashWindowEx) + `title_badge.cc` for the badge | per-backend (gtk_window_set_urgency_hint) + `title_badge.cc` for the badge |
 | **Key mapping**   | `keymap_mac.mm` (NSEvent → W3C)    | `keymap_vk.cc` (VK → W3C; CEF uses on every platform) | `keymap_gdk.cc` (GDK → W3C) |
 | **App / context menu** | `menu_mac.mm` (NSMenu)       | `capi/include/win32_menu.h` (HMENU + SetMenu / TrackPopupMenu) | `menu_linux.cc` (GtkMenu / GtkMenuBar) |
-| **Tray icons**    | `tray_mac.mm` (NSStatusItem)       | per-backend (Shell_NotifyIcon + WIC + HMENU; ~500 LOC dup, see below) | `tray_linux.cc` (libappindicator + g_idle_add) |
+| **Tray icons**    | `tray_mac.mm` (NSStatusItem)       | `tray_win.cc` (Shell_NotifyIcon + WIC + HMENU) | `tray_linux.cc` (libappindicator + g_idle_add) |
 | **Option parsing**| `parse_options.cc` (compiled on every platform; bridges `wef_value_t` → plain structs) |||
+| **Title-prefix badge bookkeeping** | `title_badge.cc` (`ApplyTitlePrefixBadge` — used by CEF Win+Linux and webview Win+Linux for Dock-badge fallback) |||
 
-Note: `win32_menu.h` is the older shared header-only library for Windows menu construction; it predates `backend-common` and stays as-is. The two
-patterns coexist — both backends already use `win32_menu` for Windows
-menus, and `backend-common` for the rest.
+Notes:
 
-Not yet shared:
-
-- **Windows tray icons**: ~500 LOC Shell_NotifyIcon + WIC PNG decode +
-  per-tray HMENU + WndProc-based click dispatch. The two impls are
-  near-identical line-for-line duplicates in
-  `cef/src/runtime_loader.cc` and `webview/src/webview_windows.cc`.
-  Extracting needs a per-tray-uid command-id dispatcher distinct from
-  `win32_menu`'s per-HWND model. Doable but unverifiable from a
-  non-Windows dev box.
-- **Dock fallbacks (Win/Linux)**: title-prefix badge + FlashWindow /
-  GTK urgency hint. These iterate per-window state inside each
-  backend, so sharing them needs either a window-enumeration callback
-  abstraction or moving window-list ownership into common — both
-  bigger lifts than the dedup saves.
-- **Dock menu / reopen handler (macOS)**: stays per-backend because it
-  hooks into each backend's own `WefAppDelegate`. The menu it builds
-  uses `wef_common::BuildNSMenuFromValue`, so the duplication is just
-  the AppDelegate plumbing.
+- `win32_menu.h` is the older shared header-only library for Windows
+  menu construction; it predates `backend-common` and stays as-is.
+  The two patterns coexist — both backends use `win32_menu` for
+  Windows app/context menus, and `backend-common` for the rest.
+- The dock fallback on Windows/Linux still iterates per-window state
+  inside each backend (because the native title-get/set APIs differ —
+  `SetWindowTextW(HWND)` vs `gtk_window_set_title(GtkWindow*)` vs
+  CEF's `CefWindow::SetTitle`), but the saved-titles bookkeeping and
+  `"(badge) " + title` string concatenation are unified in
+  `wef_common::ApplyTitlePrefixBadge`.
+- FlashWindow (Windows) and `gtk_window_set_urgency_hint` (Linux) for
+  `bounce_dock` remain per-backend — each is ~5 LOC and the native
+  call differs enough that an abstraction would cost more than it
+  saves.
 
 To add a new shared API: declare it in `wef_backend_common.h`, add the
 implementation file(s) to `backend-common/CMakeLists.txt`, then call it

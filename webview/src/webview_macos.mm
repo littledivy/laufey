@@ -1298,11 +1298,9 @@ int WKWebViewBackend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
 }
 
 // --- Dock (macOS) ---
-
-// Consumed by AppDelegate in main_mac.mm (declared extern there).
-NSMenu* g_wv_dock_menu = nil;
-wef_dock_reopen_fn g_wv_dock_reopen_fn = nullptr;
-void* g_wv_dock_reopen_data = nullptr;
+//
+// Dock menu + reopen handler storage lives in backend-common; the
+// AppDelegate in main_mac.mm reads via wef_common::{Get,Set,Fire}*.
 
 void WKWebViewBackend::SetDockBadge(const char* badge_or_null) {
   wef_common::SetDockBadgeMac(badge_or_null);
@@ -1318,7 +1316,7 @@ void WKWebViewBackend::SetDockMenu(wef_value_t* menu_template,
                                    void* on_click_data) {
   if (!menu_template) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      g_wv_dock_menu = nil;
+      wef_common::SetDockMenuMac(nil);
     });
     return;
   }
@@ -1326,7 +1324,7 @@ void WKWebViewBackend::SetDockMenu(wef_value_t* menu_template,
     // window_id = 0 because the dock menu is app-scoped.
     NSMenu* menu = wef_common::BuildNSMenuFromValue(menu_template, api,
                                                      on_click, on_click_data, 0);
-    g_wv_dock_menu = menu;
+    wef_common::SetDockMenuMac(menu);
   });
 }
 
@@ -1336,8 +1334,7 @@ void WKWebViewBackend::SetDockVisible(bool visible) {
 
 void WKWebViewBackend::SetDockReopenHandler(wef_dock_reopen_fn handler,
                                             void* user_data) {
-  g_wv_dock_reopen_fn = handler;
-  g_wv_dock_reopen_data = user_data;
+  wef_common::SetDockReopenHandlerMac(handler, user_data);
 }
 
 // --- Tray / status-bar icon (macOS) ---

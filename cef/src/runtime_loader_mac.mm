@@ -414,12 +414,6 @@ void Backend_SetApplicationMenu_Mac(void* data, uint32_t window_id,
 
 // --- Dock (macOS) ---
 
-// Dock menu storage (consumed by WefAppDelegate in main_mac.mm — declared
-// extern there). Reopen handler also stored here for AppDelegate access.
-NSMenu* g_dock_menu = nil;
-wef_dock_reopen_fn g_dock_reopen_fn = nullptr;
-void* g_dock_reopen_data = nullptr;
-
 void Backend_SetDockBadge_Mac(void* /*data*/, const char* badge_or_null) {
   wef_common::SetDockBadgeMac(badge_or_null);
 }
@@ -434,7 +428,7 @@ void Backend_SetDockMenu_Mac(void* data, wef_value_t* menu_template,
   const wef_backend_api_t* api = &loader->GetBackendApi();
   if (!menu_template) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      g_dock_menu = nil;
+      wef_common::SetDockMenuMac(nil);
     });
     return;
   }
@@ -442,7 +436,7 @@ void Backend_SetDockMenu_Mac(void* data, wef_value_t* menu_template,
     // window_id = 0 because dock menu is app-scoped.
     NSMenu* menu = wef_common::BuildNSMenuFromValue(menu_template, api,
                                                      on_click, on_click_data, 0);
-    g_dock_menu = menu;
+    wef_common::SetDockMenuMac(menu);
   });
 }
 
@@ -453,8 +447,7 @@ void Backend_SetDockVisible_Mac(void* /*data*/, bool visible) {
 void Backend_SetDockReopenHandler_Mac(void* /*data*/,
                                       wef_dock_reopen_fn handler,
                                       void* user_data) {
-  g_dock_reopen_fn = handler;
-  g_dock_reopen_data = user_data;
+  wef_common::SetDockReopenHandlerMac(handler, user_data);
 }
 
 // --- Tray / status-bar icon (macOS) ---

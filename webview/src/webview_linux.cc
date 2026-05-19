@@ -1141,33 +1141,20 @@ void WebKitGTKBackend::BounceDock(int /*type*/) {
   }
 }
 
-// Badge via title prefix. See CEF backend for the same best-effort model.
-static std::mutex g_gtk_badge_mutex;
-static std::map<uint32_t, std::string> g_gtk_saved_titles;
-
+// Badge via title prefix. Saved-titles map lives in
+// wef_common::ApplyTitlePrefixBadge.
 void WebKitGTKBackend::SetDockBadge(const char* badge_or_null) {
   std::string badge =
       (badge_or_null && *badge_or_null) ? std::string(badge_or_null) : "";
   std::lock_guard<std::mutex> wlock(windows_mutex_);
-  std::lock_guard<std::mutex> block(g_gtk_badge_mutex);
   for (auto& [wid, state] : windows_) {
     if (!state.window)
       continue;
     GtkWindow* gw = GTK_WINDOW(state.window);
-    if (!badge.empty()) {
-      if (g_gtk_saved_titles.find(wid) == g_gtk_saved_titles.end()) {
-        const char* current = gtk_window_get_title(gw);
-        g_gtk_saved_titles[wid] = current ? current : "";
-      }
-      std::string prefixed = "(" + badge + ") " + g_gtk_saved_titles[wid];
-      gtk_window_set_title(gw, prefixed.c_str());
-    } else {
-      auto it = g_gtk_saved_titles.find(wid);
-      if (it != g_gtk_saved_titles.end()) {
-        gtk_window_set_title(gw, it->second.c_str());
-        g_gtk_saved_titles.erase(it);
-      }
-    }
+    const char* current = gtk_window_get_title(gw);
+    std::string next = wef_common::ApplyTitlePrefixBadge(
+        wid, current ? std::string(current) : std::string(), badge);
+    gtk_window_set_title(gw, next.c_str());
   }
 }
 

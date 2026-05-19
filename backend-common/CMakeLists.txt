@@ -34,6 +34,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(WEF_COMMON_SRCS
   src/parse_options.cc
   src/keymap_vk.cc
+  src/title_badge.cc
 )
 
 if(APPLE)
@@ -60,6 +61,7 @@ elseif(WIN32)
     src/notifications_win.cc
     src/dialog_win.cc
     src/permissions_stub.cc
+    src/tray_win.cc
   )
 endif()
 
