@@ -1111,122 +1111,129 @@ void Backend_SetTrayDoubleClickHandler_Mac(void* /*data*/, uint32_t tray_id,
   });
 }
 
-// --- Notifications (macOS) ---
+// --- Notifications (macOS, UNUserNotificationCenter) ---
 //
-// Uses NSUserNotification (deprecated in macOS 11+ but still functional in
-// macOS 15 and works without UNUserNotificationCenter's entitlement /
-// runtime-authorization dance). NSUserNotification supports a single
-// `actionButtonTitle` plus an `additionalActions` dropdown.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// Uses the modern UN API (10.14+). Delivery is gated on UN authorization,
+// so the permission API (see below) reports the same state that governs
+// whether `show_notification` actually displays anything. UN requires the
+// process to run inside a bundled .app with a CFBundleIdentifier; when
+// unbundled or unauthorized, `addNotificationRequest` fails and we emit
+// a synthetic CLOSED event so callers see the lifecycle close out.
 
-struct MacNotifEntry {
-  NSUserNotification* notif;
-  NSString* tag;
+struct UnNotifEntry {
+  // UN identifies requests by string. We key our own map by nid but also
+  // need the identifier to look up entries from delegate callbacks (which
+  // only know the request).
+  std::string identifier;
   wef_notification_event_fn on_event;
   void* user_data;
   std::vector<std::string> action_ids;
 };
 
-static std::map<uint32_t, MacNotifEntry>& MacNotifMap() {
-  static std::map<uint32_t, MacNotifEntry> map;
+// All access happens on the main queue (delegate callbacks below hop
+// there before touching these maps), so no mutex needed.
+static std::map<uint32_t, UnNotifEntry>& UnNotifMap() {
+  static std::map<uint32_t, UnNotifEntry> map;
   return map;
 }
 
-static std::map<void*, uint32_t>& NSNotifToId() {
-  static std::map<void*, uint32_t> map;
+static std::map<std::string, uint32_t>& UnIdentToNid() {
+  static std::map<std::string, uint32_t> map;
+  return map;
+}
+
+// UN requires categories to be pre-registered before content tagged with
+// that category id can be delivered. We accumulate one category per
+// unique action-list shape (keyed by the joined id/title pairs) and
+// re-set the full set whenever a new shape appears.
+static std::map<std::string, UNNotificationCategory*>& UnCategories() {
+  static std::map<std::string, UNNotificationCategory*> map;
   return map;
 }
 
 static std::atomic<uint32_t> g_next_notif_id_mac{1};
 
-@interface WefNotifDelegate : NSObject <NSUserNotificationCenterDelegate>
+@interface WefUnDelegate : NSObject <UNUserNotificationCenterDelegate>
 + (instancetype)shared;
 @end
 
-@implementation WefNotifDelegate
+@implementation WefUnDelegate
 + (instancetype)shared {
-  static WefNotifDelegate* instance = nil;
+  static WefUnDelegate* instance = nil;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    instance = [[WefNotifDelegate alloc] init];
+    instance = [[WefUnDelegate alloc] init];
   });
   return instance;
 }
 
-- (BOOL)userNotificationCenter:(NSUserNotificationCenter*)center
-     shouldPresentNotification:(NSUserNotification*)notification {
+// Foreground delivery: UN's default is to NOT present banners when the
+// app is frontmost. Override so the user sees the notification regardless
+// of activation state — matches what `new Notification(...)` does in a
+// browser. Also the place we hook for SHOWN, since UN doesn't have a
+// separate "did deliver" callback that fires in all activation states.
+- (void)userNotificationCenter:(UNUserNotificationCenter*)center
+       willPresentNotification:(UNNotification*)notification
+         withCompletionHandler:
+             (void (^)(UNNotificationPresentationOptions))completionHandler {
   (void)center;
-  (void)notification;
-  return YES;
+  NSString* ident = notification.request.identifier;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    std::string key = [ident UTF8String];
+    auto& im = UnIdentToNid();
+    auto it = im.find(key);
+    if (it == im.end()) return;
+    auto& nm = UnNotifMap();
+    auto nit = nm.find(it->second);
+    if (nit != nm.end() && nit->second.on_event) {
+      nit->second.on_event(nit->second.user_data, it->second,
+                           WEF_NOTIFICATION_SHOWN, nullptr);
+    }
+  });
+  completionHandler(UNNotificationPresentationOptionBanner |
+                    UNNotificationPresentationOptionSound |
+                    UNNotificationPresentationOptionBadge);
 }
 
-- (void)userNotificationCenter:(NSUserNotificationCenter*)center
-        didDeliverNotification:(NSUserNotification*)notification {
+- (void)userNotificationCenter:(UNUserNotificationCenter*)center
+    didReceiveNotificationResponse:(UNNotificationResponse*)response
+             withCompletionHandler:(void (^)(void))completionHandler {
   (void)center;
-  auto& m = NSNotifToId();
-  auto it = m.find((__bridge void*)notification);
-  if (it == m.end())
-    return;
-  uint32_t nid = it->second;
-  auto& nm = MacNotifMap();
-  auto nit = nm.find(nid);
-  if (nit != nm.end() && nit->second.on_event) {
-    nit->second.on_event(nit->second.user_data, nid, WEF_NOTIFICATION_SHOWN,
-                         nullptr);
-  }
-}
-
-- (void)userNotificationCenter:(NSUserNotificationCenter*)center
-       didActivateNotification:(NSUserNotification*)notification {
-  (void)center;
-  auto& m = NSNotifToId();
-  auto it = m.find((__bridge void*)notification);
-  if (it == m.end())
-    return;
-  uint32_t nid = it->second;
-  auto& nm = MacNotifMap();
-  auto nit = nm.find(nid);
-  if (nit == nm.end() || !nit->second.on_event)
-    return;
-
-  switch (notification.activationType) {
-    case NSUserNotificationActivationTypeContentsClicked:
-      nit->second.on_event(nit->second.user_data, nid,
+  NSString* ident = response.notification.request.identifier;
+  NSString* actId = response.actionIdentifier;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    std::string key = [ident UTF8String];
+    auto& im = UnIdentToNid();
+    auto it = im.find(key);
+    if (it == im.end()) return;
+    auto& nm = UnNotifMap();
+    auto nit = nm.find(it->second);
+    if (nit == nm.end() || !nit->second.on_event) return;
+    if ([actId isEqualToString:UNNotificationDefaultActionIdentifier]) {
+      // The user clicked the notification body (not an action button).
+      nit->second.on_event(nit->second.user_data, it->second,
                            WEF_NOTIFICATION_CLICKED, nullptr);
-      break;
-    case NSUserNotificationActivationTypeActionButtonClicked: {
-      // The "main" action button is the first action in the list.
-      const char* aid = nullptr;
-      std::string aid_storage;
-      if (!nit->second.action_ids.empty()) {
-        aid_storage = nit->second.action_ids[0];
-        aid = aid_storage.c_str();
-      }
-      nit->second.on_event(nit->second.user_data, nid,
-                           WEF_NOTIFICATION_ACTION, aid);
-      break;
+    } else if ([actId
+                   isEqualToString:UNNotificationDismissActionIdentifier]) {
+      // User explicitly dismissed (Close button on the banner). Requires
+      // the category to opt in via UNNotificationCategoryOptionCustomDismissAction.
+      nit->second.on_event(nit->second.user_data, it->second,
+                           WEF_NOTIFICATION_CLOSED, nullptr);
+    } else {
+      std::string aid = [actId UTF8String];
+      nit->second.on_event(nit->second.user_data, it->second,
+                           WEF_NOTIFICATION_ACTION, aid.c_str());
     }
-    case NSUserNotificationActivationTypeAdditionalActionClicked: {
-      NSUserNotificationAction* action = notification.additionalActivationAction;
-      if (action && action.identifier) {
-        std::string aid = [action.identifier UTF8String];
-        nit->second.on_event(nit->second.user_data, nid,
-                             WEF_NOTIFICATION_ACTION, aid.c_str());
-      }
-      break;
-    }
-    default:
-      break;
-  }
+  });
+  completionHandler();
 }
 @end
 
-static void EnsureNotifDelegate() {
+static void EnsureUnDelegate() {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    [[NSUserNotificationCenter defaultUserNotificationCenter]
-        setDelegate:[WefNotifDelegate shared]];
+    [UNUserNotificationCenter currentNotificationCenter].delegate =
+        [WefUnDelegate shared];
   });
 }
 
@@ -1234,12 +1241,10 @@ static void EnsureNotifDelegate() {
 static std::string ReadDictString(const wef_backend_api_t* api,
                                   wef_value_t* dict, const char* key) {
   wef_value_t* v = api->value_dict_get(dict, key);
-  if (!v || !api->value_is_string(v))
-    return std::string();
+  if (!v || !api->value_is_string(v)) return std::string();
   size_t len = 0;
   char* s = api->value_get_string(v, &len);
-  if (!s)
-    return std::string();
+  if (!s) return std::string();
   std::string out(s, len);
   api->value_free_string(s);
   return out;
@@ -1248,16 +1253,53 @@ static std::string ReadDictString(const wef_backend_api_t* api,
 static bool ReadDictBool(const wef_backend_api_t* api, wef_value_t* dict,
                          const char* key, bool dfl) {
   wef_value_t* v = api->value_dict_get(dict, key);
-  if (!v || !api->value_is_bool(v))
-    return dfl;
+  if (!v || !api->value_is_bool(v)) return dfl;
   return api->value_get_bool(v);
+}
+
+// Register a category for the given action set if we haven't seen this
+// shape before. Returns the category identifier to assign to content.
+// Must be called on the main queue.
+static NSString* RegisterCategoryIfNeeded(
+    const std::vector<std::pair<std::string, std::string>>& actions) {
+  if (actions.empty()) return nil;
+  std::string key;
+  for (auto& a : actions) {
+    key += a.first;
+    key += '\x1f';
+    key += a.second;
+    key += '\x1e';
+  }
+  auto& cats = UnCategories();
+  auto it = cats.find(key);
+  if (it != cats.end()) return it->second.identifier;
+  NSString* catId =
+      [NSString stringWithFormat:@"wef.cat.%lu", (unsigned long)cats.size()];
+  NSMutableArray<UNNotificationAction*>* arr = [NSMutableArray array];
+  for (auto& a : actions) {
+    UNNotificationAction* act = [UNNotificationAction
+        actionWithIdentifier:[NSString stringWithUTF8String:a.first.c_str()]
+                       title:[NSString stringWithUTF8String:a.second.c_str()]
+                     options:UNNotificationActionOptionForeground];
+    [arr addObject:act];
+  }
+  UNNotificationCategory* cat = [UNNotificationCategory
+        categoryWithIdentifier:catId
+                       actions:arr
+             intentIdentifiers:@[]
+                       options:UNNotificationCategoryOptionCustomDismissAction];
+  cats[key] = cat;
+  NSMutableSet<UNNotificationCategory*>* all = [NSMutableSet set];
+  for (auto& kv : cats) [all addObject:kv.second];
+  [[UNUserNotificationCenter currentNotificationCenter]
+      setNotificationCategories:all];
+  return catId;
 }
 
 uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
                                       wef_notification_event_fn on_event,
                                       void* user_data) {
-  if (!options)
-    return 0;
+  if (!options) return 0;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   const wef_backend_api_t* api = &loader->GetBackendApi();
   if (!api->value_is_dict(options)) {
@@ -1276,8 +1318,7 @@ uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
     size_t n = api->value_list_size(actions_val);
     for (size_t i = 0; i < n; ++i) {
       wef_value_t* a = api->value_list_get(actions_val, i);
-      if (!a || !api->value_is_dict(a))
-        continue;
+      if (!a || !api->value_is_dict(a)) continue;
       std::string aid = ReadDictString(api, a, "id");
       std::string atitle = ReadDictString(api, a, "title");
       if (!aid.empty() && !atitle.empty()) {
@@ -1288,73 +1329,80 @@ uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
 
   api->value_free(options);
 
-  uint32_t nid =
-      g_next_notif_id_mac.fetch_add(1, std::memory_order_relaxed);
+  uint32_t nid = g_next_notif_id_mac.fetch_add(1, std::memory_order_relaxed);
+
+  // UN identifies requests by string. Tag (if given) acts as the
+  // identifier so `add` with the same tag replaces the live notification
+  // — matches the Web Notifications "tag" semantics. Without a tag we
+  // synthesize a unique id from our nid.
+  std::string identifier =
+      tag.empty() ? std::string("wef.notif.") + std::to_string(nid) : tag;
 
   NSString* nsTitle = [NSString stringWithUTF8String:title.c_str()];
   NSString* nsBody = [NSString stringWithUTF8String:body.c_str()];
-  NSString* nsTag = tag.empty() ? nil : [NSString stringWithUTF8String:tag.c_str()];
+  NSString* nsIdent = [NSString stringWithUTF8String:identifier.c_str()];
 
   std::vector<std::string> action_ids;
-  std::vector<std::string> action_titles;
   action_ids.reserve(actions.size());
-  action_titles.reserve(actions.size());
-  for (auto& a : actions) {
-    action_ids.push_back(a.first);
-    action_titles.push_back(a.second);
-  }
+  for (auto& a : actions) action_ids.push_back(a.first);
 
   dispatch_async(dispatch_get_main_queue(), ^{
-    EnsureNotifDelegate();
-    NSUserNotificationCenter* center =
-        [NSUserNotificationCenter defaultUserNotificationCenter];
+    EnsureUnDelegate();
+    UNUserNotificationCenter* center =
+        [UNUserNotificationCenter currentNotificationCenter];
 
-    if (nsTag) {
-      // "tag" semantics: replace any existing notification with the same id.
-      NSArray<NSUserNotification*>* delivered = [center deliveredNotifications];
-      for (NSUserNotification* d in delivered) {
-        if (d.identifier && [d.identifier isEqualToString:nsTag]) {
-          [center removeDeliveredNotification:d];
-        }
-      }
+    // If we're reusing a tag, the old nid->entry mapping is stale.
+    // UN will replace the delivered notification automatically, but our
+    // bookkeeping needs a fresh nid keyed off the same identifier.
+    auto& im = UnIdentToNid();
+    auto prev = im.find(identifier);
+    if (prev != im.end()) {
+      UnNotifMap().erase(prev->second);
+      im.erase(prev);
     }
 
-    NSUserNotification* notif = [[NSUserNotification alloc] init];
-    notif.title = nsTitle;
-    notif.informativeText = nsBody;
-    if (nsTag)
-      notif.identifier = nsTag;
-    notif.soundName = silent ? nil : NSUserNotificationDefaultSoundName;
+    NSString* catId = RegisterCategoryIfNeeded(actions);
 
-    if (!action_ids.empty()) {
-      notif.hasActionButton = YES;
-      notif.actionButtonTitle =
-          [NSString stringWithUTF8String:action_titles[0].c_str()];
-      if (action_ids.size() > 1) {
-        NSMutableArray<NSUserNotificationAction*>* extras =
-            [NSMutableArray array];
-        for (size_t i = 1; i < action_ids.size(); ++i) {
-          NSUserNotificationAction* act = [NSUserNotificationAction
-              actionWithIdentifier:[NSString stringWithUTF8String:action_ids[i]
-                                                                  .c_str()]
-                             title:[NSString stringWithUTF8String:action_titles[i]
-                                                                  .c_str()]];
-          [extras addObject:act];
-        }
-        notif.additionalActions = extras;
-      }
-    }
+    UNMutableNotificationContent* content =
+        [[UNMutableNotificationContent alloc] init];
+    content.title = nsTitle;
+    content.body = nsBody;
+    if (!silent) content.sound = [UNNotificationSound defaultSound];
+    if (catId) content.categoryIdentifier = catId;
 
-    MacNotifEntry entry = {};
-    entry.notif = notif;
-    entry.tag = nsTag;
+    UNNotificationRequest* req =
+        [UNNotificationRequest requestWithIdentifier:nsIdent
+                                             content:content
+                                             trigger:nil];
+
+    UnNotifEntry entry = {};
+    entry.identifier = identifier;
     entry.on_event = on_event;
     entry.user_data = user_data;
     entry.action_ids = action_ids;
-    MacNotifMap()[nid] = entry;
-    NSNotifToId()[(__bridge void*)notif] = nid;
+    UnNotifMap()[nid] = entry;
+    UnIdentToNid()[identifier] = nid;
 
-    [center deliverNotification:notif];
+    [center addNotificationRequest:req
+             withCompletionHandler:^(NSError* error) {
+               if (!error) return;
+               // Most common failures: process not bundled, or
+               // authorizationStatus != authorized. There's no spec
+               // event for "never showed", so we collapse it into
+               // CLOSED — the JS Notification spec also fires
+               // "error" + "close" in that order, but the wef ABI
+               // only has CLOSED in this list.
+               dispatch_async(dispatch_get_main_queue(), ^{
+                 auto& nm = UnNotifMap();
+                 auto nit = nm.find(nid);
+                 if (nit == nm.end()) return;
+                 wef_notification_event_fn cb = nit->second.on_event;
+                 void* ud = nit->second.user_data;
+                 UnIdentToNid().erase(nit->second.identifier);
+                 nm.erase(nit);
+                 if (cb) cb(ud, nid, WEF_NOTIFICATION_CLOSED, nullptr);
+               });
+             }];
   });
 
   return nid;
@@ -1362,27 +1410,22 @@ uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
 
 void Backend_CloseNotification_Mac(void* /*data*/, uint32_t notification_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
-    auto& nm = MacNotifMap();
+    auto& nm = UnNotifMap();
     auto it = nm.find(notification_id);
-    if (it == nm.end())
-      return;
-    NSUserNotification* notif = it->second.notif;
+    if (it == nm.end()) return;
+    std::string ident = it->second.identifier;
     wef_notification_event_fn cb = it->second.on_event;
     void* ud = it->second.user_data;
-    if (notif) {
-      NSUserNotificationCenter* center =
-          [NSUserNotificationCenter defaultUserNotificationCenter];
-      [center removeDeliveredNotification:notif];
-      NSNotifToId().erase((__bridge void*)notif);
-    }
+    NSString* nsIdent = [NSString stringWithUTF8String:ident.c_str()];
+    UNUserNotificationCenter* center =
+        [UNUserNotificationCenter currentNotificationCenter];
+    [center removeDeliveredNotificationsWithIdentifiers:@[ nsIdent ]];
+    [center removePendingNotificationRequestsWithIdentifiers:@[ nsIdent ]];
+    UnIdentToNid().erase(ident);
     nm.erase(it);
-    if (cb) {
-      cb(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
-    }
+    if (cb) cb(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
   });
 }
-
-#pragma clang diagnostic pop
 
 // --- Permissions (UNUserNotificationCenter) ---
 //

@@ -45,6 +45,20 @@ jobs:
       - name: deno lint
         run: deno lint
 
+  test:
+    name: cargo test (capi)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: test
+      # Only the capi crate has unit-testable logic (pure conversions /
+      # builders). The example runtimes are cdylibs and the winit/webview
+      # backends require display servers, so we don't run their tests in CI.
+      - run: cargo test -p just-wef --lib --doc
+
   build-winit:
     name: winit / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}

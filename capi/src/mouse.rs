@@ -467,3 +467,77 @@ where
     .unwrap()
     .insert(window_id, Box::new(handler));
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::KeyModifiers;
+
+  // --- MouseButton::from_raw ---
+
+  #[test]
+  fn mouse_button_known() {
+    assert_eq!(MouseButton::from_raw(WEF_MOUSE_BUTTON_LEFT), MouseButton::Left);
+    assert_eq!(
+      MouseButton::from_raw(WEF_MOUSE_BUTTON_RIGHT),
+      MouseButton::Right
+    );
+    assert_eq!(
+      MouseButton::from_raw(WEF_MOUSE_BUTTON_MIDDLE),
+      MouseButton::Middle
+    );
+    assert_eq!(MouseButton::from_raw(WEF_MOUSE_BUTTON_BACK), MouseButton::Back);
+    assert_eq!(
+      MouseButton::from_raw(WEF_MOUSE_BUTTON_FORWARD),
+      MouseButton::Forward
+    );
+  }
+
+  #[test]
+  fn mouse_button_unknown_preserves_id() {
+    // Unknown raw codes are surfaced as Other(n) so the backend can ship
+    // a new button kind without breaking the runtime, and the embedder
+    // can still inspect what came through.
+    assert_eq!(MouseButton::from_raw(99), MouseButton::Other(99));
+  }
+
+  // --- MouseClickEvent predicates ---
+
+  fn ev(state: MouseButtonState, button: MouseButton, clicks: i32) -> MouseClickEvent {
+    MouseClickEvent {
+      window_id: 1,
+      state,
+      button,
+      x: 0.0,
+      y: 0.0,
+      modifiers: KeyModifiers::default(),
+      click_count: clicks,
+    }
+  }
+
+  #[test]
+  fn is_click_requires_left_released_with_clicks() {
+    assert!(ev(MouseButtonState::Released, MouseButton::Left, 1).is_click());
+    assert!(ev(MouseButtonState::Released, MouseButton::Left, 2).is_click());
+  }
+
+  #[test]
+  fn is_click_rejects_press_and_non_left() {
+    // Press of left button is not a click.
+    assert!(!ev(MouseButtonState::Pressed, MouseButton::Left, 1).is_click());
+    // Right-button release is not a click.
+    assert!(!ev(MouseButtonState::Released, MouseButton::Right, 1).is_click());
+    // Zero click_count means the backend reported a release that didn't
+    // pair with a recent press — don't fire `click`.
+    assert!(!ev(MouseButtonState::Released, MouseButton::Left, 0).is_click());
+  }
+
+  #[test]
+  fn is_double_click_requires_click_count_2() {
+    assert!(!ev(MouseButtonState::Released, MouseButton::Left, 1).is_double_click());
+    assert!(ev(MouseButtonState::Released, MouseButton::Left, 2).is_double_click());
+    assert!(ev(MouseButtonState::Released, MouseButton::Left, 3).is_double_click());
+    // Right-button double click doesn't count for `dblclick`.
+    assert!(!ev(MouseButtonState::Released, MouseButton::Right, 2).is_double_click());
+  }
+}

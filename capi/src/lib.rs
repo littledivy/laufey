@@ -1602,8 +1602,8 @@ impl Drop for TrayIcon {
 
 /// Set the global JS namespace name for bindings (default: `"Wef"`).
 /// Must be called before creating any windows.
-/// ```
-/// wef::set_js_namespace("MyApp");
+/// ```no_run
+/// just_wef::set_js_namespace("MyApp");
 /// // JS code can now use: window.MyApp.greet("world")
 /// ```
 pub fn set_js_namespace(name: &str) {
@@ -2057,4 +2057,204 @@ macro_rules! main {
       $crate::shutdown();
     }
   };
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // --- KeyModifiers ---
+
+  #[test]
+  fn key_modifiers_empty() {
+    let m = KeyModifiers::from_raw(0);
+    assert!(!m.shift && !m.control && !m.alt && !m.meta);
+  }
+
+  #[test]
+  fn key_modifiers_single_flags() {
+    assert!(KeyModifiers::from_raw(WEF_MOD_SHIFT).shift);
+    assert!(KeyModifiers::from_raw(WEF_MOD_CONTROL).control);
+    assert!(KeyModifiers::from_raw(WEF_MOD_ALT).alt);
+    assert!(KeyModifiers::from_raw(WEF_MOD_META).meta);
+  }
+
+  #[test]
+  fn key_modifiers_combinations() {
+    // All four bits set.
+    let all = KeyModifiers::from_raw(
+      WEF_MOD_SHIFT | WEF_MOD_CONTROL | WEF_MOD_ALT | WEF_MOD_META,
+    );
+    assert!(all.shift && all.control && all.alt && all.meta);
+
+    // Unknown high bits are ignored, known low bits still decode.
+    let mixed = KeyModifiers::from_raw(WEF_MOD_SHIFT | 0xF000_0000);
+    assert!(mixed.shift && !mixed.control && !mixed.alt && !mixed.meta);
+  }
+
+  // --- PermissionStatus ---
+
+  #[test]
+  fn permission_status_from_raw_known() {
+    assert_eq!(
+      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_GRANTED),
+      PermissionStatus::Granted
+    );
+    assert_eq!(
+      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_DENIED),
+      PermissionStatus::Denied
+    );
+    assert_eq!(
+      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_PROMPT),
+      PermissionStatus::Prompt
+    );
+    assert_eq!(
+      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_UNSUPPORTED),
+      PermissionStatus::Unsupported
+    );
+  }
+
+  #[test]
+  fn permission_status_from_raw_unknown_is_unsupported() {
+    // Anything outside the WEF_PERMISSION_STATUS_* range must map to
+    // Unsupported so a future backend can't silently mean "Granted" by
+    // returning, say, 99.
+    assert_eq!(PermissionStatus::from_raw(99), PermissionStatus::Unsupported);
+    assert_eq!(PermissionStatus::from_raw(-1), PermissionStatus::Unsupported);
+  }
+
+  // --- Value accessors ---
+
+  #[test]
+  fn value_accessors() {
+    assert_eq!(Value::String("hi".into()).as_string(), Some("hi"));
+    assert_eq!(Value::Int(42).as_int(), Some(42));
+    assert_eq!(Value::Bool(true).as_bool(), Some(true));
+    assert!(Value::List(vec![Value::Int(1)]).as_list().is_some());
+    assert!(Value::Dict(HashMap::new()).as_dict().is_some());
+
+    // Type mismatch must return None — these accessors are used in
+    // binding handlers where the wrong type from JS is a soft error.
+    assert!(Value::Int(1).as_string().is_none());
+    assert!(Value::String("x".into()).as_int().is_none());
+    assert!(Value::Null.as_bool().is_none());
+  }
+
+  // --- MenuItem::to_value ---
+
+  fn dict_get<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+    v.as_dict().and_then(|d| d.get(key))
+  }
+
+  #[test]
+  fn menu_item_to_value_item_minimal() {
+    let item = MenuItem::Item {
+      label: "Quit".into(),
+      id: None,
+      accelerator: None,
+      enabled: true,
+    };
+    let v = item.to_value();
+    assert_eq!(dict_get(&v, "label").and_then(|v| v.as_string()), Some("Quit"));
+    // Absent keys when their option is None / enabled is true (default).
+    assert!(dict_get(&v, "id").is_none());
+    assert!(dict_get(&v, "accelerator").is_none());
+    assert!(dict_get(&v, "enabled").is_none());
+  }
+
+  #[test]
+  fn menu_item_to_value_item_full() {
+    let item = MenuItem::Item {
+      label: "Open…".into(),
+      id: Some("file.open".into()),
+      accelerator: Some("CmdOrCtrl+O".into()),
+      enabled: false,
+    };
+    let v = item.to_value();
+    assert_eq!(
+      dict_get(&v, "id").and_then(|v| v.as_string()),
+      Some("file.open")
+    );
+    assert_eq!(
+      dict_get(&v, "accelerator").and_then(|v| v.as_string()),
+      Some("CmdOrCtrl+O")
+    );
+    // enabled=false must serialize; enabled=true must NOT (the backend
+    // defaults to enabled, so omitting it keeps the wire payload small).
+    assert_eq!(
+      dict_get(&v, "enabled").and_then(|v| v.as_bool()),
+      Some(false)
+    );
+  }
+
+  #[test]
+  fn menu_item_to_value_submenu_separator_role() {
+    let sub = MenuItem::Submenu {
+      label: "File".into(),
+      items: vec![MenuItem::Separator],
+    };
+    let v = sub.to_value();
+    assert_eq!(dict_get(&v, "label").and_then(|v| v.as_string()), Some("File"));
+    let items = dict_get(&v, "submenu").and_then(|v| v.as_list()).unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+      dict_get(&items[0], "type").and_then(|v| v.as_string()),
+      Some("separator")
+    );
+
+    let role = MenuItem::Role { role: "copy".into() };
+    let rv = role.to_value();
+    assert_eq!(dict_get(&rv, "role").and_then(|v| v.as_string()), Some("copy"));
+  }
+
+  // --- Notification::to_value ---
+
+  #[test]
+  fn notification_to_value_title_only() {
+    let v = Notification::new("hi").to_value();
+    assert_eq!(dict_get(&v, "title").and_then(|v| v.as_string()), Some("hi"));
+    // Absent options should not appear.
+    for k in ["body", "icon", "tag", "silent", "require_interaction", "actions"]
+    {
+      assert!(
+        dict_get(&v, k).is_none(),
+        "key {k} should be absent when not set"
+      );
+    }
+  }
+
+  #[test]
+  fn notification_to_value_full() {
+    let v = Notification::new("t")
+      .body("b")
+      .icon(vec![1u8, 2, 3])
+      .tag("g")
+      .silent(true)
+      .require_interaction(true)
+      .action("ok", "OK")
+      .action("dismiss", "Dismiss")
+      .to_value();
+    assert_eq!(dict_get(&v, "body").and_then(|v| v.as_string()), Some("b"));
+    assert_eq!(dict_get(&v, "tag").and_then(|v| v.as_string()), Some("g"));
+    assert_eq!(dict_get(&v, "silent").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+      dict_get(&v, "require_interaction").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    let actions = dict_get(&v, "actions").and_then(|v| v.as_list()).unwrap();
+    assert_eq!(actions.len(), 2);
+    assert_eq!(
+      dict_get(&actions[0], "id").and_then(|v| v.as_string()),
+      Some("ok")
+    );
+    assert_eq!(
+      dict_get(&actions[1], "title").and_then(|v| v.as_string()),
+      Some("Dismiss")
+    );
+    // Icon comes through as binary, not string.
+    match dict_get(&v, "icon") {
+      Some(Value::Binary(b)) => assert_eq!(b, &vec![1u8, 2, 3]),
+      _ => panic!("icon must be Value::Binary"),
+    }
+  }
 }
