@@ -2257,4 +2257,177 @@ mod tests {
       _ => panic!("icon must be Value::Binary"),
     }
   }
+
+  // --- Exhaustive KeyModifiers bit combinations ---
+
+  #[test]
+  fn key_modifiers_every_combination() {
+    // Walk all 16 combinations of the 4 modifier flags. Catches a
+    // regression where a flag mask was renumbered (e.g. ALT and META
+    // swapped) — every other-numbered subset would still pass.
+    for bits in 0..16u32 {
+      let raw = (if bits & 1 != 0 { WEF_MOD_SHIFT } else { 0 })
+        | (if bits & 2 != 0 { WEF_MOD_CONTROL } else { 0 })
+        | (if bits & 4 != 0 { WEF_MOD_ALT } else { 0 })
+        | (if bits & 8 != 0 { WEF_MOD_META } else { 0 });
+      let m = KeyModifiers::from_raw(raw);
+      assert_eq!(m.shift, bits & 1 != 0, "shift bit @ {bits:04b}");
+      assert_eq!(m.control, bits & 2 != 0, "control bit @ {bits:04b}");
+      assert_eq!(m.alt, bits & 4 != 0, "alt bit @ {bits:04b}");
+      assert_eq!(m.meta, bits & 8 != 0, "meta bit @ {bits:04b}");
+    }
+  }
+
+  // --- Value: cases not covered by value_accessors ---
+
+  #[test]
+  fn value_accessors_for_null_and_double_and_binary() {
+    // Null doesn't satisfy any of as_string/as_int/as_bool/as_list/as_dict.
+    let n = Value::Null;
+    assert!(n.as_string().is_none());
+    assert!(n.as_int().is_none());
+    assert!(n.as_bool().is_none());
+    assert!(n.as_list().is_none());
+    assert!(n.as_dict().is_none());
+
+    // Doubles aren't ints — feature parity with JS where 1.5 isn't a 1.
+    assert!(Value::Double(1.5).as_int().is_none());
+
+    // No public accessor for Binary, but pattern-matching still works
+    // and the variant must round-trip through the public API surface
+    // (it's how Notification icons cross the boundary).
+    match Value::Binary(vec![0xDE, 0xAD]) {
+      Value::Binary(b) => assert_eq!(b, vec![0xDE, 0xAD]),
+      _ => unreachable!(),
+    }
+  }
+
+  #[test]
+  fn value_list_and_dict_nest_arbitrarily() {
+    let inner = Value::Dict({
+      let mut m = HashMap::new();
+      m.insert("k".to_string(), Value::Int(1));
+      m
+    });
+    let outer = Value::List(vec![Value::Null, inner]);
+    let list = outer.as_list().unwrap();
+    assert_eq!(list.len(), 2);
+    assert!(matches!(list[0], Value::Null));
+    let inner_dict = list[1].as_dict().unwrap();
+    assert_eq!(inner_dict.get("k").and_then(|v| v.as_int()), Some(1));
+  }
+
+  // --- MenuItem: corner cases the basic tests didn't reach ---
+
+  #[test]
+  fn menu_item_role_does_not_carry_label_or_id() {
+    // Role items are wholly defined by the role name. A regression that
+    // started attaching `label` or `id` would let user code masquerade
+    // as a role-bound system item.
+    let v = MenuItem::Role { role: "quit".into() }.to_value();
+    let dict = v.as_dict().unwrap();
+    assert!(dict.get("role").is_some());
+    assert!(dict.get("label").is_none());
+    assert!(dict.get("id").is_none());
+    assert!(dict.get("submenu").is_none());
+  }
+
+  #[test]
+  fn menu_item_nested_submenus_recursively_serialize() {
+    let menu = MenuItem::Submenu {
+      label: "File".into(),
+      items: vec![MenuItem::Submenu {
+        label: "Recent".into(),
+        items: vec![MenuItem::Item {
+          label: "Open project.toml".into(),
+          id: Some("recent.0".into()),
+          accelerator: None,
+          enabled: true,
+        }],
+      }],
+    };
+    let v = menu.to_value();
+    let outer = v.as_dict().unwrap();
+    let outer_items =
+      outer.get("submenu").and_then(|v| v.as_list()).unwrap();
+    assert_eq!(outer_items.len(), 1);
+    let inner =
+      outer_items[0].as_dict().expect("nested submenu must be dict");
+    let inner_items = inner.get("submenu").and_then(|v| v.as_list()).unwrap();
+    assert_eq!(inner_items.len(), 1);
+    assert_eq!(
+      inner_items[0]
+        .as_dict()
+        .and_then(|d| d.get("id"))
+        .and_then(|v| v.as_string()),
+      Some("recent.0")
+    );
+  }
+
+  // --- Notification: argument boundary cases ---
+
+  #[test]
+  fn notification_empty_actions_list_is_omitted() {
+    // Adding an `actions: []` key for a notification that opted out
+    // would force the backend to allocate an empty list pointer on
+    // every dispatch. The builder must elide it.
+    let v = Notification::new("t").body("b").to_value();
+    assert!(v.as_dict().unwrap().get("actions").is_none());
+  }
+
+  #[test]
+  fn notification_partial_options_serialize_only_set_fields() {
+    let v = Notification::new("t").body("b").silent(false).to_value();
+    let d = v.as_dict().unwrap();
+    assert_eq!(d.get("body").and_then(|v| v.as_string()), Some("b"));
+    // silent=false is explicit, must serialize (the backend default
+    // varies by platform).
+    assert_eq!(d.get("silent").and_then(|v| v.as_bool()), Some(false));
+    // Other keys remain absent.
+    assert!(d.get("tag").is_none());
+    assert!(d.get("require_interaction").is_none());
+    assert!(d.get("icon").is_none());
+    assert!(d.get("actions").is_none());
+  }
+
+  #[test]
+  fn notification_handle_id_zero_is_noop_close() {
+    // A zero-id handle indicates the backend didn't support
+    // notifications. `close` on it must be a no-op (no panic, no
+    // api() call). This is the failure mode for hello_runtime on CEF
+    // Linux where notifications aren't wired up.
+    let h = NotificationHandle { id: 0 };
+    assert_eq!(h.id(), 0);
+    // Doesn't touch api() because we never installed one.
+    h.close();
+  }
+
+  // --- DockBounceType / PermissionKind: simple enum sanity ---
+
+  #[test]
+  fn dock_bounce_type_is_copy_and_distinct() {
+    // The enum is `#[derive(Copy)]` because it's an i32-shaped tag —
+    // accidentally dropping Copy would silently force a move semantics
+    // change on callers. Confirm copy + distinct discriminants.
+    let a = DockBounceType::Informational;
+    let b = a;
+    let _ = a; // still usable after copy
+    let c = DockBounceType::Critical;
+    // We can't compare without PartialEq, but matches! works.
+    assert!(matches!(a, DockBounceType::Informational));
+    assert!(matches!(b, DockBounceType::Informational));
+    assert!(matches!(c, DockBounceType::Critical));
+  }
+
+  #[test]
+  fn permission_kind_repr_i32_matches_capi_constants() {
+    // PermissionKind is `#[repr(i32)]` so its enum value is the same
+    // integer the C ABI sends. A regression that changed the repr or
+    // reordered variants would invert which capability is being asked
+    // about.
+    assert_eq!(
+      PermissionKind::Notifications as i32,
+      WEF_PERMISSION_NOTIFICATIONS
+    );
+  }
 }
