@@ -7,4 +7,5 @@ members = [
     "examples/hello",
     "examples/ddcore",
     "examples/presentation",
+    "examples/cef_e2e",
 ]

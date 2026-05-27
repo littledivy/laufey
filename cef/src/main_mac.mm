@@ -231,10 +231,6 @@ int main(int argc, char* argv[]) {
     // silently ignored.
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
-    [[NSApp dockTile] setBadgeLabel:@"PRE"];
-    NSLog(@"[wef-debug] PRE-CEF badge set, label=%@",
-          [[NSApp dockTile] badgeLabel]);
-
     CefSettings settings;
     settings.no_sandbox = true;
 
@@ -263,10 +259,6 @@ int main(int argc, char* argv[]) {
     NSApp.delegate = delegate;
 
     [NSApp activateIgnoringOtherApps:YES];
-
-    [[NSApp dockTile] setBadgeLabel:@"POST"];
-    NSLog(@"[wef-debug] POST-CEF badge set, label=%@",
-          [[NSApp dockTile] badgeLabel]);
 
     CefRunMessageLoop();
 

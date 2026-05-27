@@ -175,6 +175,60 @@ jobs:
             wef-webview-${{ matrix.target }}.tar.gz
             wef-webview-${{ matrix.target }}.zip
 
+  e2e-cef-linux:
+    name: e2e / cef / x86_64-unknown-linux-gnu (Xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: e2e-cef-linux
+
+      - name: Install runtime + build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            xvfb xdotool dbus-x11 \
+            libx11-dev libxi-dev libglib2.0-dev libnss3-dev libnspr4-dev \
+            libatk1.0-dev libatk-bridge2.0-dev libcups2-dev libdrm-dev \
+            libgtk-3-dev libgbm-dev libasound2-dev libpango1.0-dev \
+            libcairo2-dev libxcomposite-dev libxdamage-dev libxrandr-dev \
+            libxkbcommon-dev libdbus-1-dev libxext-dev libxfixes-dev
+
+      - name: Cache CEF vendor
+        uses: actions/cache@v4
+        with:
+          path: vendor/cef
+          key: cef-ubuntu-latest-${{ runner.arch }}
+
+      - name: Build CEF backend
+        run: make cef
+
+      - name: Build e2e harness
+        run: cargo build --release -p cef_e2e_runtime
+
+      - name: Launch under Xvfb and assert
+        # The harness exits 0 on PASS, 1 on FAIL. `xvfb-run` provides
+        # the headless display; `dbus-launch` gives CEF the session
+        # bus it expects (Chromium probes it during startup and stalls
+        # for several seconds if absent).
+        #
+        # 90-second outer timeout to fail loud rather than letting CI
+        # block for the full 6-hour ceiling if a binding pipeline
+        # regression makes the harness hang forever.
+        run: |
+          export WEF_BIN="$PWD/cef/build/Release/wef"
+          if [ ! -x "$WEF_BIN" ]; then
+            echo "::error::CEF backend binary not at $WEF_BIN — build step changed layout?"
+            ls cef/build/Release || true
+            exit 1
+          fi
+          timeout 90 \
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
+            dbus-launch --exit-with-session \
+            "$WEF_BIN" --runtime "$PWD/target/release/libcef_e2e_runtime.so"
+
   build-cef:
     name: cef / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
