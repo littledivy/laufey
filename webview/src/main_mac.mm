@@ -218,8 +218,33 @@ int main(int argc, char* argv[]) {
   }
 
   @autoreleasepool {
+    // Allow the host to override the user-visible app name (menu-bar app
+    // menu, Dock, Cmd-Tab) at launch, e.g. the project name during
+    // `deno desktop --hmr`. AppKit derives the app menu title from the
+    // process name for an exec'd bundle like ours, so set it before the
+    // menu is built and before +sharedApplication.
+    if (const char* app_name = getenv("WEF_APP_NAME")) {
+      if (*app_name) {
+        [[NSProcessInfo processInfo]
+            setProcessName:[NSString stringWithUTF8String:app_name]];
+      }
+    }
+
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+
+    // Allow the host to override the dock icon at launch (e.g. a project's
+    // favicon during `deno desktop --hmr`). Setting it programmatically
+    // bypasses LaunchServices' icon cache and the bundle's CFBundleIconFile.
+    if (const char* icon_path = getenv("WEF_APP_ICON")) {
+      NSImage* icon =
+          [[NSImage alloc] initWithContentsOfFile:[NSString
+                                                      stringWithUTF8String:
+                                                          icon_path]];
+      if (icon) {
+        [NSApp setApplicationIconImage:icon];
+      }
+    }
 
     AppDelegate* delegate = [[AppDelegate alloc] init];
     delegate.runtimePath = runtimePathArg;
