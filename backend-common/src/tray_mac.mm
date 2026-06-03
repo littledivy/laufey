@@ -261,4 +261,40 @@ void SetTrayDoubleClickHandlerMac(uint32_t tray_id,
   });
 }
 
+bool GetTrayIconBoundsMac(uint32_t tray_id, int* x, int* y, int* width,
+                          int* height) {
+  // Must touch AppKit on the main thread. Tray clicks (the usual caller)
+  // already arrive on the main thread, so run synchronously there.
+  __block bool ok = false;
+  __block NSRect rect = NSZeroRect;
+  void (^work)(void) = ^{
+    auto& map = TrayMap();
+    auto it = map.find(tray_id);
+    if (it == map.end() || !it->second.item) return;
+    NSStatusBarButton* button = [it->second.item button];
+    NSWindow* window = [button window];
+    if (!button || !window) return;
+    // Button bounds → screen rect (AppKit: bottom-left origin, points).
+    rect = [window convertRectToScreen:[button convertRect:[button bounds]
+                                                    toView:nil]];
+    ok = true;
+  };
+  if ([NSThread isMainThread]) {
+    work();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), work);
+  }
+  if (!ok) return false;
+  // Convert to top-left origin to match get_window_position. The menu bar
+  // lives on the primary screen, whose frame origin is (0,0) bottom-left.
+  CGFloat primary_height = 0;
+  NSArray<NSScreen*>* screens = [NSScreen screens];
+  if (screens.count > 0) primary_height = [screens[0] frame].size.height;
+  if (x) *x = (int)rect.origin.x;
+  if (y) *y = (int)(primary_height - (rect.origin.y + rect.size.height));
+  if (width) *width = (int)rect.size.width;
+  if (height) *height = (int)rect.size.height;
+  return true;
+}
+
 }  // namespace wef_common

@@ -235,10 +235,16 @@ impl ApplicationHandler<UserEvent> for App {
 
   fn about_to_wait(
     &mut self,
-    _event_loop: &winit::event_loop::ActiveEventLoop,
+    event_loop: &winit::event_loop::ActiveEventLoop,
   ) {
     wef_backend_winit_common::poll_menu_events();
-    wef_backend_winit_common::tray::poll_tray_events();
+    // The tray lives on the primary monitor (menu bar / taskbar); its scale
+    // factor converts tray-icon's physical rect into the logical window space.
+    let scale_factor = event_loop
+      .primary_monitor()
+      .map(|m| m.scale_factor())
+      .unwrap_or(1.0);
+    wef_backend_winit_common::tray::poll_tray_events(scale_factor);
   }
 
   fn window_event(

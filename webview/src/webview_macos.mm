@@ -43,6 +43,8 @@ class WKWebViewBackend : public WefBackend {
   ~WKWebViewBackend() override;
 
   void CreateWindow(uint32_t window_id, int width, int height) override;
+  void CreateWindowEx(uint32_t window_id, int width, int height,
+                      uint32_t flags) override;
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
@@ -110,6 +112,8 @@ class WKWebViewBackend : public WefBackend {
                                  void* user_data) override;
   void SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                        size_t len) override;
+  bool GetTrayIconBounds(uint32_t tray_id, int* x, int* y, int* width,
+                         int* height) override;
 
   uint32_t ShowNotification(wef_value_t* options,
                             const wef_backend_api_t* api,
@@ -652,19 +656,55 @@ void WKWebViewBackend::RemoveGlobalMonitors() {
 }
 
 void WKWebViewBackend::CreateWindow(uint32_t window_id, int width, int height) {
+  CreateWindowEx(window_id, width, height, 0);
+}
+
+void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
+                                      uint32_t flags) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
       InstallGlobalMonitors();
 
+      bool frameless = (flags & WEF_WINDOW_FLAG_FRAMELESS) != 0;
+      bool no_activate = (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) != 0;
+
       NSRect frame = NSMakeRect(0, 0, width, height);
-      NSWindowStyleMask style =
-          NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-          NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-      NSWindow* window =
-          [[NSWindow alloc] initWithContentRect:frame
-                                      styleMask:style
-                                        backing:NSBackingStoreBuffered
-                                          defer:NO];
+      NSWindowStyleMask style = NSWindowStyleMaskClosable |
+                                NSWindowStyleMaskMiniaturizable |
+                                NSWindowStyleMaskResizable;
+      if (frameless) {
+        // Drop the title bar and standard chrome; borderless content area.
+        style = NSWindowStyleMaskBorderless | NSWindowStyleMaskResizable;
+      } else {
+        style |= NSWindowStyleMaskTitled;
+      }
+
+      NSWindow* window;
+      if (no_activate) {
+        // A real non-activating NSPanel floats above normal windows and can
+        // take key focus without activating the app — the native menu-bar /
+        // tray popover behavior.
+        style |= NSWindowStyleMaskNonactivatingPanel;
+        NSPanel* panel =
+            [[NSPanel alloc] initWithContentRect:frame
+                                       styleMask:style
+                                         backing:NSBackingStoreBuffered
+                                           defer:NO];
+        [panel setBecomesKeyOnlyIfNeeded:YES];
+        [panel setFloatingPanel:YES];
+        [panel setHidesOnDeactivate:NO];
+        [panel setLevel:NSPopUpMenuWindowLevel];
+        [panel
+            setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                  NSWindowCollectionBehaviorTransient |
+                                  NSWindowCollectionBehaviorIgnoresCycle];
+        window = panel;
+      } else {
+        window = [[NSWindow alloc] initWithContentRect:frame
+                                             styleMask:style
+                                               backing:NSBackingStoreBuffered
+                                                 defer:NO];
+      }
       [window center];
 
       WefWindowDelegate* delegate = [[WefWindowDelegate alloc] init];
@@ -771,7 +811,12 @@ void WKWebViewBackend::CreateWindow(uint32_t window_id, int width, int height) {
         windows_[window_id] = state;
       }
 
-      [window makeKeyAndOrderFront:nil];
+      if (no_activate) {
+        // Show without activating the app / stealing focus.
+        [window orderFrontRegardless];
+      } else {
+        [window makeKeyAndOrderFront:nil];
+      }
     }
   });
 }
@@ -1357,6 +1402,11 @@ void WKWebViewBackend::SetTrayIcon(uint32_t tray_id, const void* png_bytes,
 void WKWebViewBackend::SetTrayIconDark(uint32_t tray_id,
                                        const void* png_bytes, size_t len) {
   wef_common::SetTrayIconDarkMac(tray_id, png_bytes, len);
+}
+
+bool WKWebViewBackend::GetTrayIconBounds(uint32_t tray_id, int* x, int* y,
+                                         int* width, int* height) {
+  return wef_common::GetTrayIconBoundsMac(tray_id, x, y, width, height);
 }
 
 void WKWebViewBackend::SetTrayDoubleClickHandler(uint32_t tray_id,

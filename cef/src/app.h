@@ -23,17 +23,27 @@ extern std::queue<uint32_t> g_pending_wef_ids;
 
 class WefWindowDelegate : public CefWindowDelegate {
  public:
-  WefWindowDelegate(CefRefPtr<CefBrowserView> browser_view, uint32_t wef_id)
-      : browser_view_(browser_view), wef_id_(wef_id) {}
+  WefWindowDelegate(CefRefPtr<CefBrowserView> browser_view, uint32_t wef_id,
+                    uint32_t flags = 0)
+      : browser_view_(browser_view), wef_id_(wef_id), flags_(flags) {}
 
   void OnWindowCreated(CefRefPtr<CefWindow> window) override;
   void OnWindowDestroyed(CefRefPtr<CefWindow> window) override;
   bool CanClose(CefRefPtr<CefWindow> window) override;
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override;
 
+  // Frameless windows (WEF_WINDOW_FLAG_FRAMELESS) drop the title bar and
+  // standard window buttons.
+  bool IsFrameless(CefRefPtr<CefWindow> window) override;
+  // Non-activating panels (WEF_WINDOW_FLAG_NO_ACTIVATE) accept the first
+  // click without the app having to activate first, so a tray popover can be
+  // interacted with while the previously-focused app keeps focus.
+  cef_state_t AcceptsFirstMouse(CefRefPtr<CefWindow> window) override;
+
  private:
   CefRefPtr<CefBrowserView> browser_view_;
   uint32_t wef_id_ = 0;
+  uint32_t flags_ = 0;
   IMPLEMENT_REFCOUNTING(WefWindowDelegate);
 };
 

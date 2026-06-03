@@ -29,7 +29,12 @@ pub use mouse::*;
 /// (`github.com/denoland/wef/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const WEF_API_VERSION: u32 = 24;
+pub const WEF_API_VERSION: u32 = 25;
+
+/// Creation-time window style flags for [`Window::new_with_options`].
+/// Mirror the `WEF_WINDOW_FLAG_*` constants in `wef.h`.
+pub const WEF_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
+pub const WEF_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
 
 pub const WEF_WINDOW_HANDLE_UNKNOWN: i32 = 0;
 pub const WEF_WINDOW_HANDLE_APPKIT: i32 = 1;
@@ -483,10 +488,50 @@ pub struct Window {
   id: u32,
 }
 
+/// Creation-time window style options. Properties that must be decided when
+/// the OS window is constructed (frameless chrome, non-activating panel
+/// behavior). Post-creation properties (size, position, resizable,
+/// always-on-top) are set through their respective `Window` setters.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WindowOptions {
+  /// Remove the title bar and standard window chrome.
+  pub frameless: bool,
+  /// Float above normal windows as a utility "panel" and do not activate
+  /// the app / steal key focus when shown. Combined with `frameless`, this
+  /// is the configuration used for tray / menu-bar popovers.
+  pub no_activate: bool,
+}
+
+impl WindowOptions {
+  fn to_flags(self) -> u32 {
+    let mut flags = 0;
+    if self.frameless {
+      flags |= WEF_WINDOW_FLAG_FRAMELESS;
+    }
+    if self.no_activate {
+      flags |= WEF_WINDOW_FLAG_NO_ACTIVATE;
+    }
+    flags
+  }
+}
+
 impl Window {
   pub fn new(width: i32, height: i32) -> Self {
+    Self::new_with_options(width, height, WindowOptions::default())
+  }
+
+  /// Create a window with creation-time style options. Falls back to a plain
+  /// window (ignoring the options) on backends older than API version 25.
+  pub fn new_with_options(
+    width: i32,
+    height: i32,
+    options: WindowOptions,
+  ) -> Self {
     let api = api();
-    let id = if let Some(f) = api.create_window {
+    let flags = options.to_flags();
+    let id = if let (Some(f), true) = (api.create_window_ex, flags != 0) {
+      unsafe { f(api.backend_data, flags) }
+    } else if let Some(f) = api.create_window {
       unsafe { f(api.backend_data) }
     } else {
       0
@@ -1381,6 +1426,28 @@ impl TrayIcon {
 
   pub fn id(&self) -> u32 {
     self.id
+  }
+
+  /// The tray icon's bounding rectangle `(x, y, width, height)` in screen
+  /// coordinates, in the same top-left-origin space as
+  /// [`Window::set_position`], or `None` if the position isn't known yet or
+  /// the backend/platform can't report it. Use this to anchor a popover
+  /// window under the icon.
+  pub fn get_bounds(&self) -> Option<(i32, i32, i32, i32)> {
+    let api = api();
+    let f = api.get_tray_icon_bounds?;
+    let mut x: c_int = 0;
+    let mut y: c_int = 0;
+    let mut width: c_int = 0;
+    let mut height: c_int = 0;
+    let ok = unsafe {
+      f(api.backend_data, self.id, &mut x, &mut y, &mut width, &mut height)
+    };
+    if ok {
+      Some((x, y, width, height))
+    } else {
+      None
+    }
   }
 
   /// Set the icon image from PNG-encoded bytes.
@@ -2403,6 +2470,37 @@ mod tests {
   }
 
   // --- DockBounceType / PermissionKind: simple enum sanity ---
+
+  #[test]
+  fn window_options_map_to_flags() {
+    // The flag bits cross the C ABI to create_window_ex, so a regression
+    // that swapped or dropped a bit would silently mis-style windows.
+    assert_eq!(WindowOptions::default().to_flags(), 0);
+    assert_eq!(
+      WindowOptions {
+        frameless: true,
+        no_activate: false
+      }
+      .to_flags(),
+      WEF_WINDOW_FLAG_FRAMELESS
+    );
+    assert_eq!(
+      WindowOptions {
+        frameless: false,
+        no_activate: true
+      }
+      .to_flags(),
+      WEF_WINDOW_FLAG_NO_ACTIVATE
+    );
+    assert_eq!(
+      WindowOptions {
+        frameless: true,
+        no_activate: true
+      }
+      .to_flags(),
+      WEF_WINDOW_FLAG_FRAMELESS | WEF_WINDOW_FLAG_NO_ACTIVATE
+    );
+  }
 
   #[test]
   fn dock_bounce_type_is_copy_and_distinct() {

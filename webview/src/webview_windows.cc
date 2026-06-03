@@ -229,6 +229,8 @@ class WebView2Backend : public WefBackend {
   ~WebView2Backend() override;
 
   void CreateWindow(uint32_t window_id, int width, int height) override;
+  void CreateWindowEx(uint32_t window_id, int width, int height,
+                      uint32_t flags) override;
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
@@ -291,6 +293,8 @@ class WebView2Backend : public WefBackend {
                                  void* user_data) override;
   void SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                        size_t len) override;
+  bool GetTrayIconBounds(uint32_t tray_id, int* x, int* y, int* width,
+                         int* height) override;
 
   uint32_t ShowNotification(wef_value_t* options,
                             const wef_backend_api_t* api,
@@ -491,9 +495,26 @@ WinWindowState* WebView2Backend::GetWindow(uint32_t window_id) {
 }
 
 void WebView2Backend::CreateWindow(uint32_t window_id, int width, int height) {
-  HWND hwnd = CreateWindowExW(
-      0, L"WefWebView2", L"", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-      width, height, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+  CreateWindowEx(window_id, width, height, 0);
+}
+
+void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
+                                     uint32_t flags) {
+  DWORD style = WS_OVERLAPPEDWINDOW;
+  DWORD ex_style = 0;
+  if (flags & WEF_WINDOW_FLAG_FRAMELESS) {
+    // Borderless popup: no caption / sizing frame.
+    style = WS_POPUP;
+  }
+  if (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) {
+    // Don't steal foreground/focus; keep out of the taskbar and Alt-Tab.
+    ex_style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+  }
+
+  HWND hwnd = CreateWindowExW(ex_style, L"WefWebView2", L"", style,
+                              CW_USEDEFAULT, CW_USEDEFAULT, width, height,
+                              nullptr, nullptr, GetModuleHandle(nullptr),
+                              nullptr);
 
   {
     std::lock_guard<std::mutex> lock(g_hwnd_mutex);
@@ -511,7 +532,10 @@ void WebView2Backend::CreateWindow(uint32_t window_id, int width, int height) {
 
   InitializeWebViewForWindow(window_id, hwnd);
 
-  ShowWindow(hwnd, SW_SHOW);
+  // Showing a non-activating panel must not take foreground from the user's
+  // active window.
+  ShowWindow(hwnd, (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
+                                                         : SW_SHOW);
   UpdateWindow(hwnd);
 }
 
@@ -1108,6 +1132,11 @@ void WebView2Backend::SetTrayIcon(uint32_t tray_id, const void* png_bytes,
 void WebView2Backend::SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                                       size_t len) {
   wef_common::SetTrayIconDarkWin(tray_id, png_bytes, len);
+}
+
+bool WebView2Backend::GetTrayIconBounds(uint32_t tray_id, int* x, int* y,
+                                        int* width, int* height) {
+  return wef_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
 }
 void WebView2Backend::SetTrayDoubleClickHandler(uint32_t tray_id,
                                                 wef_tray_click_fn handler,

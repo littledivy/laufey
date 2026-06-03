@@ -38,22 +38,45 @@ WefHandler* g_handler = nullptr;
 
 void WefWindowDelegate::OnWindowCreated(CefRefPtr<CefWindow> window) {
   window->AddChildView(browser_view_);
-  window->Show();
-  InstallNativeMouseMonitor();
 
-  // Register native window for event routing
+  // Register native window for event routing. Non-activating panels
+  // (WEF_WINDOW_FLAG_NO_ACTIVATE) are reconfigured before the first Show()
+  // so they float without stealing focus from the foreground app.
+  bool no_activate = (flags_ & WEF_WINDOW_FLAG_NO_ACTIVATE) != 0;
   CefWindowHandle handle = window->GetWindowHandle();
   if (handle && wef_id_ > 0) {
-#ifdef __APPLE__
+#if defined(__APPLE__)
+    if (no_activate) {
+      ConfigureNSWindowAsPanelForCefHandle(handle);
+    }
     RegisterNSWindowForCefHandle(handle, wef_id_);
-#else
+#elif defined(_WIN32)
+    if (no_activate) {
+      ConfigureWin32WindowAsPanel((void*)handle);
+    }
     RuntimeLoader::GetInstance()->RegisterNativeHandle((void*)(uintptr_t)handle,
                                                        wef_id_);
-#ifdef __linux__
+#elif defined(__linux__)
+    if (no_activate) {
+      ConfigureLinuxWindowAsPanel(handle);
+    }
+    RuntimeLoader::GetInstance()->RegisterNativeHandle((void*)(uintptr_t)handle,
+                                                       wef_id_);
     MonitorLinuxWindowEvents(handle);
 #endif
-#endif
   }
+
+  window->Show();
+  InstallNativeMouseMonitor();
+}
+
+bool WefWindowDelegate::IsFrameless(CefRefPtr<CefWindow> window) {
+  return (flags_ & WEF_WINDOW_FLAG_FRAMELESS) != 0;
+}
+
+cef_state_t WefWindowDelegate::AcceptsFirstMouse(CefRefPtr<CefWindow> window) {
+  return (flags_ & WEF_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED
+                                                : STATE_DEFAULT;
 }
 
 void WefWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {

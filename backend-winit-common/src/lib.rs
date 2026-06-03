@@ -28,7 +28,11 @@ use winit::window::{Window, WindowLevel};
 
 // --- Constants ---
 
-pub const WEF_API_VERSION: u32 = 24;
+pub const WEF_API_VERSION: u32 = 25;
+
+/// Creation-time window style flags (mirror `WEF_WINDOW_FLAG_*` in wef.h).
+pub const WEF_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
+pub const WEF_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
 
 #[allow(dead_code)]
 pub const WEF_WINDOW_HANDLE_UNKNOWN: c_int = 0;
@@ -135,6 +139,9 @@ pub struct WefBackendApi {
   pub backend_data: *mut c_void,
   pub create_window: Option<unsafe extern "C" fn(*mut c_void) -> u32>,
   pub close_window: Option<unsafe extern "C" fn(*mut c_void, u32)>,
+  // Must mirror wef.h field order exactly: create_window_ex sits between
+  // close_window and navigate.
+  pub create_window_ex: Option<unsafe extern "C" fn(*mut c_void, u32) -> u32>,
   pub navigate: Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char)>,
   pub set_title: Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char)>,
   pub execute_js: Option<
@@ -357,6 +364,18 @@ pub struct WefBackendApi {
   >,
   pub set_tray_icon_dark:
     Option<unsafe extern "C" fn(*mut c_void, u32, *const c_void, usize)>,
+  // Mirrors wef.h: get_tray_icon_bounds sits between set_tray_icon_dark and
+  // show_notification.
+  pub get_tray_icon_bounds: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      u32,
+      *mut c_int,
+      *mut c_int,
+      *mut c_int,
+      *mut c_int,
+    ) -> bool,
+  >,
   pub show_notification: Option<
     unsafe extern "C" fn(
       *mut c_void,
@@ -904,6 +923,7 @@ pub fn create_api_base() -> WefBackendApi {
     backend_data: std::ptr::null_mut(),
     create_window: None,
     close_window: None,
+    create_window_ex: None,
     navigate: None,
     set_title: None,
     execute_js: None,
@@ -993,6 +1013,7 @@ pub fn create_api_base() -> WefBackendApi {
     set_tray_click_handler: None,
     set_tray_double_click_handler: None,
     set_tray_icon_dark: None,
+    get_tray_icon_bounds: None,
     show_notification: None,
     close_notification: None,
     query_permission: None,
@@ -1450,6 +1471,9 @@ pub struct WindowState {
   pub pending_resizable: Mutex<Option<bool>>,
   pub pending_always_on_top: Mutex<Option<bool>>,
   pub pending_visible: Mutex<Option<bool>>,
+  /// Creation-time style flags (WEF_WINDOW_FLAG_*) for frameless /
+  /// non-activating panel windows; applied when the winit Window is built.
+  pub pending_flags: Mutex<u32>,
   pub pending_app_menu: Mutex<Option<PendingMenu>>,
   pub pending_context_menu: Mutex<Option<PendingContextMenu>>,
   pub cursor_position: Mutex<(f64, f64)>,
@@ -1467,6 +1491,7 @@ impl WindowState {
       pending_resizable: Mutex::new(None),
       pending_always_on_top: Mutex::new(None),
       pending_visible: Mutex::new(None),
+      pending_flags: Mutex::new(0),
       pending_app_menu: Mutex::new(None),
       pending_context_menu: Mutex::new(None),
       cursor_position: Mutex::new((0.0, 0.0)),
@@ -1634,6 +1659,27 @@ macro_rules! define_common_backend_fns {
       let window_id = $crate::allocate_window_id();
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
         state.common().add_window(window_id);
+        let _ = state.proxy().send_event(
+          <$B as $crate::BackendAccess>::common_event(
+            $crate::CommonEvent::CreateWindow { window_id },
+          ),
+        );
+      }
+      window_id
+    }
+
+    unsafe extern "C" fn backend_create_window_ex(
+      _data: *mut ::std::ffi::c_void,
+      flags: u32,
+    ) -> u32 {
+      let window_id = $crate::allocate_window_id();
+      if let Some(state) = <$B as $crate::BackendAccess>::get() {
+        state.common().add_window(window_id);
+        // Stash the style flags before the event is processed so
+        // apply_pending_attrs sees them when the winit Window is built.
+        state.common().with_window(window_id, |ws| {
+          *ws.pending_flags.lock().unwrap() = flags;
+        });
         let _ = state.proxy().send_event(
           <$B as $crate::BackendAccess>::common_event(
             $crate::CommonEvent::CreateWindow { window_id },
@@ -2406,6 +2452,34 @@ macro_rules! define_common_backend_fns {
       }
     }
 
+    unsafe extern "C" fn backend_get_tray_icon_bounds(
+      _data: *mut ::std::ffi::c_void,
+      tray_id: u32,
+      x: *mut ::std::ffi::c_int,
+      y: *mut ::std::ffi::c_int,
+      width: *mut ::std::ffi::c_int,
+      height: *mut ::std::ffi::c_int,
+    ) -> bool {
+      match $crate::tray::tray_bounds(tray_id) {
+        Some((bx, by, bw, bh)) => {
+          if !x.is_null() {
+            *x = bx;
+          }
+          if !y.is_null() {
+            *y = by;
+          }
+          if !width.is_null() {
+            *width = bw;
+          }
+          if !height.is_null() {
+            *height = bh;
+          }
+          true
+        }
+        None => false,
+      }
+    }
+
     unsafe extern "C" fn backend_show_notification(
       _data: *mut ::std::ffi::c_void,
       options: *mut $crate::WefValue,
@@ -2453,6 +2527,7 @@ macro_rules! define_common_backend_fns {
 macro_rules! fill_common_api {
   ($api:expr) => {
     $api.create_window = Some(backend_create_window);
+    $api.create_window_ex = Some(backend_create_window_ex);
     $api.close_window = Some(backend_close_window);
     $api.set_title = Some(backend_set_title);
     $api.quit = Some(backend_quit);
@@ -2501,6 +2576,7 @@ macro_rules! fill_common_api {
     $api.set_tray_double_click_handler =
       Some(backend_set_tray_double_click_handler);
     $api.set_tray_icon_dark = Some(backend_set_tray_icon_dark);
+    $api.get_tray_icon_bounds = Some(backend_get_tray_icon_bounds);
     $api.show_notification = Some(backend_show_notification);
     $api.close_notification = Some(backend_close_notification);
     $api.query_permission = Some(backend_query_permission);
@@ -2709,12 +2785,26 @@ pub fn apply_pending_attrs(
   if let Some(title) = ws.pending_title.lock().unwrap().as_ref() {
     attrs = attrs.with_title(title.clone());
   }
+  let flags = *ws.pending_flags.lock().unwrap();
+  if flags & WEF_WINDOW_FLAG_FRAMELESS != 0 {
+    // Drop the title bar and standard window chrome.
+    attrs = attrs.with_decorations(false);
+  }
+  if flags & WEF_WINDOW_FLAG_NO_ACTIVATE != 0 {
+    // Don't activate / take focus when first shown.
+    attrs = attrs.with_active(false);
+  }
   attrs
 }
 
 /// Apply post-creation pending state (e.g. always-on-top).
 pub fn apply_pending_post_create(ws: &WindowState, window: &Window) {
   if let Some(true) = *ws.pending_always_on_top.lock().unwrap() {
+    window.set_window_level(WindowLevel::AlwaysOnTop);
+  }
+  // A non-activating panel floats above normal windows, like a tray popover
+  // (matches the NSPanel / always-on-top behavior of the other backends).
+  if *ws.pending_flags.lock().unwrap() & WEF_WINDOW_FLAG_NO_ACTIVATE != 0 {
     window.set_window_level(WindowLevel::AlwaysOnTop);
   }
 }

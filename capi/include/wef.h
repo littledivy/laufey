@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define WEF_API_VERSION 24
+#define WEF_API_VERSION 25
 
 // Window handle types for get_window_handle_type
 #define WEF_WINDOW_HANDLE_UNKNOWN 0
@@ -19,6 +19,18 @@ extern "C" {
 #define WEF_WINDOW_HANDLE_WIN32 2
 #define WEF_WINDOW_HANDLE_X11 3
 #define WEF_WINDOW_HANDLE_WAYLAND 4
+
+// Window creation flags for create_window_ex (bitmask).
+//
+// FRAMELESS removes the title bar and standard window chrome (border,
+// traffic-light / caption buttons). NO_ACTIVATE creates a utility "panel"
+// window that floats above normal windows and does not activate the app or
+// steal key focus from the foreground app when shown — the combination used
+// for tray / menu-bar popovers. On macOS NO_ACTIVATE maps to a
+// non-activating NSPanel; on Windows to WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+// on Linux to a utility window type hint.
+#define WEF_WINDOW_FLAG_FRAMELESS (1u << 0)
+#define WEF_WINDOW_FLAG_NO_ACTIVATE (1u << 1)
 
 typedef struct wef_backend_api wef_backend_api_t;
 
@@ -208,6 +220,15 @@ struct wef_backend_api {
   // Window lifecycle
   uint32_t (*create_window)(void* backend_data);
   void (*close_window)(void* backend_data, uint32_t window_id);
+
+  // Create a window with creation-time style flags (see WEF_WINDOW_FLAG_*).
+  // Flags that can only be decided when the OS window is constructed
+  // (frameless chrome, non-activating panel level) are honored here;
+  // post-creation properties (size, position, resizable, always-on-top) are
+  // still set via their respective setters. Backends added before API
+  // version 25 leave this NULL, in which case callers fall back to
+  // create_window and the flags are ignored.
+  uint32_t (*create_window_ex)(void* backend_data, uint32_t flags);
 
   void (*navigate)(void* backend_data, uint32_t window_id, const char* url);
   void (*set_title)(void* backend_data, uint32_t window_id, const char* title);
@@ -480,6 +501,16 @@ struct wef_backend_api {
   // clear the dark variant (then the primary icon is used in both modes).
   void (*set_tray_icon_dark)(void* backend_data, uint32_t tray_id,
                              const void* png_bytes, size_t len);
+
+  // Get the tray icon's bounding rectangle in screen coordinates, using the
+  // same top-left-origin, density-independent-pixel space as
+  // get_window_position / set_window_position so a window can be anchored to
+  // the icon. Writes x/y/width/height (any may be NULL) and returns true on
+  // success. Returns false if the id is unknown, the icon has no on-screen
+  // position yet, or the backend/platform can't report it (NULL fn pointer
+  // included). Used to position tray popover panels under the icon.
+  bool (*get_tray_icon_bounds)(void* backend_data, uint32_t tray_id, int* x,
+                               int* y, int* width, int* height);
 
   // --- Notifications (system / desktop) ---
   //

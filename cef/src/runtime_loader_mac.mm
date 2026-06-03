@@ -12,6 +12,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <UserNotifications/UserNotifications.h>
+#import <objc/message.h>
 
 // Defined in main_mac.mm — appends a default Edit submenu (Cut/Copy/Paste/
 // Select All/Undo/Redo) to the given menubar if no submenu in the tree
@@ -41,6 +42,33 @@ bool IsNSWindowResizable(void* cef_handle) {
     return (nswindow.styleMask & NSWindowStyleMaskResizable) != 0;
   }
   return true;
+}
+
+void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (!nswindow) return;
+  // Float above normal windows, follow the active space, and stay visible
+  // without taking part in window cycling — the behavior expected of a
+  // menu-bar / tray popover.
+  [nswindow setLevel:NSPopUpMenuWindowLevel];
+  [nswindow setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                  NSWindowCollectionBehaviorTransient |
+                                  NSWindowCollectionBehaviorIgnoresCycle];
+  // Don't drop the panel when the owning app deactivates; the app manages
+  // visibility itself (typically hiding on blur).
+  [nswindow setHidesOnDeactivate:NO];
+  // Showing the panel must not steal key focus from the foreground app. There
+  // is no public NSWindow API for this on a non-NSPanel window, so use the
+  // private -_setPreventsActivation: when available (invoked with a correctly
+  // typed objc_msgSend since the arg is a BOOL). Degrades gracefully — the
+  // window still floats and accepts first-mouse clicks without it.
+  SEL prevent_sel = NSSelectorFromString(@"_setPreventsActivation:");
+  if ([nswindow respondsToSelector:prevent_sel]) {
+    using PreventsActivationFn = void (*)(id, SEL, BOOL);
+    auto prevent = reinterpret_cast<PreventsActivationFn>(objc_msgSend);
+    prevent(nswindow, prevent_sel, YES);
+  }
 }
 
 void RegisterNSWindowForCefHandle(void* cef_handle, uint32_t window_id) {
@@ -470,6 +498,11 @@ void Backend_SetTrayIcon_Mac(void* /*data*/, uint32_t tray_id,
 void Backend_SetTrayIconDark_Mac(void* /*data*/, uint32_t tray_id,
                                  const void* png_bytes, size_t len) {
   wef_common::SetTrayIconDarkMac(tray_id, png_bytes, len);
+}
+
+bool Backend_GetTrayIconBounds_Mac(void* /*data*/, uint32_t tray_id, int* x,
+                                   int* y, int* width, int* height) {
+  return wef_common::GetTrayIconBoundsMac(tray_id, x, y, width, height);
 }
 
 void Backend_SetTrayTooltip_Mac(void* /*data*/, uint32_t tray_id,

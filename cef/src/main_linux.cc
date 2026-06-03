@@ -32,6 +32,7 @@
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/extensions/XInput2.h>
 
 static Display* g_monitor_display = nullptr;
@@ -429,6 +430,34 @@ void SetLinuxWindowResizable(unsigned long xid, bool resizable) {
     hints.max_height = attrs.height;
   }
   XSetWMNormalHints(dpy, xid, &hints);
+  XFlush(dpy);
+#endif
+}
+
+void ConfigureLinuxWindowAsPanel(unsigned long xid) {
+#ifdef GDK_WINDOWING_X11
+  GdkDisplay* gdk_display = gdk_display_get_default();
+  if (!gdk_display || !GDK_IS_X11_DISPLAY(gdk_display))
+    return;
+  Display* dpy = GDK_DISPLAY_XDISPLAY(gdk_display);
+
+  // Mark the window as a utility/panel type so the WM treats it as an
+  // auxiliary tool window — floated, not part of normal focus/taskbar
+  // handling — which is the closest X11 equivalent of a non-activating
+  // macOS panel.
+  Atom net_wm_window_type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+  Atom utility = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_UTILITY", False);
+  XChangeProperty(dpy, xid, net_wm_window_type, XA_ATOM, 32, PropModeReplace,
+                  reinterpret_cast<unsigned char*>(&utility), 1);
+
+  // Keep it out of the taskbar and pager, like a tray popover.
+  Atom net_wm_state = XInternAtom(dpy, "_NET_WM_STATE", False);
+  Atom skip_taskbar = XInternAtom(dpy, "_NET_WM_STATE_SKIP_TASKBAR", False);
+  Atom skip_pager = XInternAtom(dpy, "_NET_WM_STATE_SKIP_PAGER", False);
+  Atom states[] = {skip_taskbar, skip_pager};
+  XChangeProperty(dpy, xid, net_wm_state, XA_ATOM, 32, PropModeReplace,
+                  reinterpret_cast<unsigned char*>(states), 2);
+
   XFlush(dpy);
 #endif
 }

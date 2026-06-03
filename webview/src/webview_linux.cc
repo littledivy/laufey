@@ -300,6 +300,8 @@ class WebKitGTKBackend : public WefBackend {
   ~WebKitGTKBackend() override;
 
   void CreateWindow(uint32_t window_id, int width, int height) override;
+  void CreateWindowEx(uint32_t window_id, int width, int height,
+                      uint32_t flags) override;
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
@@ -603,7 +605,24 @@ static gboolean on_script_dialog(WebKitWebView* webview,
 }
 
 void WebKitGTKBackend::CreateWindow(uint32_t window_id, int width, int height) {
+  CreateWindowEx(window_id, width, height, 0);
+}
+
+void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
+                                      uint32_t flags) {
   GtkWidget* window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  if (flags & WEF_WINDOW_FLAG_FRAMELESS) {
+    gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
+  }
+  if (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) {
+    // Treat as a utility/panel window: out of taskbar & pager, and don't
+    // grab focus when shown (the GTK equivalent of a non-activating panel).
+    gtk_window_set_type_hint(GTK_WINDOW(window),
+                             GDK_WINDOW_TYPE_HINT_UTILITY);
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(window), TRUE);
+    gtk_window_set_skip_pager_hint(GTK_WINDOW(window), TRUE);
+    gtk_window_set_focus_on_map(GTK_WINDOW(window), FALSE);
+  }
   gtk_window_set_default_size(GTK_WINDOW(window), width, height);
   g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), nullptr);
   g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_event),

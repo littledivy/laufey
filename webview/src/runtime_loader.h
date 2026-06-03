@@ -302,6 +302,13 @@ class WefBackend {
 
   // Window lifecycle
   virtual void CreateWindow(uint32_t window_id, int width, int height) = 0;
+  // Create with creation-time style flags (WEF_WINDOW_FLAG_*). Default
+  // ignores the flags and creates a plain window; platform backends override
+  // to honor frameless / non-activating-panel flags.
+  virtual void CreateWindowEx(uint32_t window_id, int width, int height,
+                              uint32_t /*flags*/) {
+    CreateWindow(window_id, width, height);
+  }
   virtual void CloseWindow(uint32_t window_id) = 0;
 
   // Per-window operations
@@ -395,6 +402,11 @@ class WefBackend {
                                          void* /*user_data*/) {}
   virtual void SetTrayIconDark(uint32_t /*tray_id*/, const void* /*png_bytes*/,
                                size_t /*len*/) {}
+  // Tray icon screen bounds (top-left origin, DIP). Default: unsupported.
+  virtual bool GetTrayIconBounds(uint32_t /*tray_id*/, int* /*x*/, int* /*y*/,
+                                 int* /*width*/, int* /*height*/) {
+    return false;
+  }
 
   // --- Notifications ---
   // Default: not supported. Subclasses override per-platform.

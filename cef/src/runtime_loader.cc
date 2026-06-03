@@ -26,6 +26,19 @@
 
 RuntimeLoader* RuntimeLoader::instance_ = nullptr;
 
+#ifdef _WIN32
+void ConfigureWin32WindowAsPanel(void* hwnd_ptr) {
+  HWND hwnd = static_cast<HWND>(hwnd_ptr);
+  if (!hwnd) return;
+  // WS_EX_NOACTIVATE: showing the window doesn't steal focus / foreground
+  // from the user's active app. WS_EX_TOOLWINDOW: keep it out of the taskbar
+  // and Alt-Tab, matching a menu-bar / tray popover.
+  LONG_PTR ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+  ex |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+  SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex);
+}
+#endif
+
 // Helper to run a callback synchronously on the CEF UI thread.
 // If already on the UI thread, runs immediately.
 template <typename F>
@@ -897,6 +910,8 @@ extern void Backend_SetTrayDoubleClickHandler_Mac(void* data, uint32_t tray_id,
                                                   void* user_data);
 extern void Backend_SetTrayIconDark_Mac(void* data, uint32_t tray_id,
                                         const void* png_bytes, size_t len);
+extern bool Backend_GetTrayIconBounds_Mac(void* data, uint32_t tray_id, int* x,
+                                          int* y, int* width, int* height);
 extern uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
                                              wef_notification_event_fn on_event,
                                              void* user_data);
@@ -1098,6 +1113,17 @@ void Backend_SetTrayIconDark_Win(void* /*data*/, uint32_t tray_id,
                   tray_id, std::move(copy)));
 }
 
+bool Backend_GetTrayIconBounds_Win(void* /*data*/, uint32_t tray_id, int* x,
+                                   int* y, int* width, int* height) {
+  // Shell_NotifyIconGetRect touches the shell/message window owned by the UI
+  // thread, so query synchronously there.
+  bool ok = false;
+  cef_invoke_sync([&] {
+    ok = wef_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
+  });
+  return ok;
+}
+
 void Backend_SetTrayDoubleClickHandler_Win(void* /*data*/, uint32_t tray_id,
                                            wef_tray_click_fn handler,
                                            void* user_data) {
@@ -1232,12 +1258,12 @@ static void Backend_SetJsNamespace(void* data, const char* name) {
 
 // --- InitializeBackendApi ---
 
-static uint32_t Backend_CreateWindow(void* data) {
+static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
   auto* loader = RuntimeLoader::GetInstance();
   uint32_t window_id = loader->AllocateWindowId();
 
   CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t wid) {
+                          [](uint32_t wid, uint32_t window_flags) {
                             auto* handler = WefHandler::GetInstance();
                             if (!handler)
                               return;
@@ -1257,16 +1283,24 @@ static uint32_t Backend_CreateWindow(void* data) {
                                 CefBrowserView::CreateBrowserView(
                                     handler, "about:blank", browser_settings,
                                     extra_info, nullptr, nullptr);
-                            CefWindow::CreateTopLevelWindow(
-                                new WefWindowDelegate(browser_view, wid));
+                            CefWindow::CreateTopLevelWindow(new WefWindowDelegate(
+                                browser_view, wid, window_flags));
                           },
-                          window_id));
+                          window_id, flags));
 
   // Block until the browser is registered by OnAfterCreated, so that
   // subsequent calls (navigate, set_title, etc.) can find it.
   loader->WaitForBrowser(window_id);
 
   return window_id;
+}
+
+static uint32_t Backend_CreateWindow(void* data) {
+  return Backend_CreateWindowImpl(data, 0);
+}
+
+static uint32_t Backend_CreateWindowEx(void* data, uint32_t flags) {
+  return Backend_CreateWindowImpl(data, flags);
 }
 
 static void Backend_CloseWindow(void* data, uint32_t window_id) {
@@ -1321,6 +1355,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.backend_data = this;
 
   backend_api_.create_window = Backend_CreateWindow;
+  backend_api_.create_window_ex = Backend_CreateWindowEx;
   backend_api_.close_window = Backend_CloseWindow;
 
   backend_api_.navigate = Backend_Navigate;
@@ -1481,6 +1516,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_tray_double_click_handler =
       Backend_SetTrayDoubleClickHandler_Mac;
   backend_api_.set_tray_icon_dark = Backend_SetTrayIconDark_Mac;
+  backend_api_.get_tray_icon_bounds = Backend_GetTrayIconBounds_Mac;
 #elif defined(_WIN32)
   backend_api_.create_tray_icon = Backend_CreateTrayIcon_Win;
   backend_api_.destroy_tray_icon = Backend_DestroyTrayIcon_Win;
@@ -1491,6 +1527,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_tray_double_click_handler =
       Backend_SetTrayDoubleClickHandler_Win;
   backend_api_.set_tray_icon_dark = Backend_SetTrayIconDark_Win;
+  backend_api_.get_tray_icon_bounds = Backend_GetTrayIconBounds_Win;
 #elif defined(__linux__)
   backend_api_.create_tray_icon = Backend_CreateTrayIcon_Linux;
   backend_api_.destroy_tray_icon = Backend_DestroyTrayIcon_Linux;
@@ -1501,6 +1538,9 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_tray_double_click_handler =
       Backend_SetTrayDoubleClickHandler_Linux;
   backend_api_.set_tray_icon_dark = Backend_SetTrayIconDark_Linux;
+  // No get_tray_icon_bounds on Linux: the AppIndicator / StatusNotifier
+  // protocol does not expose the icon's screen position, so it stays NULL
+  // and Tray.getBounds() reports null.
 #endif
 
   // --- Notifications ---

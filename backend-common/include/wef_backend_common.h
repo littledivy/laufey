@@ -116,6 +116,11 @@ void SetTrayClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
                               void* user_data);
 void SetTrayDoubleClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
                                     void* user_data);
+// Writes the tray icon's screen rectangle (top-left origin, DIP) into the
+// out-params (any may be NULL) and returns true, or false if the id is
+// unknown or the shell can't report the position.
+bool GetTrayIconBoundsWin(uint32_t tray_id, int* x, int* y, int* width,
+                          int* height);
 #endif
 
 // ---------------------------------------------------------------------------
@@ -312,6 +317,11 @@ void SetTrayClickHandlerMac(uint32_t tray_id, wef_tray_click_fn handler,
                              void* user_data);
 void SetTrayDoubleClickHandlerMac(uint32_t tray_id,
                                    wef_tray_click_fn handler, void* user_data);
+// Writes the tray icon's screen rectangle (top-left origin, points/DIP) into
+// the out-params (any may be NULL) and returns true. Returns false if the id
+// is unknown or the icon has no on-screen button yet.
+bool GetTrayIconBoundsMac(uint32_t tray_id, int* x, int* y, int* width,
+                          int* height);
 #endif
 
 #ifdef __linux__

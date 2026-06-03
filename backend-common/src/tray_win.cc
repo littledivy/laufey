@@ -470,4 +470,29 @@ void SetTrayDoubleClickHandlerWin(uint32_t tray_id,
   it->second.dblclick_data = user_data;
 }
 
+bool GetTrayIconBoundsWin(uint32_t tray_id, int* x, int* y, int* width,
+                            int* height) {
+  HWND hwnd = g_tray_msg_hwnd;
+  if (!hwnd) return false;
+  {
+    std::lock_guard<std::mutex> lock(TrayMutex());
+    if (TrayMap().find(tray_id) == TrayMap().end()) return false;
+  }
+  NOTIFYICONIDENTIFIER nii = {};
+  nii.cbSize = sizeof(nii);
+  nii.hWnd = hwnd;
+  nii.uID = tray_id;
+  RECT rc = {};
+  if (Shell_NotifyIconGetRect(&nii, &rc) != S_OK) return false;
+  // The rect is in physical pixels; CEF Views window positions are in DIPs,
+  // so scale by the tray window's DPI to land in the same space.
+  UINT dpi = GetDpiForWindow(hwnd);
+  if (dpi == 0) dpi = 96;
+  if (x) *x = MulDiv(rc.left, 96, dpi);
+  if (y) *y = MulDiv(rc.top, 96, dpi);
+  if (width) *width = MulDiv(rc.right - rc.left, 96, dpi);
+  if (height) *height = MulDiv(rc.bottom - rc.top, 96, dpi);
+  return true;
+}
+
 }  // namespace wef_common

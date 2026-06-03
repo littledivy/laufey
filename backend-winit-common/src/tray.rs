@@ -41,12 +41,62 @@ unsafe impl Send for TrayEntry {}
 
 static TRAYS: Mutex<Option<HashMap<u32, TrayEntry>>> = Mutex::new(None);
 
+/// Tray icon bounds in logical, top-left screen coordinates (the same space
+/// the winit backend uses for window positions), keyed by tray id. Refreshed
+/// on the main thread by [`poll_tray_events`]; read from any thread by the
+/// `get_tray_icon_bounds` trampoline. Empty on platforms where `tray-icon`
+/// can't report geometry (Linux).
+static TRAY_RECTS: Mutex<Option<HashMap<u32, (i32, i32, i32, i32)>>> =
+  Mutex::new(None);
+
 fn trays() -> std::sync::MutexGuard<'static, Option<HashMap<u32, TrayEntry>>> {
   let mut g = TRAYS.lock().unwrap();
   if g.is_none() {
     *g = Some(HashMap::new());
   }
   g
+}
+
+/// The cached bounds of a tray icon, or `None` if not known (no icon, or a
+/// platform that can't report geometry).
+pub fn tray_bounds(tray_id: u32) -> Option<(i32, i32, i32, i32)> {
+  TRAY_RECTS
+    .lock()
+    .unwrap()
+    .as_ref()
+    .and_then(|m| m.get(&tray_id).copied())
+}
+
+/// Refresh [`TRAY_RECTS`] from each tray's current screen rect. `tray-icon`
+/// reports a top-left-origin rect in physical pixels; we divide by the
+/// primary monitor's `scale_factor` to land in the logical space used for
+/// window positions. Must run on the main thread.
+fn refresh_tray_rects(scale_factor: f64) {
+  let s = if scale_factor > 0.0 {
+    scale_factor
+  } else {
+    1.0
+  };
+  let mut out: HashMap<u32, (i32, i32, i32, i32)> = HashMap::new();
+  {
+    let guard = trays();
+    if let Some(map) = guard.as_ref() {
+      for (id, entry) in map.iter() {
+        if let Some(rect) = entry.icon.rect() {
+          out.insert(
+            *id,
+            (
+              (rect.position.x / s).round() as i32,
+              (rect.position.y / s).round() as i32,
+              (rect.size.width as f64 / s).round() as i32,
+              (rect.size.height as f64 / s).round() as i32,
+            ),
+          );
+        }
+      }
+    }
+  }
+  *TRAY_RECTS.lock().unwrap() = Some(out);
 }
 
 /// Commands queued from non-main threads (the backend C trampolines) and
@@ -431,7 +481,11 @@ fn is_dark_mode() -> bool {
 /// callbacks. Menu-item clicks are already handled by the shared
 /// `poll_menu_events` (tray menus register into the same
 /// `MENU_CLICK_STORE`). Call once per event loop tick on the main thread.
-pub fn poll_tray_events() {
+pub fn poll_tray_events(scale_factor: f64) {
+  // Keep cached tray bounds current so get_tray_icon_bounds can be answered
+  // synchronously from the Deno runtime thread.
+  refresh_tray_rects(scale_factor);
+
   // Detect theme changes between ticks and re-apply every tray's icon.
   // `is_dark_mode` is a cheap call (KVO lookup on macOS, single registry
   // read on Windows, constant on Linux), and this only runs once per

@@ -436,6 +436,18 @@ void RegisterNSWindowForCefHandle(void* cef_handle, uint32_t window_id);
 void UnregisterNSWindowForCefHandle(void* cef_handle);
 void SetNSWindowResizable(void* cef_handle, bool resizable);
 bool IsNSWindowResizable(void* cef_handle);
+// Reconfigure the window backing a CEF handle to behave as a floating,
+// non-activating utility panel (used for tray popovers): floats above
+// normal windows, joins all spaces, and doesn't steal focus from the
+// foreground app when shown.
+void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle);
+#endif
+
+#ifdef _WIN32
+// Reconfigure the HWND to a non-activating tool window (WS_EX_NOACTIVATE |
+// WS_EX_TOOLWINDOW) so showing it doesn't steal focus from the foreground
+// app. Implemented inline in runtime_loader.cc.
+void ConfigureWin32WindowAsPanel(void* hwnd);
 #endif
 
 #ifdef __linux__
@@ -444,6 +456,10 @@ bool IsNSWindowResizable(void* cef_handle);
 void MonitorLinuxWindowEvents(unsigned long xid);
 void SetLinuxWindowResizable(unsigned long xid, bool resizable);
 bool IsLinuxWindowResizable(unsigned long xid);
+// Mark the X11 window as a utility/panel window (_NET_WM_WINDOW_TYPE_UTILITY,
+// skip taskbar/pager) so the WM treats it as an auxiliary panel that doesn't
+// take part in normal focus/taskbar handling. Implemented in main_linux.cc.
+void ConfigureLinuxWindowAsPanel(unsigned long xid);
 #endif
 
 #endif

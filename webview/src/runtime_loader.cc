@@ -561,6 +561,26 @@ static uint32_t Backend_CreateWindow(void* data) {
   return window_id;
 }
 
+static uint32_t Backend_CreateWindowEx(void* data, uint32_t flags) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  uint32_t window_id = loader->AllocateWindowId();
+  WefBackend* backend = loader->GetBackend();
+  if (backend) {
+    backend->CreateWindowEx(window_id, 800, 600, flags);
+  }
+  return window_id;
+}
+
+static bool Backend_GetTrayIconBounds(void* data, uint32_t tray_id, int* x,
+                                      int* y, int* width, int* height) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  WefBackend* backend = loader->GetBackend();
+  if (!backend) {
+    return false;
+  }
+  return backend->GetTrayIconBounds(tray_id, x, y, width, height);
+}
+
 static void Backend_CloseWindow(void* data, uint32_t window_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   WefBackend* backend = loader->GetBackend();
@@ -837,6 +857,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.open_devtools = Backend_OpenDevTools;
   backend_api_.set_js_namespace = Backend_SetJsNamespace;
   backend_api_.create_window = Backend_CreateWindow;
+  backend_api_.create_window_ex = Backend_CreateWindowEx;
   backend_api_.close_window = Backend_CloseWindow;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
   backend_api_.show_dialog = Backend_ShowDialog;
@@ -857,6 +878,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_tray_double_click_handler =
       Backend_SetTrayDoubleClickHandler;
   backend_api_.set_tray_icon_dark = Backend_SetTrayIconDark;
+  backend_api_.get_tray_icon_bounds = Backend_GetTrayIconBounds;
 
   backend_api_.show_notification = Backend_ShowNotification;
   backend_api_.close_notification = Backend_CloseNotification;
