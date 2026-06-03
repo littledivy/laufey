@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/c7d55981-ab29-4bea-a4c6-28feeb1b4520" alt="wef" width="320">
-</p>
+<img src="https://github.com/user-attachments/assets/c7d55981-ab29-4bea-a4c6-28feeb1b4520" alt="wef" width="120" align="left">
 
 # wef
 
