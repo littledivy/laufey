@@ -221,6 +221,19 @@ int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
 
   @autoreleasepool {
+    // Allow the host to override the user-visible app name (menu-bar app
+    // menu, Dock, Cmd-Tab) at launch, e.g. the project name during
+    // `deno desktop --hmr`. AppKit derives the app menu title from the
+    // process name for an exec'd, non-LaunchServices-registered bundle like
+    // ours, so set it before the menu is built. Do this before
+    // +sharedApplication so the first read already sees the new name.
+    if (const char* app_name = getenv("WEF_APP_NAME")) {
+      if (*app_name) {
+        [[NSProcessInfo processInfo]
+            setProcessName:[NSString stringWithUTF8String:app_name]];
+      }
+    }
+
     [WefApplication sharedApplication];
     CHECK([NSApp isKindOfClass:[WefApplication class]]);
 
