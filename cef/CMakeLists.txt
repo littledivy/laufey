@@ -24,6 +24,12 @@ endif()
 
 set(WEF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../capi/include" CACHE PATH "Path to wef.h header directory")
 
+# CEF uses the static CRT (/MT) on Windows; build everything, including
+# backend-common, the same way or the link fails with LNK2038.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Shared native-API implementations (notifications, tray, dock, dialogs, ...).
 # Each platform branch links wef_backend_common below.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend-common

@@ -13,6 +13,14 @@
 #include "wef.h"
 #include "webview_value.h"
 
+#ifdef _WIN32
+// <windows.h> defines CreateWindow/CreateWindowEx as macros that collide with
+// our backend methods; pull it in once and drop them.
+#include <windows.h>
+#undef CreateWindow
+#undef CreateWindowEx
+#endif
+
 class WefBackend;
 
 class RuntimeLoader {
