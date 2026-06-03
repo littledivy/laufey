@@ -361,8 +361,7 @@ class WebKitGTKBackend : public WefBackend {
   void SetTrayClickHandler(uint32_t tray_id, wef_tray_click_fn handler,
                            void* user_data) override;
 
-  uint32_t ShowNotification(wef_value_t* options,
-                            const wef_backend_api_t* api,
+  uint32_t ShowNotification(wef_value_t* options, const wef_backend_api_t* api,
                             wef_notification_event_fn on_event,
                             void* user_data) override;
   void CloseNotification(uint32_t notification_id) override;
@@ -617,8 +616,7 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
   if (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) {
     // Treat as a utility/panel window: out of taskbar & pager, and don't
     // grab focus when shown (the GTK equivalent of a non-activating panel).
-    gtk_window_set_type_hint(GTK_WINDOW(window),
-                             GDK_WINDOW_TYPE_HINT_UTILITY);
+    gtk_window_set_type_hint(GTK_WINDOW(window), GDK_WINDOW_TYPE_HINT_UTILITY);
     gtk_window_set_skip_taskbar_hint(GTK_WINDOW(window), TRUE);
     gtk_window_set_skip_pager_hint(GTK_WINDOW(window), TRUE);
     gtk_window_set_focus_on_map(GTK_WINDOW(window), FALSE);
@@ -1069,7 +1067,8 @@ void WebKitGTKBackend::HandleJsMessage(uint32_t window_id,
 // Application Menu / Context Menu
 // ============================================================================
 //
-// Menu construction lives in backend-common (wef_common::BuildGtkMenuFromValue).
+// Menu construction lives in backend-common
+// (wef_common::BuildGtkMenuFromValue).
 
 void WebKitGTKBackend::SetApplicationMenu(uint32_t window_id,
                                           wef_value_t* menu_template,
@@ -1202,7 +1201,7 @@ void WebKitGTKBackend::SetTrayMenu(uint32_t tray_id, wef_value_t* menu_template,
                                    wef_menu_click_fn on_click,
                                    void* on_click_data) {
   wef_common::SetTrayMenuLinux(tray_id, menu_template, api, on_click,
-                                on_click_data);
+                               on_click_data);
 }
 void WebKitGTKBackend::SetTrayClickHandler(uint32_t tray_id,
                                            wef_tray_click_fn handler,
@@ -1217,9 +1216,10 @@ void WebKitGTKBackend::SetTrayClickHandler(uint32_t tray_id,
 // Thin trampoline over the shared notify-send implementation in
 // backend-common/src/notifications_linux.cc.
 
-uint32_t WebKitGTKBackend::ShowNotification(
-    wef_value_t* options, const wef_backend_api_t* api,
-    wef_notification_event_fn on_event, void* user_data) {
+uint32_t WebKitGTKBackend::ShowNotification(wef_value_t* options,
+                                            const wef_backend_api_t* api,
+                                            wef_notification_event_fn on_event,
+                                            void* user_data) {
   wef_common::NotificationOptions opts =
       wef_common::ParseNotificationOptions(options, api);
   return wef_common::ShowNotificationLinux(opts, on_event, user_data);

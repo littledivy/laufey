@@ -75,8 +75,7 @@ bool WefWindowDelegate::IsFrameless(CefRefPtr<CefWindow> window) {
 }
 
 cef_state_t WefWindowDelegate::AcceptsFirstMouse(CefRefPtr<CefWindow> window) {
-  return (flags_ & WEF_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED
-                                                : STATE_DEFAULT;
+  return (flags_ & WEF_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED : STATE_DEFAULT;
 }
 
 void WefWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
@@ -193,8 +192,8 @@ bool WefHandler::OnKeyEvent(CefRefPtr<CefBrowser> browser,
   if (event.modifiers & EVENTFLAG_COMMAND_DOWN)
     modifiers |= WEF_MOD_META;
 
-  std::string key = wef_common::VkToKey(event.windows_key_code,
-                                        event.character, false, false);
+  std::string key = wef_common::VkToKey(event.windows_key_code, event.character,
+                                        false, false);
   std::string code = wef_common::VkToCode(event.windows_key_code, false, 0);
 
   uint32_t wid = RuntimeLoader::GetInstance()->GetWefIdForBrowser(browser);

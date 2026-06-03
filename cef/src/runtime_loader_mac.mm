@@ -47,7 +47,8 @@ bool IsNSWindowResizable(void* cef_handle) {
 void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle) {
   NSView* view = (__bridge NSView*)cef_handle;
   NSWindow* nswindow = [view window];
-  if (!nswindow) return;
+  if (!nswindow)
+    return;
   // Float above normal windows, follow the active space, and stay visible
   // without taking part in window cycling — the behavior expected of a
   // menu-bar / tray popover.
@@ -463,7 +464,7 @@ void Backend_SetDockMenu_Mac(void* data, wef_value_t* menu_template,
   dispatch_async(dispatch_get_main_queue(), ^{
     // window_id = 0 because dock menu is app-scoped.
     NSMenu* menu = wef_common::BuildNSMenuFromValue(menu_template, api,
-                                                     on_click, on_click_data, 0);
+                                                    on_click, on_click_data, 0);
     wef_common::SetDockMenuMac(menu);
   });
 }
@@ -515,7 +516,7 @@ void Backend_SetTrayMenu_Mac(void* data, uint32_t tray_id,
                              wef_menu_click_fn on_click, void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   wef_common::SetTrayMenuMac(tray_id, menu_template, &loader->GetBackendApi(),
-                              on_click, on_click_data);
+                             on_click, on_click_data);
 }
 
 void Backend_SetTrayClickHandler_Mac(void* /*data*/, uint32_t tray_id,

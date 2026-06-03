@@ -115,8 +115,7 @@ class WKWebViewBackend : public WefBackend {
   bool GetTrayIconBounds(uint32_t tray_id, int* x, int* y, int* width,
                          int* height) override;
 
-  uint32_t ShowNotification(wef_value_t* options,
-                            const wef_backend_api_t* api,
+  uint32_t ShowNotification(wef_value_t* options, const wef_backend_api_t* api,
                             wef_notification_event_fn on_event,
                             void* user_data) override;
   void CloseNotification(uint32_t notification_id) override;
@@ -1257,7 +1256,6 @@ void WKWebViewBackend::HandleJsMessage(uint32_t window_id, uint64_t call_id,
 //
 // Menu construction lives in backend-common (wef_common::BuildNSMenuFromValue).
 
-
 void WKWebViewBackend::SetApplicationMenu(uint32_t window_id,
                                           wef_value_t* menu_template,
                                           const wef_backend_api_t* api,
@@ -1368,7 +1366,7 @@ void WKWebViewBackend::SetDockMenu(wef_value_t* menu_template,
   dispatch_async(dispatch_get_main_queue(), ^{
     // window_id = 0 because the dock menu is app-scoped.
     NSMenu* menu = wef_common::BuildNSMenuFromValue(menu_template, api,
-                                                     on_click, on_click_data, 0);
+                                                    on_click, on_click_data, 0);
     wef_common::SetDockMenuMac(menu);
   });
 }
@@ -1399,8 +1397,8 @@ void WKWebViewBackend::SetTrayIcon(uint32_t tray_id, const void* png_bytes,
   wef_common::SetTrayIconMac(tray_id, png_bytes, len);
 }
 
-void WKWebViewBackend::SetTrayIconDark(uint32_t tray_id,
-                                       const void* png_bytes, size_t len) {
+void WKWebViewBackend::SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
+                                       size_t len) {
   wef_common::SetTrayIconDarkMac(tray_id, png_bytes, len);
 }
 
@@ -1425,7 +1423,7 @@ void WKWebViewBackend::SetTrayMenu(uint32_t tray_id, wef_value_t* menu_template,
                                    wef_menu_click_fn on_click,
                                    void* on_click_data) {
   wef_common::SetTrayMenuMac(tray_id, menu_template, api, on_click,
-                              on_click_data);
+                             on_click_data);
 }
 
 void WKWebViewBackend::SetTrayClickHandler(uint32_t tray_id,
@@ -1439,9 +1437,10 @@ void WKWebViewBackend::SetTrayClickHandler(uint32_t tray_id,
 // (UNUserNotificationCenter-backed). Migrated from NSUserNotification
 // (deprecated in macOS 11) to align with the CEF backend.
 
-uint32_t WKWebViewBackend::ShowNotification(
-    wef_value_t* options, const wef_backend_api_t* api,
-    wef_notification_event_fn on_event, void* user_data) {
+uint32_t WKWebViewBackend::ShowNotification(wef_value_t* options,
+                                            const wef_backend_api_t* api,
+                                            wef_notification_event_fn on_event,
+                                            void* user_data) {
   wef_common::NotificationOptions opts =
       wef_common::ParseNotificationOptions(options, api);
   return wef_common::ShowNotificationMac(opts, on_event, user_data);
@@ -1463,8 +1462,7 @@ void WKWebViewBackend::CloseNotification(uint32_t notification_id) {
 
 // Permissions: thin trampolines over backend-common/src/permissions_mac.mm.
 
-void WKWebViewBackend::QueryPermission(int kind,
-                                       wef_permission_callback_fn cb,
+void WKWebViewBackend::QueryPermission(int kind, wef_permission_callback_fn cb,
                                        void* user_data) {
   wef_common::QueryPermissionMac(kind, cb, user_data);
 }

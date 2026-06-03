@@ -116,8 +116,10 @@ NSMenu* BuildDefaultEditSubmenu() {
 
 static bool MenuTreeHasCopyAction(NSMenu* menu) {
   for (NSMenuItem* item in [menu itemArray]) {
-    if ([item action] == @selector(copy:)) return true;
-    if ([item submenu] && MenuTreeHasCopyAction([item submenu])) return true;
+    if ([item action] == @selector(copy:))
+      return true;
+    if ([item submenu] && MenuTreeHasCopyAction([item submenu]))
+      return true;
   }
   return false;
 }
@@ -125,7 +127,8 @@ static bool MenuTreeHasCopyAction(NSMenu* menu) {
 // Force an Edit submenu into the menubar if the embedder didn't include one.
 // Without copy:/paste: items somewhere in the menu, Cmd+C/V silently no-op.
 void EnsureEditMenu(NSMenu* menubar) {
-  if (MenuTreeHasCopyAction(menubar)) return;
+  if (MenuTreeHasCopyAction(menubar))
+    return;
   NSMenuItem* editItem = [[NSMenuItem alloc] init];
   [editItem setSubmenu:BuildDefaultEditSubmenu()];
   [menubar addItem:editItem];

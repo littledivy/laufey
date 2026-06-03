@@ -410,9 +410,10 @@ class WefBackend {
 
   // --- Notifications ---
   // Default: not supported. Subclasses override per-platform.
-  virtual uint32_t ShowNotification(
-      wef_value_t* options, const wef_backend_api_t* /*api*/,
-      wef_notification_event_fn /*on_event*/, void* /*user_data*/) {
+  virtual uint32_t ShowNotification(wef_value_t* options,
+                                    const wef_backend_api_t* /*api*/,
+                                    wef_notification_event_fn /*on_event*/,
+                                    void* /*user_data*/) {
     // Subclass owns the options pointer if it accepts the call. Default
     // path frees so we don't leak.
     (void)options;

@@ -29,7 +29,8 @@ RuntimeLoader* RuntimeLoader::instance_ = nullptr;
 #ifdef _WIN32
 void ConfigureWin32WindowAsPanel(void* hwnd_ptr) {
   HWND hwnd = static_cast<HWND>(hwnd_ptr);
-  if (!hwnd) return;
+  if (!hwnd)
+    return;
   // WS_EX_NOACTIVATE: showing the window doesn't steal focus / foreground
   // from the user's active app. WS_EX_TOOLWINDOW: keep it out of the taskbar
   // and Alt-Tab, matching a menu-bar / tray popover.
@@ -1008,22 +1009,21 @@ static void Backend_SetDockBadge_TitlePrefix(void* data,
 
   loader->ForEachBrowserWithId([&badge](uint32_t wid,
                                         CefRefPtr<CefBrowser> browser) {
-    CefPostTask(
-        TID_UI,
-        base::BindOnce(
-            [](uint32_t wid, CefRefPtr<CefBrowser> b, std::string bg) {
-              auto bv = CefBrowserView::GetForBrowser(b);
-              if (!bv)
-                return;
-              auto win = bv->GetWindow();
-              if (!win)
-                return;
-              std::string current = win->GetTitle().ToString();
-              std::string next = wef_common::ApplyTitlePrefixBadge(wid, current,
-                                                                    bg);
-              win->SetTitle(next);
-            },
-            wid, browser, badge));
+    CefPostTask(TID_UI,
+                base::BindOnce(
+                    [](uint32_t wid, CefRefPtr<CefBrowser> b, std::string bg) {
+                      auto bv = CefBrowserView::GetForBrowser(b);
+                      if (!bv)
+                        return;
+                      auto win = bv->GetWindow();
+                      if (!win)
+                        return;
+                      std::string current = win->GetTitle().ToString();
+                      std::string next =
+                          wef_common::ApplyTitlePrefixBadge(wid, current, bg);
+                      win->SetTitle(next);
+                    },
+                    wid, browser, badge));
   });
 }
 #endif  // !__APPLE__
@@ -1074,28 +1074,30 @@ uint32_t Backend_CreateTrayIcon_Win(void* /*data*/) {
   // UI thread so the message-only window is owned by the thread that
   // pumps messages for it.
   uint32_t tray_id = wef_common::CreateTrayIconWin();
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid) { wef_common::FinalizeTrayIconWin(tid); },
-                          tray_id));
+  CefPostTask(
+      TID_UI,
+      base::BindOnce([](uint32_t tid) { wef_common::FinalizeTrayIconWin(tid); },
+                     tray_id));
   return tray_id;
 }
 
 void Backend_DestroyTrayIcon_Win(void* /*data*/, uint32_t tray_id) {
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid) { wef_common::DestroyTrayIconWin(tid); },
-                          tray_id));
+  CefPostTask(
+      TID_UI,
+      base::BindOnce([](uint32_t tid) { wef_common::DestroyTrayIconWin(tid); },
+                     tray_id));
 }
 
 void Backend_SetTrayIcon_Win(void* /*data*/, uint32_t tray_id,
                              const void* png_bytes, size_t len) {
-  if (!png_bytes || len == 0) return;
+  if (!png_bytes || len == 0)
+    return;
   std::vector<BYTE> copy((const BYTE*)png_bytes, (const BYTE*)png_bytes + len);
-  CefPostTask(TID_UI,
-              base::BindOnce(
-                  [](uint32_t tid, std::vector<BYTE> b) {
-                    wef_common::SetTrayIconWin(tid, b.data(), b.size());
-                  },
-                  tray_id, std::move(copy)));
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](uint32_t tid, std::vector<BYTE> b) {
+                            wef_common::SetTrayIconWin(tid, b.data(), b.size());
+                          },
+                          tray_id, std::move(copy)));
 }
 
 void Backend_SetTrayIconDark_Win(void* /*data*/, uint32_t tray_id,
@@ -1104,13 +1106,12 @@ void Backend_SetTrayIconDark_Win(void* /*data*/, uint32_t tray_id,
   if (png_bytes && len > 0) {
     copy.assign((const BYTE*)png_bytes, (const BYTE*)png_bytes + len);
   }
-  CefPostTask(TID_UI,
-              base::BindOnce(
-                  [](uint32_t tid, std::vector<BYTE> b) {
-                    wef_common::SetTrayIconDarkWin(
-                        tid, b.empty() ? nullptr : b.data(), b.size());
-                  },
-                  tray_id, std::move(copy)));
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](uint32_t tid, std::vector<BYTE> b) {
+                            wef_common::SetTrayIconDarkWin(
+                                tid, b.empty() ? nullptr : b.data(), b.size());
+                          },
+                          tray_id, std::move(copy)));
 }
 
 bool Backend_GetTrayIconBounds_Win(void* /*data*/, uint32_t tray_id, int* x,
@@ -1150,14 +1151,14 @@ void Backend_SetTrayMenu_Win(void* data, uint32_t tray_id,
                              wef_menu_click_fn on_click, void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   const wef_backend_api_t* api = &loader->GetBackendApi();
-  CefPostTask(TID_UI,
-              base::BindOnce(
-                  [](uint32_t tid, wef_value_t* tmpl,
-                     const wef_backend_api_t* a, wef_menu_click_fn cb,
-                     void* cb_data) {
-                    wef_common::SetTrayMenuWin(tid, tmpl, a, cb, cb_data);
-                  },
-                  tray_id, menu_template, api, on_click, on_click_data));
+  CefPostTask(
+      TID_UI,
+      base::BindOnce(
+          [](uint32_t tid, wef_value_t* tmpl, const wef_backend_api_t* a,
+             wef_menu_click_fn cb, void* cb_data) {
+            wef_common::SetTrayMenuWin(tid, tmpl, a, cb, cb_data);
+          },
+          tray_id, menu_template, api, on_click, on_click_data));
 }
 
 void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
@@ -1174,9 +1175,9 @@ void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
 //
 // Thin trampolines over backend-common/src/notifications_win.cc.
 
-static uint32_t Backend_ShowNotification_Win(
-    void* data, wef_value_t* options, wef_notification_event_fn on_event,
-    void* user_data) {
+static uint32_t Backend_ShowNotification_Win(void* data, wef_value_t* options,
+                                             wef_notification_event_fn on_event,
+                                             void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   wef_common::NotificationOptions opts =
       wef_common::ParseNotificationOptions(options, &loader->GetBackendApi());
@@ -1262,31 +1263,32 @@ static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
   auto* loader = RuntimeLoader::GetInstance();
   uint32_t window_id = loader->AllocateWindowId();
 
-  CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t wid, uint32_t window_flags) {
-                            auto* handler = WefHandler::GetInstance();
-                            if (!handler)
-                              return;
+  CefPostTask(TID_UI,
+              base::BindOnce(
+                  [](uint32_t wid, uint32_t window_flags) {
+                    auto* handler = WefHandler::GetInstance();
+                    if (!handler)
+                      return;
 
-                            // Push wef_id before creating the browser so
-                            // OnAfterCreated can pop it. Both run on the UI
-                            // thread so no race.
-                            g_pending_wef_ids.push(wid);
+                    // Push wef_id before creating the browser so
+                    // OnAfterCreated can pop it. Both run on the UI
+                    // thread so no race.
+                    g_pending_wef_ids.push(wid);
 
-                            CefBrowserSettings browser_settings;
-                            CefRefPtr<CefDictionaryValue> extra_info =
-                                CefDictionaryValue::Create();
-                            extra_info->SetString(
-                                "wef_js_namespace",
-                                RuntimeLoader::GetInstance()->GetJsNamespace());
-                            CefRefPtr<CefBrowserView> browser_view =
-                                CefBrowserView::CreateBrowserView(
-                                    handler, "about:blank", browser_settings,
-                                    extra_info, nullptr, nullptr);
-                            CefWindow::CreateTopLevelWindow(new WefWindowDelegate(
-                                browser_view, wid, window_flags));
-                          },
-                          window_id, flags));
+                    CefBrowserSettings browser_settings;
+                    CefRefPtr<CefDictionaryValue> extra_info =
+                        CefDictionaryValue::Create();
+                    extra_info->SetString(
+                        "wef_js_namespace",
+                        RuntimeLoader::GetInstance()->GetJsNamespace());
+                    CefRefPtr<CefBrowserView> browser_view =
+                        CefBrowserView::CreateBrowserView(
+                            handler, "about:blank", browser_settings,
+                            extra_info, nullptr, nullptr);
+                    CefWindow::CreateTopLevelWindow(
+                        new WefWindowDelegate(browser_view, wid, window_flags));
+                  },
+                  window_id, flags));
 
   // Block until the browser is registered by OnAfterCreated, so that
   // subsequent calls (navigate, set_title, etc.) can find it.

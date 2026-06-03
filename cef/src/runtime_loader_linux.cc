@@ -113,9 +113,8 @@ void Backend_SetTrayMenu_Linux(void* data, uint32_t tray_id,
                                wef_menu_click_fn on_click,
                                void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  wef_common::SetTrayMenuLinux(tray_id, menu_template,
-                                &loader->GetBackendApi(), on_click,
-                                on_click_data);
+  wef_common::SetTrayMenuLinux(tray_id, menu_template, &loader->GetBackendApi(),
+                               on_click, on_click_data);
 }
 void Backend_SetTrayClickHandler_Linux(void* /*data*/, uint32_t tray_id,
                                        wef_tray_click_fn handler,
