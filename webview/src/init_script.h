@@ -25,8 +25,8 @@ inline std::string BuildRespondScript(uint64_t call_id,
     return "window.__laufeyRespond(" + std::to_string(call_id) + ", null, " +
            error_json + ");";
   }
-  return "window.__laufeyRespond(" + std::to_string(call_id) + ", " + result_json +
-         ", null);";
+  return "window.__laufeyRespond(" + std::to_string(call_id) + ", " +
+         result_json + ", null);";
 }
 
 // window.__laufeyInvokeCallback(callbackId, args): call a stored JS callback.

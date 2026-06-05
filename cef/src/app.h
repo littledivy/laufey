@@ -23,8 +23,8 @@ extern std::queue<uint32_t> g_pending_laufey_ids;
 
 class LaufeyWindowDelegate : public CefWindowDelegate {
  public:
-  LaufeyWindowDelegate(CefRefPtr<CefBrowserView> browser_view, uint32_t laufey_id,
-                    uint32_t flags = 0)
+  LaufeyWindowDelegate(CefRefPtr<CefBrowserView> browser_view,
+                       uint32_t laufey_id, uint32_t flags = 0)
       : browser_view_(browser_view), laufey_id_(laufey_id), flags_(flags) {}
 
   void OnWindowCreated(CefRefPtr<CefWindow> window) override;
@@ -48,11 +48,11 @@ class LaufeyWindowDelegate : public CefWindowDelegate {
 };
 
 class LaufeyHandler : public CefClient,
-                   public CefLifeSpanHandler,
-                   public CefDisplayHandler,
-                   public CefKeyboardHandler,
-                   public CefDragHandler,
-                   public CefJSDialogHandler {
+                      public CefLifeSpanHandler,
+                      public CefDisplayHandler,
+                      public CefKeyboardHandler,
+                      public CefDragHandler,
+                      public CefJSDialogHandler {
  public:
   LaufeyHandler();
   ~LaufeyHandler() override;

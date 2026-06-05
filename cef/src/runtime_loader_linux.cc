@@ -113,8 +113,9 @@ void Backend_SetTrayMenu_Linux(void* data, uint32_t tray_id,
                                laufey_menu_click_fn on_click,
                                void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  laufey_common::SetTrayMenuLinux(tray_id, menu_template, &loader->GetBackendApi(),
-                               on_click, on_click_data);
+  laufey_common::SetTrayMenuLinux(tray_id, menu_template,
+                                  &loader->GetBackendApi(), on_click,
+                                  on_click_data);
 }
 void Backend_SetTrayClickHandler_Linux(void* /*data*/, uint32_t tray_id,
                                        laufey_tray_click_fn handler,
@@ -142,7 +143,8 @@ extern "C" uint32_t Backend_ShowNotification_Linux(
     void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   laufey_common::NotificationOptions opts =
-      laufey_common::ParseNotificationOptions(options, &loader->GetBackendApi());
+      laufey_common::ParseNotificationOptions(options,
+                                              &loader->GetBackendApi());
   return laufey_common::ShowNotificationLinux(opts, on_event, user_data);
 }
 

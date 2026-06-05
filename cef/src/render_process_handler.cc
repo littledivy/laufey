@@ -5,12 +5,13 @@
 CefRefPtr<LaufeyRenderProcessHandler> g_render_handler;
 
 LaufeyPathObject::LaufeyPathObject(std::vector<std::string> path,
-                             CefRefPtr<CefFrame> frame)
+                                   CefRefPtr<CefFrame> frame)
     : path_(std::move(path)), frame_(frame) {}
 
 bool LaufeyPathObject::Get(const CefString& name,
-                        const CefRefPtr<CefV8Value> object,
-                        CefRefPtr<CefV8Value>& retval, CefString& exception) {
+                           const CefRefPtr<CefV8Value> object,
+                           CefRefPtr<CefV8Value>& retval,
+                           CefString& exception) {
   std::string prop = name.ToString();
 
   if (prop == "then" || prop == "catch" || prop == "finally" ||
@@ -29,29 +30,31 @@ bool LaufeyPathObject::Get(const CefString& name,
 }
 
 bool LaufeyPathObject::Set(const CefString& name,
-                        const CefRefPtr<CefV8Value> object,
-                        const CefRefPtr<CefV8Value> value,
-                        CefString& exception) {
+                           const CefRefPtr<CefV8Value> object,
+                           const CefRefPtr<CefV8Value> value,
+                           CefString& exception) {
   exception = "Cannot set properties on Laufey object";
   return true;
 }
 
 bool LaufeyPathObject::Get(int index, const CefRefPtr<CefV8Value> object,
-                        CefRefPtr<CefV8Value>& retval, CefString& exception) {
+                           CefRefPtr<CefV8Value>& retval,
+                           CefString& exception) {
   return false;
 }
 
 bool LaufeyPathObject::Set(int index, const CefRefPtr<CefV8Value> object,
-                        const CefRefPtr<CefV8Value> value,
-                        CefString& exception) {
+                           const CefRefPtr<CefV8Value> value,
+                           CefString& exception) {
   exception = "Cannot set index properties on Laufey object";
   return true;
 }
 
-bool LaufeyPathObject::Execute(const CefString& name, CefRefPtr<CefV8Value> object,
-                            const CefV8ValueList& arguments,
-                            CefRefPtr<CefV8Value>& retval,
-                            CefString& exception) {
+bool LaufeyPathObject::Execute(const CefString& name,
+                               CefRefPtr<CefV8Value> object,
+                               const CefV8ValueList& arguments,
+                               CefRefPtr<CefV8Value>& retval,
+                               CefString& exception) {
   if (!g_render_handler) {
     exception = "Render handler not initialized";
     return true;

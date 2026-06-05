@@ -16,8 +16,8 @@
 #include <laufey.h>
 
 // laufey_value and the value_* marshalling are shared across backends
-// (backend-common/include/laufey_value.h). CEF stores values as laufey::Value and
-// converts to/from CefValue only at the renderer<->browser IPC boundary
+// (backend-common/include/laufey_value.h). CEF stores values as laufey::Value
+// and converts to/from CefValue only at the renderer<->browser IPC boundary
 // (CefValueToLaufey / LaufeyToCefValue in runtime_loader.cc).
 #include "laufey_value.h"
 
@@ -163,7 +163,8 @@ class RuntimeLoader {
     js_call_user_data_ = user_data;
   }
 
-  void SetKeyboardEventHandler(laufey_keyboard_event_fn handler, void* user_data) {
+  void SetKeyboardEventHandler(laufey_keyboard_event_fn handler,
+                               void* user_data) {
     std::lock_guard<std::mutex> lock(keyboard_mutex_);
     keyboard_handler_ = handler;
     keyboard_user_data_ = user_data;
@@ -300,7 +301,8 @@ class RuntimeLoader {
     js_call_notify_data_ = notify_data;
   }
 
-  uint64_t StoreEvalCallback(laufey_js_result_fn callback, void* callback_data) {
+  uint64_t StoreEvalCallback(laufey_js_result_fn callback,
+                             void* callback_data) {
     std::lock_guard<std::mutex> lock(eval_mutex_);
     uint64_t id = next_eval_id_++;
     pending_evals_[id] = {callback, callback_data};

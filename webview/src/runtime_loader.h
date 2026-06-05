@@ -68,8 +68,8 @@ class RuntimeLoader {
 
   void PollPendingJsCalls();
 
-  void JsCallRespond(uint32_t window_id, uint64_t call_id, laufey::ValuePtr result,
-                     laufey::ValuePtr error);
+  void JsCallRespond(uint32_t window_id, uint64_t call_id,
+                     laufey::ValuePtr result, laufey::ValuePtr error);
 
   void SetJsCallHandler(laufey_js_call_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(handler_mutex_);
@@ -77,7 +77,8 @@ class RuntimeLoader {
     js_call_user_data_ = user_data;
   }
 
-  void SetKeyboardEventHandler(laufey_keyboard_event_fn handler, void* user_data) {
+  void SetKeyboardEventHandler(laufey_keyboard_event_fn handler,
+                               void* user_data) {
     std::lock_guard<std::mutex> lock(keyboard_mutex_);
     keyboard_handler_ = handler;
     keyboard_user_data_ = user_data;
@@ -347,7 +348,8 @@ class LaufeyBackend {
                                 laufey::ValuePtr args) = 0;
   virtual void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) = 0;
   virtual void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                               laufey::ValuePtr result, laufey::ValuePtr error) = 0;
+                               laufey::ValuePtr result,
+                               laufey::ValuePtr error) = 0;
 
   virtual void SetApplicationMenu(uint32_t window_id,
                                   laufey_value_t* menu_template,
@@ -398,7 +400,8 @@ class LaufeyBackend {
                            size_t /*len*/) {}
   virtual void SetTrayTooltip(uint32_t /*tray_id*/,
                               const char* /*tooltip_or_null*/) {}
-  virtual void SetTrayMenu(uint32_t /*tray_id*/, laufey_value_t* /*menu_template*/,
+  virtual void SetTrayMenu(uint32_t /*tray_id*/,
+                           laufey_value_t* /*menu_template*/,
                            const laufey_backend_api_t* /*api*/,
                            laufey_menu_click_fn /*on_click*/,
                            void* /*on_click_data*/) {}

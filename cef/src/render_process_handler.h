@@ -19,7 +19,7 @@ struct StoredCallback {
 class LaufeyPathObject : public CefV8Interceptor, public CefV8Handler {
  public:
   explicit LaufeyPathObject(std::vector<std::string> path,
-                         CefRefPtr<CefFrame> frame);
+                            CefRefPtr<CefFrame> frame);
 
   bool Get(const CefString& name, const CefRefPtr<CefV8Value> object,
            CefRefPtr<CefV8Value>& retval, CefString& exception) override;

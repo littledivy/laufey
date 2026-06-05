@@ -54,15 +54,15 @@ typedef void (*laufey_runtime_shutdown_fn)(void);
 typedef struct laufey_value laufey_value_t;
 
 typedef void (*laufey_js_call_fn)(void* user_data, uint32_t window_id,
-                               uint64_t call_id, const char* method_path,
-                               laufey_value_t* args);
+                                  uint64_t call_id, const char* method_path,
+                                  laufey_value_t* args);
 
 // Callback for execute_js results. Pass NULL to execute_js for fire-and-forget.
-typedef void (*laufey_js_result_fn)(laufey_value_t* result, laufey_value_t* error,
-                                 void* user_data);
+typedef void (*laufey_js_result_fn)(laufey_value_t* result,
+                                    laufey_value_t* error, void* user_data);
 
 typedef void (*laufey_menu_click_fn)(void* user_data, uint32_t window_id,
-                                  const char* item_id);
+                                     const char* item_id);
 
 // Keyboard event state
 #define LAUFEY_KEY_PRESSED 0
@@ -98,13 +98,15 @@ typedef void (*laufey_menu_click_fn)(void* user_data, uint32_t window_id,
 // Callback fired when the user clicks the dock / taskbar icon for an app that
 // has no visible windows (macOS only; Windows/Linux have no equivalent event).
 // has_visible_windows is true if any app window is currently on-screen.
-typedef void (*laufey_dock_reopen_fn)(void* user_data, bool has_visible_windows);
+typedef void (*laufey_dock_reopen_fn)(void* user_data,
+                                      bool has_visible_windows);
 
 // Callback fired when the user left-clicks a tray / status-bar icon.
 // (Right-click is reserved for the tray's menu.)
 typedef void (*laufey_tray_click_fn)(void* user_data, uint32_t tray_id);
 
-// Notification event reasons (passed as `reason` to laufey_notification_event_fn).
+// Notification event reasons (passed as `reason` to
+// laufey_notification_event_fn).
 #define LAUFEY_NOTIFICATION_SHOWN 0
 #define LAUFEY_NOTIFICATION_CLICKED 1
 #define LAUFEY_NOTIFICATION_CLOSED 2
@@ -114,8 +116,9 @@ typedef void (*laufey_tray_click_fn)(void* user_data, uint32_t tray_id);
 // `show_notification`. `action_id_or_null` is non-NULL only for
 // LAUFEY_NOTIFICATION_ACTION (the id of the action button the user clicked).
 typedef void (*laufey_notification_event_fn)(void* user_data,
-                                          uint32_t notification_id, int reason,
-                                          const char* action_id_or_null);
+                                             uint32_t notification_id,
+                                             int reason,
+                                             const char* action_id_or_null);
 
 // --- Permissions / runtime authorization ---
 //
@@ -191,14 +194,14 @@ typedef void (*laufey_cursor_enter_leave_fn)(
 
 // Callback for window move events.
 typedef void (*laufey_move_fn)(void* user_data, uint32_t window_id,
-                            int x,  // new x position
-                            int y   // new y position
+                               int x,  // new x position
+                               int y   // new y position
 );
 
 // Callback for window resize events.
 typedef void (*laufey_resize_fn)(void* user_data, uint32_t window_id,
-                              int width,  // new width in pixels
-                              int height  // new height in pixels
+                                 int width,  // new width in pixels
+                                 int height  // new height in pixels
 );
 
 // Callback for window focus/blur events.
@@ -302,12 +305,14 @@ struct laufey_backend_api {
   laufey_value_t* (*value_list)(void* backend_data);
   laufey_value_t* (*value_dict)(void* backend_data);
   laufey_value_t* (*value_binary)(void* backend_data, const void* data,
-                               size_t len);
+                                  size_t len);
 
   bool (*value_list_append)(laufey_value_t* list, laufey_value_t* val);
-  bool (*value_list_set)(laufey_value_t* list, size_t index, laufey_value_t* val);
+  bool (*value_list_set)(laufey_value_t* list, size_t index,
+                         laufey_value_t* val);
 
-  bool (*value_dict_set)(laufey_value_t* dict, const char* key, laufey_value_t* val);
+  bool (*value_dict_set)(laufey_value_t* dict, const char* key,
+                         laufey_value_t* val);
 
   void (*value_free)(laufey_value_t* val);
 
@@ -339,11 +344,12 @@ struct laufey_backend_api {
 
   // Register a handler for mouse click events.
   void (*set_mouse_click_handler)(void* backend_data,
-                                  laufey_mouse_click_fn handler, void* user_data);
+                                  laufey_mouse_click_fn handler,
+                                  void* user_data);
 
   // Register a handler for mouse move events.
-  void (*set_mouse_move_handler)(void* backend_data, laufey_mouse_move_fn handler,
-                                 void* user_data);
+  void (*set_mouse_move_handler)(void* backend_data,
+                                 laufey_mouse_move_fn handler, void* user_data);
 
   // Register a handler for wheel (scroll) events.
   void (*set_wheel_handler)(void* backend_data, laufey_wheel_fn handler,
@@ -385,7 +391,8 @@ struct laufey_backend_api {
   // specific window.
   void (*set_application_menu)(void* backend_data, uint32_t window_id,
                                laufey_value_t* menu_template,
-                               laufey_menu_click_fn on_click, void* on_click_data);
+                               laufey_menu_click_fn on_click,
+                               void* on_click_data);
 
   // Show a context menu at the given position (in window coordinates).
   // menu_template uses the same format as set_application_menu (list of menu
@@ -489,8 +496,8 @@ struct laufey_backend_api {
   // item; the window_id argument of the callback is 0 (tray menus are
   // app-scoped, not window-scoped). Pass NULL menu_template to clear.
   void (*set_tray_menu)(void* backend_data, uint32_t tray_id,
-                        laufey_value_t* menu_template, laufey_menu_click_fn on_click,
-                        void* on_click_data);
+                        laufey_value_t* menu_template,
+                        laufey_menu_click_fn on_click, void* on_click_data);
 
   // Register a handler for left-click on the tray icon.
   void (*set_tray_click_handler)(void* backend_data, uint32_t tray_id,

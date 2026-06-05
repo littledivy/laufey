@@ -155,7 +155,8 @@ class WebView2Backend : public LaufeyBackend {
                         laufey::ValuePtr args) override;
   void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) override;
   void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                       laufey::ValuePtr result, laufey::ValuePtr error) override;
+                       laufey::ValuePtr result,
+                       laufey::ValuePtr error) override;
 
   void Run() override;
 
@@ -165,7 +166,8 @@ class WebView2Backend : public LaufeyBackend {
                           void* on_click_data) override;
 
   void ShowContextMenu(uint32_t window_id, int x, int y,
-                       laufey_value_t* menu_template, const laufey_backend_api_t* api,
+                       laufey_value_t* menu_template,
+                       const laufey_backend_api_t* api,
                        laufey_menu_click_fn on_click,
                        void* on_click_data) override;
 
@@ -184,8 +186,8 @@ class WebView2Backend : public LaufeyBackend {
                    size_t len) override;
   void SetTrayTooltip(uint32_t tray_id, const char* tooltip_or_null) override;
   void SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
-                   const laufey_backend_api_t* api, laufey_menu_click_fn on_click,
-                   void* on_click_data) override;
+                   const laufey_backend_api_t* api,
+                   laufey_menu_click_fn on_click, void* on_click_data) override;
   void SetTrayClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
                            void* user_data) override;
   void SetTrayDoubleClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
@@ -195,7 +197,8 @@ class WebView2Backend : public LaufeyBackend {
   bool GetTrayIconBounds(uint32_t tray_id, int* x, int* y, int* width,
                          int* height) override;
 
-  uint32_t ShowNotification(laufey_value_t* options, const laufey_backend_api_t* api,
+  uint32_t ShowNotification(laufey_value_t* options,
+                            const laufey_backend_api_t* api,
                             laufey_notification_event_fn on_event,
                             void* user_data) override;
   void CloseNotification(uint32_t notification_id) override;
@@ -310,7 +313,8 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       uint32_t modifiers = keyboard::GetLaufeyModifiers();
       bool repeat = (lParam & (1 << 30)) != 0;
       RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
-          wid, LAUFEY_KEY_PRESSED, key.c_str(), code.c_str(), modifiers, repeat);
+          wid, LAUFEY_KEY_PRESSED, key.c_str(), code.c_str(), modifiers,
+          repeat);
       break;
     }
     case WM_KEYUP:
@@ -321,7 +325,8 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       std::string code = keyboard::VirtualKeyToCode(wParam, lParam);
       uint32_t modifiers = keyboard::GetLaufeyModifiers();
       RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
-          wid, LAUFEY_KEY_RELEASED, key.c_str(), code.c_str(), modifiers, false);
+          wid, LAUFEY_KEY_RELEASED, key.c_str(), code.c_str(), modifiers,
+          false);
       break;
     }
     case WM_CLOSE:
@@ -410,8 +415,8 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
   }
 
   HWND hwnd = CreateWindowExW(
-      ex_style, L"LaufeyWebView2", L"", style, CW_USEDEFAULT, CW_USEDEFAULT, width,
-      height, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+      ex_style, L"LaufeyWebView2", L"", style, CW_USEDEFAULT, CW_USEDEFAULT,
+      width, height, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
   {
     std::lock_guard<std::mutex> lock(g_hwnd_mutex);
@@ -432,7 +437,7 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
   // Showing a non-activating panel must not take foreground from the user's
   // active window.
   ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
-                                                         : SW_SHOW);
+                                                            : SW_SHOW);
   UpdateWindow(hwnd);
 }
 
@@ -946,8 +951,8 @@ int WebView2Backend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
                                 const std::string& message,
                                 const std::string& default_value,
                                 char** out_input_value) {
-  return laufey_common::ShowDialogWin(dialog_type, title, message, default_value,
-                                   out_input_value);
+  return laufey_common::ShowDialogWin(dialog_type, title, message,
+                                      default_value, out_input_value);
 }
 
 // ============================================================================
@@ -1034,12 +1039,13 @@ void WebView2Backend::SetTrayTooltip(uint32_t tray_id,
                                      const char* tooltip_or_null) {
   laufey_common::SetTrayTooltipWin(tray_id, tooltip_or_null);
 }
-void WebView2Backend::SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+void WebView2Backend::SetTrayMenu(uint32_t tray_id,
+                                  laufey_value_t* menu_template,
                                   const laufey_backend_api_t* api,
                                   laufey_menu_click_fn on_click,
                                   void* on_click_data) {
   laufey_common::SetTrayMenuWin(tray_id, menu_template, api, on_click,
-                             on_click_data);
+                                on_click_data);
 }
 void WebView2Backend::SetTrayClickHandler(uint32_t tray_id,
                                           laufey_tray_click_fn handler,
@@ -1052,10 +1058,9 @@ void WebView2Backend::SetTrayClickHandler(uint32_t tray_id,
 //
 // Thin trampoline over backend-common/src/notifications_win.cc.
 
-uint32_t WebView2Backend::ShowNotification(laufey_value_t* options,
-                                           const laufey_backend_api_t* api,
-                                           laufey_notification_event_fn on_event,
-                                           void* user_data) {
+uint32_t WebView2Backend::ShowNotification(
+    laufey_value_t* options, const laufey_backend_api_t* api,
+    laufey_notification_event_fn on_event, void* user_data) {
   laufey_common::NotificationOptions opts =
       laufey_common::ParseNotificationOptions(options, api);
   return laufey_common::ShowNotificationWin(opts, on_event, user_data);

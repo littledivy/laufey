@@ -148,7 +148,8 @@ static int NSButtonToLaufey(NSInteger buttonNumber) {
 static uint32_t LaufeyIdForNSWindow(NSWindow* win) {
   if (!win)
     return 0;
-  return RuntimeLoader::GetInstance()->GetLaufeyIdForNSWindow((__bridge void*)win);
+  return RuntimeLoader::GetInstance()->GetLaufeyIdForNSWindow(
+      (__bridge void*)win);
 }
 
 // Per-window menu storage (must be declared before focus observer uses them)
@@ -185,8 +186,9 @@ void InstallNativeMouseMonitor() {
 
                                      int button =
                                          NSButtonToLaufey([event buttonNumber]);
-                                     uint32_t modifiers = NSModifierFlagsToLaufey(
-                                         [event modifierFlags]);
+                                     uint32_t modifiers =
+                                         NSModifierFlagsToLaufey(
+                                             [event modifierFlags]);
                                      int32_t click_count =
                                          (int32_t)[event clickCount];
 
@@ -217,8 +219,9 @@ void InstallNativeMouseMonitor() {
                                      if (wid == 0)
                                        return event;
 
-                                     uint32_t modifiers = NSModifierFlagsToLaufey(
-                                         [event modifierFlags]);
+                                     uint32_t modifiers =
+                                         NSModifierFlagsToLaufey(
+                                             [event modifierFlags]);
                                      NSPoint loc = [event locationInWindow];
                                      double x = loc.x;
                                      double y = 0;
@@ -243,8 +246,9 @@ void InstallNativeMouseMonitor() {
 
                                      double delta_x = [event scrollingDeltaX];
                                      double delta_y = [event scrollingDeltaY];
-                                     uint32_t modifiers = NSModifierFlagsToLaufey(
-                                         [event modifierFlags]);
+                                     uint32_t modifiers =
+                                         NSModifierFlagsToLaufey(
+                                             [event modifierFlags]);
 
                                      int32_t delta_mode =
                                          [event hasPreciseScrollingDeltas]
@@ -395,7 +399,8 @@ NativeDialogResult ShowNativeJSDialog_Mac(int type, const std::string& message,
 
 // --- Application Menu / Context Menu (macOS) ---
 //
-// Menu construction lives in backend-common (laufey_common::BuildNSMenuFromValue).
+// Menu construction lives in backend-common
+// (laufey_common::BuildNSMenuFromValue).
 
 void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x, int y,
                                  laufey_value_t* menu_template,
@@ -468,7 +473,8 @@ void Backend_BounceDock_Mac(void* /*data*/, int type) {
 }
 
 void Backend_SetDockMenu_Mac(void* data, laufey_value_t* menu_template,
-                             laufey_menu_click_fn on_click, void* on_click_data) {
+                             laufey_menu_click_fn on_click,
+                             void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   const laufey_backend_api_t* api = &loader->GetBackendApi();
   if (!menu_template) {
@@ -479,8 +485,8 @@ void Backend_SetDockMenu_Mac(void* data, laufey_value_t* menu_template,
   }
   dispatch_async(dispatch_get_main_queue(), ^{
     // window_id = 0 because dock menu is app-scoped.
-    NSMenu* menu = laufey_common::BuildNSMenuFromValue(menu_template, api,
-                                                    on_click, on_click_data, 0);
+    NSMenu* menu = laufey_common::BuildNSMenuFromValue(
+        menu_template, api, on_click, on_click_data, 0);
     laufey_common::SetDockMenuMac(menu);
   });
 }
@@ -529,10 +535,12 @@ void Backend_SetTrayTooltip_Mac(void* /*data*/, uint32_t tray_id,
 
 void Backend_SetTrayMenu_Mac(void* data, uint32_t tray_id,
                              laufey_value_t* menu_template,
-                             laufey_menu_click_fn on_click, void* on_click_data) {
+                             laufey_menu_click_fn on_click,
+                             void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  laufey_common::SetTrayMenuMac(tray_id, menu_template, &loader->GetBackendApi(),
-                             on_click, on_click_data);
+  laufey_common::SetTrayMenuMac(tray_id, menu_template,
+                                &loader->GetBackendApi(), on_click,
+                                on_click_data);
 }
 
 void Backend_SetTrayClickHandler_Mac(void* /*data*/, uint32_t tray_id,
@@ -557,7 +565,8 @@ uint32_t Backend_ShowNotification_Mac(void* data, laufey_value_t* options,
                                       void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   laufey_common::NotificationOptions opts =
-      laufey_common::ParseNotificationOptions(options, &loader->GetBackendApi());
+      laufey_common::ParseNotificationOptions(options,
+                                              &loader->GetBackendApi());
   return laufey_common::ShowNotificationMac(opts, on_event, user_data);
 }
 

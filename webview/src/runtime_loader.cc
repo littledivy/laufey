@@ -172,7 +172,8 @@ static void Backend_SetJsCallHandler(void* data, laufey_js_call_fn handler,
 }
 
 static void Backend_JsCallRespond(void* data, uint64_t call_id,
-                                  laufey_value_t* result, laufey_value_t* error) {
+                                  laufey_value_t* result,
+                                  laufey_value_t* error) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   uint32_t window_id = loader->ConsumeCallWindow(call_id);
   laufey::ValuePtr resultPtr =
@@ -202,13 +203,15 @@ static void Backend_SetKeyboardEventHandler(void* data,
   loader->SetKeyboardEventHandler(handler, user_data);
 }
 
-static void Backend_SetMouseClickHandler(void* data, laufey_mouse_click_fn handler,
+static void Backend_SetMouseClickHandler(void* data,
+                                         laufey_mouse_click_fn handler,
                                          void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetMouseClickHandler(handler, user_data);
 }
 
-static void Backend_SetMouseMoveHandler(void* data, laufey_mouse_move_fn handler,
+static void Backend_SetMouseMoveHandler(void* data,
+                                        laufey_mouse_move_fn handler,
                                         void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetMouseMoveHandler(handler, user_data);
@@ -402,7 +405,8 @@ static void Backend_SetDockVisible(void* data, bool visible) {
   }
 }
 
-static void Backend_SetDockReopenHandler(void* data, laufey_dock_reopen_fn handler,
+static void Backend_SetDockReopenHandler(void* data,
+                                         laufey_dock_reopen_fn handler,
                                          void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   if (LaufeyBackend* backend = loader->GetBackend()) {
@@ -681,7 +685,8 @@ bool RuntimeLoader::Load(const std::string& path) {
   shutdown_fn_ = reinterpret_cast<laufey_runtime_shutdown_fn>(GetProcAddress(
       static_cast<HMODULE>(library_handle_), LAUFEY_RUNTIME_SHUTDOWN_SYMBOL));
   if (!shutdown_fn_) {
-    std::cerr << "Failed to find " << LAUFEY_RUNTIME_SHUTDOWN_SYMBOL << std::endl;
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_SHUTDOWN_SYMBOL
+              << std::endl;
     return false;
   }
 #endif
@@ -780,7 +785,8 @@ void RuntimeLoader::PollPendingJsCalls() {
 }
 
 void RuntimeLoader::JsCallRespond(uint32_t window_id, uint64_t call_id,
-                                  laufey::ValuePtr result, laufey::ValuePtr error) {
+                                  laufey::ValuePtr result,
+                                  laufey::ValuePtr error) {
   LaufeyBackend* backend = GetBackend();
   if (backend) {
     backend->RespondToJsCall(window_id, call_id, result, error);

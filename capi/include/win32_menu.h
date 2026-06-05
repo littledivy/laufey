@@ -119,7 +119,8 @@ inline void FreeVal(const laufey_backend_api_t* api, laufey_value_t* v) {
 }
 
 // Recursively build an HMENU from a laufey_value_t list.
-inline HMENU BuildMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
+inline HMENU BuildMenuFromValue(laufey_value_t* val,
+                                const laufey_backend_api_t* api,
                                 MenuState& state) {
   if (!val || !api->value_is_list(val))
     return nullptr;
@@ -242,8 +243,8 @@ inline HMENU BuildMenuFromValue(laufey_value_t* val, const laufey_backend_api_t*
 // Call this from the UI thread.
 inline void SetApplicationMenu(HWND hwnd, laufey_value_t* menu_template,
                                const laufey_backend_api_t* api,
-                               laufey_menu_click_fn on_click, void* on_click_data,
-                               uint32_t window_id = 0) {
+                               laufey_menu_click_fn on_click,
+                               void* on_click_data, uint32_t window_id = 0) {
   if (!menu_template || !hwnd)
     return;
 
@@ -286,7 +287,8 @@ inline bool HandleMenuCommand(HWND hwnd, WPARAM wParam) {
 
 // Show a context menu at the given position (client coordinates).
 // The menu is built from the same laufey_value_t template as application menus.
-inline void ShowContextMenu(HWND hwnd, int x, int y, laufey_value_t* menu_template,
+inline void ShowContextMenu(HWND hwnd, int x, int y,
+                            laufey_value_t* menu_template,
                             const laufey_backend_api_t* api,
                             laufey_menu_click_fn on_click, void* on_click_data,
                             uint32_t window_id = 0) {

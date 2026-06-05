@@ -90,8 +90,8 @@ static uint32_t g_hover_modifiers = 0;
 static int ComputeClickCount(Time time, int button, double x, double y) {
   double dx = x - g_click_tracker.last_x;
   double dy = y - g_click_tracker.last_y;
-  bool close = (dx * dx + dy * dy) <=
-               (LAUFEY_MULTI_CLICK_DISTANCE_PX * LAUFEY_MULTI_CLICK_DISTANCE_PX);
+  bool close = (dx * dx + dy * dy) <= (LAUFEY_MULTI_CLICK_DISTANCE_PX *
+                                       LAUFEY_MULTI_CLICK_DISTANCE_PX);
   if (button == g_click_tracker.last_button &&
       time - g_click_tracker.last_time <= (Time)LAUFEY_MULTI_CLICK_TIME_MS &&
       close) {
@@ -123,16 +123,17 @@ static int XI2ButtonToLaufey(int detail) {
   }
 }
 
-// Resolve an XI2 device event to a laufey window ID and content-relative coords.
-// With per-window XI2 selection, dev->event is the window we selected on
-// (the CEF content window) and dev->event_x/y are already window-relative.
+// Resolve an XI2 device event to a laufey window ID and content-relative
+// coords. With per-window XI2 selection, dev->event is the window we selected
+// on (the CEF content window) and dev->event_x/y are already window-relative.
 static bool ResolveWindow(XIDeviceEvent* dev, uint32_t* out_wid, double* out_x,
                           double* out_y) {
   if (!dev->event)
     return false;
 
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetLaufeyIdForNativeHandle((void*)(uintptr_t)dev->event);
+  uint32_t wid =
+      loader->GetLaufeyIdForNativeHandle((void*)(uintptr_t)dev->event);
 
   if (wid == 0) {
     // Fall back to the frame-cache mapping in case selection landed on a
@@ -214,8 +215,9 @@ static void ProcessXI2Event(XEvent* xev) {
           } else {
             int laufey_button = XI2ButtonToLaufey(detail);
             int click_count = ComputeClickCount(dev->time, laufey_button, x, y);
-            loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_PRESSED, laufey_button,
-                                            x, y, modifiers, click_count);
+            loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_PRESSED,
+                                            laufey_button, x, y, modifiers,
+                                            click_count);
             // CEF holds an XI2 grab during press/release on its own X
             // connection, so XI_ButtonRelease is never delivered to our
             // monitor (and raw XI2 release events are unreliable under
@@ -223,8 +225,9 @@ static void ProcessXI2Event(XEvent* xev) {
             // dispatch in deno still works. CEF's own press+release handling
             // (for its internal rendering / drag) is unaffected because it
             // runs on a separate X connection.
-            loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_RELEASED, laufey_button,
-                                            x, y, modifiers, click_count);
+            loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_RELEASED,
+                                            laufey_button, x, y, modifiers,
+                                            click_count);
           }
           break;
         }
@@ -233,8 +236,8 @@ static void ProcessXI2Event(XEvent* xev) {
           if (detail >= 4 && detail <= 7)
             break;
           int laufey_button = XI2ButtonToLaufey(detail);
-          loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_RELEASED, laufey_button,
-                                          x, y, modifiers,
+          loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_RELEASED,
+                                          laufey_button, x, y, modifiers,
                                           g_click_tracker.count);
           break;
         }
@@ -273,8 +276,8 @@ static void ProcessXI2Event(XEvent* xev) {
       if (g_hover_wid != 0) {
         int laufey_button = XI2ButtonToLaufey(detail);
         loader->DispatchMouseClickEvent(
-            g_hover_wid, LAUFEY_MOUSE_RELEASED, laufey_button, g_hover_x, g_hover_y,
-            g_hover_modifiers, g_click_tracker.count);
+            g_hover_wid, LAUFEY_MOUSE_RELEASED, laufey_button, g_hover_x,
+            g_hover_y, g_hover_modifiers, g_click_tracker.count);
       }
     }
   } else if (evtype == XI_FocusIn || evtype == XI_FocusOut) {

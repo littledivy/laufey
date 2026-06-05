@@ -55,23 +55,23 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     switch (wParam) {
       case WM_LBUTTONDOWN:
         loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_PRESSED,
-                                        LAUFEY_MOUSE_BUTTON_LEFT, x, y, modifiers,
-                                        1);
+                                        LAUFEY_MOUSE_BUTTON_LEFT, x, y,
+                                        modifiers, 1);
         break;
       case WM_LBUTTONUP:
         loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_RELEASED,
-                                        LAUFEY_MOUSE_BUTTON_LEFT, x, y, modifiers,
-                                        1);
+                                        LAUFEY_MOUSE_BUTTON_LEFT, x, y,
+                                        modifiers, 1);
         break;
       case WM_RBUTTONDOWN:
         loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_PRESSED,
-                                        LAUFEY_MOUSE_BUTTON_RIGHT, x, y, modifiers,
-                                        1);
+                                        LAUFEY_MOUSE_BUTTON_RIGHT, x, y,
+                                        modifiers, 1);
         break;
       case WM_RBUTTONUP:
         loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_RELEASED,
-                                        LAUFEY_MOUSE_BUTTON_RIGHT, x, y, modifiers,
-                                        1);
+                                        LAUFEY_MOUSE_BUTTON_RIGHT, x, y,
+                                        modifiers, 1);
         break;
       case WM_MBUTTONDOWN:
         loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_PRESSED,

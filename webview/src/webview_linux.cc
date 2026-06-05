@@ -328,7 +328,8 @@ class WebKitGTKBackend : public LaufeyBackend {
                         laufey::ValuePtr args) override;
   void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) override;
   void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                       laufey::ValuePtr result, laufey::ValuePtr error) override;
+                       laufey::ValuePtr result,
+                       laufey::ValuePtr error) override;
 
   void Run() override;
 
@@ -338,7 +339,8 @@ class WebKitGTKBackend : public LaufeyBackend {
                           void* on_click_data) override;
 
   void ShowContextMenu(uint32_t window_id, int x, int y,
-                       laufey_value_t* menu_template, const laufey_backend_api_t* api,
+                       laufey_value_t* menu_template,
+                       const laufey_backend_api_t* api,
                        laufey_menu_click_fn on_click,
                        void* on_click_data) override;
 
@@ -357,12 +359,13 @@ class WebKitGTKBackend : public LaufeyBackend {
                    size_t len) override;
   void SetTrayTooltip(uint32_t tray_id, const char* tooltip_or_null) override;
   void SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
-                   const laufey_backend_api_t* api, laufey_menu_click_fn on_click,
-                   void* on_click_data) override;
+                   const laufey_backend_api_t* api,
+                   laufey_menu_click_fn on_click, void* on_click_data) override;
   void SetTrayClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
                            void* user_data) override;
 
-  uint32_t ShowNotification(laufey_value_t* options, const laufey_backend_api_t* api,
+  uint32_t ShowNotification(laufey_value_t* options,
+                            const laufey_backend_api_t* api,
                             laufey_notification_event_fn on_event,
                             void* user_data) override;
   void CloseNotification(uint32_t notification_id) override;
@@ -1030,8 +1033,8 @@ int WebKitGTKBackend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
                                  const std::string& message,
                                  const std::string& default_value,
                                  char** out_input_value) {
-  return laufey_common::ShowDialogLinux(dialog_type, title, message, default_value,
-                                     out_input_value);
+  return laufey_common::ShowDialogLinux(dialog_type, title, message,
+                                        default_value, out_input_value);
 }
 
 // ============================================================================
@@ -1087,12 +1090,13 @@ void WebKitGTKBackend::SetTrayTooltip(uint32_t tray_id,
                                       const char* tooltip_or_null) {
   laufey_common::SetTrayTooltipLinux(tray_id, tooltip_or_null);
 }
-void WebKitGTKBackend::SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+void WebKitGTKBackend::SetTrayMenu(uint32_t tray_id,
+                                   laufey_value_t* menu_template,
                                    const laufey_backend_api_t* api,
                                    laufey_menu_click_fn on_click,
                                    void* on_click_data) {
   laufey_common::SetTrayMenuLinux(tray_id, menu_template, api, on_click,
-                               on_click_data);
+                                  on_click_data);
 }
 void WebKitGTKBackend::SetTrayClickHandler(uint32_t tray_id,
                                            laufey_tray_click_fn handler,
@@ -1107,10 +1111,9 @@ void WebKitGTKBackend::SetTrayClickHandler(uint32_t tray_id,
 // Thin trampoline over the shared notify-send implementation in
 // backend-common/src/notifications_linux.cc.
 
-uint32_t WebKitGTKBackend::ShowNotification(laufey_value_t* options,
-                                            const laufey_backend_api_t* api,
-                                            laufey_notification_event_fn on_event,
-                                            void* user_data) {
+uint32_t WebKitGTKBackend::ShowNotification(
+    laufey_value_t* options, const laufey_backend_api_t* api,
+    laufey_notification_event_fn on_event, void* user_data) {
   laufey_common::NotificationOptions opts =
       laufey_common::ParseNotificationOptions(options, api);
   return laufey_common::ShowNotificationLinux(opts, on_event, user_data);

@@ -77,8 +77,10 @@ bool LaufeyWindowDelegate::IsFrameless(CefRefPtr<CefWindow> window) {
   return (flags_ & LAUFEY_WINDOW_FLAG_FRAMELESS) != 0;
 }
 
-cef_state_t LaufeyWindowDelegate::AcceptsFirstMouse(CefRefPtr<CefWindow> window) {
-  return (flags_ & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED : STATE_DEFAULT;
+cef_state_t LaufeyWindowDelegate::AcceptsFirstMouse(
+    CefRefPtr<CefWindow> window) {
+  return (flags_ & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED
+                                                   : STATE_DEFAULT;
 }
 
 void LaufeyWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
@@ -166,7 +168,7 @@ void LaufeyHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 }
 
 void LaufeyHandler::OnTitleChange(CefRefPtr<CefBrowser> browser,
-                               const CefString& title) {
+                                  const CefString& title) {
   CEF_REQUIRE_UI_THREAD();
   if (auto browser_view = CefBrowserView::GetForBrowser(browser)) {
     if (auto window = browser_view->GetWindow()) {
@@ -194,7 +196,8 @@ void LaufeyHandler::OnDraggableRegionsChanged(
 // same table works here.
 
 bool LaufeyHandler::OnKeyEvent(CefRefPtr<CefBrowser> browser,
-                            const CefKeyEvent& event, CefEventHandle os_event) {
+                               const CefKeyEvent& event,
+                               CefEventHandle os_event) {
   int state;
   if (event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN) {
     state = LAUFEY_KEY_PRESSED;
@@ -214,8 +217,8 @@ bool LaufeyHandler::OnKeyEvent(CefRefPtr<CefBrowser> browser,
   if (event.modifiers & EVENTFLAG_COMMAND_DOWN)
     modifiers |= LAUFEY_MOD_META;
 
-  std::string key = laufey_common::VkToKey(event.windows_key_code, event.character,
-                                        false, false);
+  std::string key = laufey_common::VkToKey(event.windows_key_code,
+                                           event.character, false, false);
   std::string code = laufey_common::VkToCode(event.windows_key_code, false, 0);
 
   uint32_t wid = RuntimeLoader::GetInstance()->GetLaufeyIdForBrowser(browser);
@@ -226,12 +229,12 @@ bool LaufeyHandler::OnKeyEvent(CefRefPtr<CefBrowser> browser,
 }
 
 bool LaufeyHandler::OnJSDialog(CefRefPtr<CefBrowser> browser,
-                            const CefString& origin_url,
-                            JSDialogType dialog_type,
-                            const CefString& message_text,
-                            const CefString& default_prompt_text,
-                            CefRefPtr<CefJSDialogCallback> callback,
-                            bool& suppress_message) {
+                               const CefString& origin_url,
+                               JSDialogType dialog_type,
+                               const CefString& message_text,
+                               const CefString& default_prompt_text,
+                               CefRefPtr<CefJSDialogCallback> callback,
+                               bool& suppress_message) {
   CEF_REQUIRE_UI_THREAD();
   std::string msg = message_text.ToString();
 
@@ -324,10 +327,9 @@ bool LaufeyHandler::OnJSDialog(CefRefPtr<CefBrowser> browser,
   return false;
 }
 
-bool LaufeyHandler::OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
-                                      const CefString& message_text,
-                                      bool is_reload,
-                                      CefRefPtr<CefJSDialogCallback> callback) {
+bool LaufeyHandler::OnBeforeUnloadDialog(
+    CefRefPtr<CefBrowser> browser, const CefString& message_text,
+    bool is_reload, CefRefPtr<CefJSDialogCallback> callback) {
   callback->Continue(true, "");
   return true;
 }
