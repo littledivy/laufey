@@ -95,7 +95,8 @@
   BOOL _working;
 }
 - (void)tick {
-  if (_working) return;  // CefDoMessageLoopWork is not reentrant
+  if (_working)
+    return;  // CefDoMessageLoopWork is not reentrant
   _working = YES;
   CefDoMessageLoopWork();
   _working = NO;
@@ -120,7 +121,8 @@ void WefApp::OnScheduleMessagePumpWork(int64_t delay_ms) {
   // Nudge an immediate pump for snappier response; the steady timer guarantees
   // progress regardless.
   dispatch_async(dispatch_get_main_queue(), ^{
-    if (g_pump) [g_pump tick];
+    if (g_pump)
+      [g_pump tick];
   });
 }
 
@@ -128,16 +130,15 @@ void WefQuitMainLoopMac() {
   dispatch_async(dispatch_get_main_queue(), ^{
     [NSApp stop:nil];
     // [NSApp run] only returns after it dequeues one more event; nudge it.
-    NSEvent* event =
-        [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                           location:NSZeroPoint
-                      modifierFlags:0
-                          timestamp:0
-                       windowNumber:0
-                            context:nil
-                            subtype:0
-                              data1:0
-                              data2:0];
+    NSEvent* event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                        location:NSZeroPoint
+                                   modifierFlags:0
+                                       timestamp:0
+                                    windowNumber:0
+                                         context:nil
+                                         subtype:0
+                                           data1:0
+                                           data2:0];
     [NSApp postEvent:event atStart:YES];
   });
 }
