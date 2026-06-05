@@ -1,12 +1,12 @@
 [package]
-name = "wef-winit"
+name = "laufey-winit"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
 [[bin]]
-name = "wef_winit"
+name = "laufey_winit"
 path = "src/main.rs"
 
 [dependencies]
-wef-backend-winit-common = { path = "../backend-winit-common" }
+laufey-backend-winit-common = { path = "../backend-winit-common" }

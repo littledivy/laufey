@@ -6,13 +6,13 @@
 
 #include <gtk/gtk.h>
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 int ShowDialogLinux(int dialog_type, const std::string& title,
                     const std::string& message,
@@ -22,7 +22,7 @@ int ShowDialogLinux(int dialog_type, const std::string& title,
 
   GtkWindow* parent = nullptr;
 
-  if (dialog_type == WEF_DIALOG_ALERT) {
+  if (dialog_type == LAUFEY_DIALOG_ALERT) {
     GtkWidget* dlg = gtk_message_dialog_new(
         parent, GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK, "%s",
         message.c_str());
@@ -32,7 +32,7 @@ int ShowDialogLinux(int dialog_type, const std::string& title,
     gtk_widget_destroy(dlg);
     return 1;
   }
-  if (dialog_type == WEF_DIALOG_CONFIRM) {
+  if (dialog_type == LAUFEY_DIALOG_CONFIRM) {
     GtkWidget* dlg = gtk_message_dialog_new(
         parent, GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_OK_CANCEL,
         "%s", message.c_str());
@@ -42,7 +42,7 @@ int ShowDialogLinux(int dialog_type, const std::string& title,
     gtk_widget_destroy(dlg);
     return (result == GTK_RESPONSE_OK) ? 1 : 0;
   }
-  if (dialog_type == WEF_DIALOG_PROMPT) {
+  if (dialog_type == LAUFEY_DIALOG_PROMPT) {
     GtkWidget* dlg = gtk_message_dialog_new(
         parent, GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_OK_CANCEL,
         "%s", message.c_str());
@@ -68,4 +68,4 @@ int ShowDialogLinux(int dialog_type, const std::string& title,
   return 0;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

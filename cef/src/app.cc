@@ -2,7 +2,7 @@
 
 #include "app.h"
 #include "runtime_loader.h"
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <iostream>
 
@@ -28,43 +28,43 @@ NativeDialogResult ShowNativeJSDialog_Mac(int type, const std::string& message,
 #include "include/wrapper/cef_helpers.h"
 
 std::string g_runtime_path;
-std::queue<uint32_t> g_pending_wef_ids;
+std::queue<uint32_t> g_pending_laufey_ids;
 
 namespace {
-WefHandler* g_handler = nullptr;
+LaufeyHandler* g_handler = nullptr;
 }
 
-// WefWindowDelegate implementation
+// LaufeyWindowDelegate implementation
 
-void WefWindowDelegate::OnWindowCreated(CefRefPtr<CefWindow> window) {
+void LaufeyWindowDelegate::OnWindowCreated(CefRefPtr<CefWindow> window) {
   window->AddChildView(browser_view_);
 
   // Register native window for event routing. Non-activating panels
-  // (WEF_WINDOW_FLAG_NO_ACTIVATE) are reconfigured before the first Show()
+  // (LAUFEY_WINDOW_FLAG_NO_ACTIVATE) are reconfigured before the first Show()
   // so they float without stealing focus from the foreground app.
-  bool no_activate = (flags_ & WEF_WINDOW_FLAG_NO_ACTIVATE) != 0;
+  bool no_activate = (flags_ & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) != 0;
   CefWindowHandle handle = window->GetWindowHandle();
-  if (handle && wef_id_ > 0) {
+  if (handle && laufey_id_ > 0) {
 #if defined(__APPLE__)
     if (no_activate) {
       ConfigureNSWindowAsPanelForCefHandle(handle);
     }
-    if ((flags_ & WEF_WINDOW_FLAG_TRANSPARENT_TITLEBAR) != 0) {
+    if ((flags_ & LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR) != 0) {
       ConfigureNSWindowTransparentTitlebarForCefHandle(handle);
     }
-    RegisterNSWindowForCefHandle(handle, wef_id_);
+    RegisterNSWindowForCefHandle(handle, laufey_id_);
 #elif defined(_WIN32)
     if (no_activate) {
       ConfigureWin32WindowAsPanel((void*)handle);
     }
     RuntimeLoader::GetInstance()->RegisterNativeHandle((void*)(uintptr_t)handle,
-                                                       wef_id_);
+                                                       laufey_id_);
 #elif defined(__linux__)
     if (no_activate) {
       ConfigureLinuxWindowAsPanel(handle);
     }
     RuntimeLoader::GetInstance()->RegisterNativeHandle((void*)(uintptr_t)handle,
-                                                       wef_id_);
+                                                       laufey_id_);
     MonitorLinuxWindowEvents(handle);
 #endif
   }
@@ -73,15 +73,15 @@ void WefWindowDelegate::OnWindowCreated(CefRefPtr<CefWindow> window) {
   InstallNativeMouseMonitor();
 }
 
-bool WefWindowDelegate::IsFrameless(CefRefPtr<CefWindow> window) {
-  return (flags_ & WEF_WINDOW_FLAG_FRAMELESS) != 0;
+bool LaufeyWindowDelegate::IsFrameless(CefRefPtr<CefWindow> window) {
+  return (flags_ & LAUFEY_WINDOW_FLAG_FRAMELESS) != 0;
 }
 
-cef_state_t WefWindowDelegate::AcceptsFirstMouse(CefRefPtr<CefWindow> window) {
-  return (flags_ & WEF_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED : STATE_DEFAULT;
+cef_state_t LaufeyWindowDelegate::AcceptsFirstMouse(CefRefPtr<CefWindow> window) {
+  return (flags_ & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED : STATE_DEFAULT;
 }
 
-void WefWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
+void LaufeyWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   // Unregister native window
   CefWindowHandle handle = window->GetWindowHandle();
   if (handle) {
@@ -92,47 +92,47 @@ void WefWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
         (void*)(uintptr_t)handle);
 #endif
   }
-  if (wef_id_ > 0) {
-    RuntimeLoader::GetInstance()->UnregisterBrowser(wef_id_);
+  if (laufey_id_ > 0) {
+    RuntimeLoader::GetInstance()->UnregisterBrowser(laufey_id_);
   }
   RemoveNativeMouseMonitor();
   browser_view_ = nullptr;
 }
 
-bool WefWindowDelegate::CanClose(CefRefPtr<CefWindow> window) {
+bool LaufeyWindowDelegate::CanClose(CefRefPtr<CefWindow> window) {
   CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
   return browser ? browser->GetHost()->TryCloseBrowser() : true;
 }
 
-CefSize WefWindowDelegate::GetPreferredSize(CefRefPtr<CefView> view) {
+CefSize LaufeyWindowDelegate::GetPreferredSize(CefRefPtr<CefView> view) {
   return CefSize(800, 600);
 }
 
-WefHandler::WefHandler() {
+LaufeyHandler::LaufeyHandler() {
   g_handler = this;
 }
 
-WefHandler::~WefHandler() {
+LaufeyHandler::~LaufeyHandler() {
   g_handler = nullptr;
 }
 
-WefHandler* WefHandler::GetInstance() {
+LaufeyHandler* LaufeyHandler::GetInstance() {
   return g_handler;
 }
 
-void WefHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
+void LaufeyHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   browser_list_.push_back(browser);
 
   auto* loader = RuntimeLoader::GetInstance();
-  if (!g_pending_wef_ids.empty()) {
-    uint32_t wef_id = g_pending_wef_ids.front();
-    g_pending_wef_ids.pop();
-    loader->RegisterBrowser(wef_id, browser);
+  if (!g_pending_laufey_ids.empty()) {
+    uint32_t laufey_id = g_pending_laufey_ids.front();
+    g_pending_laufey_ids.pop();
+    loader->RegisterBrowser(laufey_id, browser);
   }
 }
 
-bool WefHandler::DoClose(CefRefPtr<CefBrowser> browser) {
+bool LaufeyHandler::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   if (browser_list_.size() == 1) {
     is_closing_ = true;
@@ -140,11 +140,11 @@ bool WefHandler::DoClose(CefRefPtr<CefBrowser> browser) {
   return false;
 }
 
-void WefHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
+void LaufeyHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
 
   auto* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetWefIdForBrowser(browser);
+  uint32_t wid = loader->GetLaufeyIdForBrowser(browser);
   if (wid > 0) {
     loader->DispatchCloseRequestedEvent(wid);
   }
@@ -158,14 +158,14 @@ void WefHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   if (browser_list_.empty()) {
 #if defined(__APPLE__)
     // macOS runs [NSApp run] (external_message_pump); stop that instead.
-    WefQuitMainLoopMac();
+    LaufeyQuitMainLoopMac();
 #else
     CefQuitMessageLoop();
 #endif
   }
 }
 
-void WefHandler::OnTitleChange(CefRefPtr<CefBrowser> browser,
+void LaufeyHandler::OnTitleChange(CefRefPtr<CefBrowser> browser,
                                const CefString& title) {
   CEF_REQUIRE_UI_THREAD();
   if (auto browser_view = CefBrowserView::GetForBrowser(browser)) {
@@ -175,7 +175,7 @@ void WefHandler::OnTitleChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
-void WefHandler::OnDraggableRegionsChanged(
+void LaufeyHandler::OnDraggableRegionsChanged(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     const std::vector<CefDraggableRegion>& regions) {
   CEF_REQUIRE_UI_THREAD();
@@ -189,43 +189,43 @@ void WefHandler::OnDraggableRegionsChanged(
   }
 }
 
-// Keyboard mapping lives in backend-common (wef_common::VkToKey / VkToCode).
+// Keyboard mapping lives in backend-common (laufey_common::VkToKey / VkToCode).
 // CEF normalizes every platform's key events to Windows VK codes, so the
 // same table works here.
 
-bool WefHandler::OnKeyEvent(CefRefPtr<CefBrowser> browser,
+bool LaufeyHandler::OnKeyEvent(CefRefPtr<CefBrowser> browser,
                             const CefKeyEvent& event, CefEventHandle os_event) {
   int state;
   if (event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN) {
-    state = WEF_KEY_PRESSED;
+    state = LAUFEY_KEY_PRESSED;
   } else if (event.type == KEYEVENT_KEYUP) {
-    state = WEF_KEY_RELEASED;
+    state = LAUFEY_KEY_RELEASED;
   } else {
     return false;
   }
 
   uint32_t modifiers = 0;
   if (event.modifiers & EVENTFLAG_SHIFT_DOWN)
-    modifiers |= WEF_MOD_SHIFT;
+    modifiers |= LAUFEY_MOD_SHIFT;
   if (event.modifiers & EVENTFLAG_CONTROL_DOWN)
-    modifiers |= WEF_MOD_CONTROL;
+    modifiers |= LAUFEY_MOD_CONTROL;
   if (event.modifiers & EVENTFLAG_ALT_DOWN)
-    modifiers |= WEF_MOD_ALT;
+    modifiers |= LAUFEY_MOD_ALT;
   if (event.modifiers & EVENTFLAG_COMMAND_DOWN)
-    modifiers |= WEF_MOD_META;
+    modifiers |= LAUFEY_MOD_META;
 
-  std::string key = wef_common::VkToKey(event.windows_key_code, event.character,
+  std::string key = laufey_common::VkToKey(event.windows_key_code, event.character,
                                         false, false);
-  std::string code = wef_common::VkToCode(event.windows_key_code, false, 0);
+  std::string code = laufey_common::VkToCode(event.windows_key_code, false, 0);
 
-  uint32_t wid = RuntimeLoader::GetInstance()->GetWefIdForBrowser(browser);
+  uint32_t wid = RuntimeLoader::GetInstance()->GetLaufeyIdForBrowser(browser);
   RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
       wid, state, key.c_str(), code.c_str(), modifiers, false);
 
   return false;  // Don't consume the event — let CEF handle it too
 }
 
-bool WefHandler::OnJSDialog(CefRefPtr<CefBrowser> browser,
+bool LaufeyHandler::OnJSDialog(CefRefPtr<CefBrowser> browser,
                             const CefString& origin_url,
                             JSDialogType dialog_type,
                             const CefString& message_text,
@@ -324,7 +324,7 @@ bool WefHandler::OnJSDialog(CefRefPtr<CefBrowser> browser,
   return false;
 }
 
-bool WefHandler::OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
+bool LaufeyHandler::OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
                                       const CefString& message_text,
                                       bool is_reload,
                                       CefRefPtr<CefJSDialogCallback> callback) {
@@ -332,9 +332,9 @@ bool WefHandler::OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
   return true;
 }
 
-void WefHandler::CloseAllBrowsers(bool force_close) {
+void LaufeyHandler::CloseAllBrowsers(bool force_close) {
   if (!CefCurrentlyOn(TID_UI)) {
-    CefPostTask(TID_UI, base::BindOnce(&WefHandler::CloseAllBrowsers, this,
+    CefPostTask(TID_UI, base::BindOnce(&LaufeyHandler::CloseAllBrowsers, this,
                                        force_close));
     return;
   }
@@ -343,25 +343,25 @@ void WefHandler::CloseAllBrowsers(bool force_close) {
   }
 }
 
-bool WefHandler::OnProcessMessageReceived(
+bool LaufeyHandler::OnProcessMessageReceived(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     CefProcessId source_process, CefRefPtr<CefProcessMessage> message) {
   CEF_REQUIRE_UI_THREAD();
 
   const std::string& name = message->GetName().ToString();
 
-  if (name == "wef_call") {
+  if (name == "laufey_call") {
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t call_id = static_cast<uint64_t>(args->GetDouble(0));
     std::string method_path = args->GetString(1).ToString();
     CefRefPtr<CefListValue> callArgs = args->GetList(2);
 
-    uint32_t wid = RuntimeLoader::GetInstance()->GetWefIdForBrowser(browser);
+    uint32_t wid = RuntimeLoader::GetInstance()->GetLaufeyIdForBrowser(browser);
     RuntimeLoader::GetInstance()->OnJsCall(wid, call_id, method_path, callArgs);
     return true;
   }
 
-  if (name == "wef_eval_result") {
+  if (name == "laufey_eval_result") {
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t eval_id = static_cast<uint64_t>(args->GetDouble(0));
     CefRefPtr<CefValue> result = args->GetValue(1);
@@ -373,13 +373,13 @@ bool WefHandler::OnProcessMessageReceived(
   return false;
 }
 
-void WefApp::OnContextInitialized() {
+void LaufeyApp::OnContextInitialized() {
   CEF_REQUIRE_UI_THREAD();
 
   // Create the handler and keep it alive for the lifetime of the app.
-  // Backend_CreateWindow uses WefHandler::GetInstance() from the runtime
+  // Backend_CreateWindow uses LaufeyHandler::GetInstance() from the runtime
   // thread, so the handler must outlive this function scope.
-  static CefRefPtr<WefHandler> handler(new WefHandler());
+  static CefRefPtr<LaufeyHandler> handler(new LaufeyHandler());
 
   if (!g_runtime_path.empty()) {
     if (!RuntimeLoader::GetInstance()->Load(g_runtime_path)) {
@@ -396,13 +396,13 @@ void WefApp::OnContextInitialized() {
                             []() { RuntimeLoader::GetInstance()->Start(); }));
   } else {
     // No runtime: create a default window for demo
-    uint32_t wef_id = RuntimeLoader::GetInstance()->AllocateWindowId();
-    g_pending_wef_ids.push(wef_id);
+    uint32_t laufey_id = RuntimeLoader::GetInstance()->AllocateWindowId();
+    g_pending_laufey_ids.push(laufey_id);
     CefBrowserSettings browser_settings;
     CefRefPtr<CefBrowserView> browser_view = CefBrowserView::CreateBrowserView(
         handler, "https://example.com", browser_settings, nullptr, nullptr,
         nullptr);
     CefWindow::CreateTopLevelWindow(
-        new WefWindowDelegate(browser_view, wef_id));
+        new LaufeyWindowDelegate(browser_view, laufey_id));
   }
 }

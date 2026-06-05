@@ -30,10 +30,10 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     MOUSEHOOKSTRUCT* mhs = reinterpret_cast<MOUSEHOOKSTRUCT*>(lParam);
     RuntimeLoader* loader = RuntimeLoader::GetInstance();
 
-    // Find the wef window_id from the top-level HWND
+    // Find the laufey window_id from the top-level HWND
     HWND topLevel = mhs->hwnd ? GetAncestor(mhs->hwnd, GA_ROOT) : nullptr;
     uint32_t window_id =
-        topLevel ? loader->GetWefIdForNativeHandle((void*)topLevel) : 0;
+        topLevel ? loader->GetLaufeyIdForNativeHandle((void*)topLevel) : 0;
 
     POINT pt = mhs->pt;
     if (mhs->hwnd) {
@@ -44,43 +44,43 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
     uint32_t modifiers = 0;
     if (GetKeyState(VK_SHIFT) & 0x8000)
-      modifiers |= WEF_MOD_SHIFT;
+      modifiers |= LAUFEY_MOD_SHIFT;
     if (GetKeyState(VK_CONTROL) & 0x8000)
-      modifiers |= WEF_MOD_CONTROL;
+      modifiers |= LAUFEY_MOD_CONTROL;
     if (GetKeyState(VK_MENU) & 0x8000)
-      modifiers |= WEF_MOD_ALT;
+      modifiers |= LAUFEY_MOD_ALT;
     if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000)
-      modifiers |= WEF_MOD_META;
+      modifiers |= LAUFEY_MOD_META;
 
     switch (wParam) {
       case WM_LBUTTONDOWN:
-        loader->DispatchMouseClickEvent(window_id, WEF_MOUSE_PRESSED,
-                                        WEF_MOUSE_BUTTON_LEFT, x, y, modifiers,
+        loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_PRESSED,
+                                        LAUFEY_MOUSE_BUTTON_LEFT, x, y, modifiers,
                                         1);
         break;
       case WM_LBUTTONUP:
-        loader->DispatchMouseClickEvent(window_id, WEF_MOUSE_RELEASED,
-                                        WEF_MOUSE_BUTTON_LEFT, x, y, modifiers,
+        loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_RELEASED,
+                                        LAUFEY_MOUSE_BUTTON_LEFT, x, y, modifiers,
                                         1);
         break;
       case WM_RBUTTONDOWN:
-        loader->DispatchMouseClickEvent(window_id, WEF_MOUSE_PRESSED,
-                                        WEF_MOUSE_BUTTON_RIGHT, x, y, modifiers,
+        loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_PRESSED,
+                                        LAUFEY_MOUSE_BUTTON_RIGHT, x, y, modifiers,
                                         1);
         break;
       case WM_RBUTTONUP:
-        loader->DispatchMouseClickEvent(window_id, WEF_MOUSE_RELEASED,
-                                        WEF_MOUSE_BUTTON_RIGHT, x, y, modifiers,
+        loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_RELEASED,
+                                        LAUFEY_MOUSE_BUTTON_RIGHT, x, y, modifiers,
                                         1);
         break;
       case WM_MBUTTONDOWN:
-        loader->DispatchMouseClickEvent(window_id, WEF_MOUSE_PRESSED,
-                                        WEF_MOUSE_BUTTON_MIDDLE, x, y,
+        loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_PRESSED,
+                                        LAUFEY_MOUSE_BUTTON_MIDDLE, x, y,
                                         modifiers, 1);
         break;
       case WM_MBUTTONUP:
-        loader->DispatchMouseClickEvent(window_id, WEF_MOUSE_RELEASED,
-                                        WEF_MOUSE_BUTTON_MIDDLE, x, y,
+        loader->DispatchMouseClickEvent(window_id, LAUFEY_MOUSE_RELEASED,
+                                        LAUFEY_MOUSE_BUTTON_MIDDLE, x, y,
                                         modifiers, 1);
         break;
       case WM_MOUSEMOVE:
@@ -92,7 +92,7 @@ static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
         short delta = HIWORD(mhsx->mouseData);
         double delta_y = static_cast<double>(delta) / WHEEL_DELTA;
         loader->DispatchWheelEvent(window_id, 0.0, delta_y, x, y, modifiers,
-                                   WEF_WHEEL_DELTA_LINE);
+                                   LAUFEY_WHEEL_DELTA_LINE);
         break;
       }
     }
@@ -160,9 +160,9 @@ static bool is_cli_worker_command(int argc, LPWSTR* argv) {
 
 // Combined app that handles both browser and renderer processes (single-exe
 // model)
-class WefCombinedApp : public CefApp, public CefBrowserProcessHandler {
+class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
  public:
-  WefCombinedApp() : renderer_app_(new WefRendererApp()) {}
+  LaufeyCombinedApp() : renderer_app_(new LaufeyRendererApp()) {}
 
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
@@ -182,9 +182,9 @@ class WefCombinedApp : public CefApp, public CefBrowserProcessHandler {
     CEF_REQUIRE_UI_THREAD();
 
     // Keep the handler alive for the lifetime of the app.
-    // Backend_CreateWindow uses WefHandler::GetInstance() from the runtime
+    // Backend_CreateWindow uses LaufeyHandler::GetInstance() from the runtime
     // thread, so the handler must outlive this function scope.
-    static CefRefPtr<WefHandler> handler(new WefHandler());
+    static CefRefPtr<LaufeyHandler> handler(new LaufeyHandler());
 
     if (!g_runtime_path.empty()) {
       if (!RuntimeLoader::GetInstance()->Load(g_runtime_path)) {
@@ -199,21 +199,21 @@ class WefCombinedApp : public CefApp, public CefBrowserProcessHandler {
                               []() { RuntimeLoader::GetInstance()->Start(); }));
     } else {
       // No runtime: create a default window for demo
-      uint32_t wef_id = RuntimeLoader::GetInstance()->AllocateWindowId();
-      g_pending_wef_ids.push(wef_id);
+      uint32_t laufey_id = RuntimeLoader::GetInstance()->AllocateWindowId();
+      g_pending_laufey_ids.push(laufey_id);
       CefBrowserSettings browser_settings;
       CefRefPtr<CefBrowserView> browser_view =
           CefBrowserView::CreateBrowserView(handler, "https://example.com",
                                             browser_settings, nullptr, nullptr,
                                             nullptr);
       CefWindow::CreateTopLevelWindow(
-          new WefWindowDelegate(browser_view, wef_id));
+          new LaufeyWindowDelegate(browser_view, laufey_id));
     }
   }
 
  private:
-  CefRefPtr<WefRendererApp> renderer_app_;
-  IMPLEMENT_REFCOUNTING(WefCombinedApp);
+  CefRefPtr<LaufeyRendererApp> renderer_app_;
+  IMPLEMENT_REFCOUNTING(LaufeyCombinedApp);
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
@@ -221,7 +221,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   CefMainArgs main_args(hInstance);
 
   // Single-exe model: check if we are a subprocess first
-  CefRefPtr<WefCombinedApp> app(new WefCombinedApp());
+  CefRefPtr<LaufeyCombinedApp> app(new LaufeyCombinedApp());
   int exit_code = CefExecuteProcess(main_args, app, nullptr);
   if (exit_code >= 0) {
     return exit_code;
@@ -245,7 +245,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   if (g_runtime_path.empty()) {
     char envPath[MAX_PATH];
-    if (GetEnvironmentVariableA("WEF_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
+    if (GetEnvironmentVariableA("LAUFEY_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
       g_runtime_path = envPath;
     }
   }
@@ -265,12 +265,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   // Set cache path
   char tempPath[MAX_PATH];
   GetTempPathA(MAX_PATH, tempPath);
-  std::string cache_path = std::string(tempPath) + "wef_cef_" +
+  std::string cache_path = std::string(tempPath) + "laufey_cef_" +
                            std::to_string(GetCurrentProcessId());
   CefString(&settings.root_cache_path) = cache_path;
 
   char port_buf[16];
-  if (GetEnvironmentVariableA("WEF_REMOTE_DEBUGGING_PORT", port_buf,
+  if (GetEnvironmentVariableA("LAUFEY_REMOTE_DEBUGGING_PORT", port_buf,
                               sizeof(port_buf)) > 0) {
     int port = atoi(port_buf);
     if (port > 0 && port < 65536) {

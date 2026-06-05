@@ -1,12 +1,12 @@
 # C ABI
 
-wef is built around a single C header,
-[`capi/include/wef.h`](https://github.com/littledivy/just-wef/blob/main/capi/include/wef.h).
+laufey is built around a single C header,
+[`capi/include/laufey.h`](https://github.com/littledivy/just-wef/blob/main/capi/include/laufey.h).
 It defines the boundary between a **backend** (a native executable embedding a
 browser engine) and a **runtime** (a shared library holding the application
 logic). The backend implements the ABI; the runtime consumes it.
 
-`WEF_API_VERSION` (currently `25`) versions the contract. The `version` field on
+`LAUFEY_API_VERSION` (currently `25`) versions the contract. The `version` field on
 the API table lets a runtime detect the backend's vintage and avoid calling
 function pointers a backend predates (older backends leave new pointers `NULL`).
 
@@ -16,9 +16,9 @@ A runtime is a `.dylib`/`.so`/`.dll` that exports three symbols:
 
 | Symbol (`*_SYMBOL` macro) | Signature                           | Role                                                                           |
 | ------------------------- | ----------------------------------- | ------------------------------------------------------------------------------ |
-| `wef_runtime_init`        | `int(const wef_backend_api_t* api)` | Backend hands the runtime the API table. Stash it; return 0 on success.        |
-| `wef_runtime_start`       | `int(void)`                         | Run application setup (create windows, register handlers). Returns when ready. |
-| `wef_runtime_shutdown`    | `void(void)`                        | Tear down before the process exits.                                            |
+| `laufey_runtime_init`        | `int(const laufey_backend_api_t* api)` | Backend hands the runtime the API table. Stash it; return 0 on success.        |
+| `laufey_runtime_start`       | `int(void)`                         | Run application setup (create windows, register handlers). Returns when ready. |
+| `laufey_runtime_shutdown`    | `void(void)`                        | Tear down before the process exits.                                            |
 
 The backend `dlopen`s the runtime, resolves these symbols, calls `init` then
 `start`, and drives the OS event loop. Control flows backend → runtime through
@@ -26,11 +26,11 @@ the API table, and runtime → backend through the registered callbacks.
 
 ## The API table
 
-`wef_backend_api_t` is a struct of function pointers plus two data fields:
+`laufey_backend_api_t` is a struct of function pointers plus two data fields:
 
 ```c
-struct wef_backend_api {
-  uint32_t version;     // == WEF_API_VERSION the backend was built against
+struct laufey_backend_api {
+  uint32_t version;     // == LAUFEY_API_VERSION the backend was built against
   void*    backend_data; // opaque; pass back as the first arg of every call
   /* ... function pointers ... */
 };
@@ -43,7 +43,7 @@ hand-rolled vtable with no global state. Windows are referenced by an opaque
 The pointers group into:
 
 - **Window lifecycle** — `create_window`, `create_window_ex` (style flags, see
-  `WEF_WINDOW_FLAG_*`), `close_window`, `navigate`, `set_title`, size/position
+  `LAUFEY_WINDOW_FLAG_*`), `close_window`, `navigate`, `set_title`, size/position
   get+set, `set_resizable`/`is_resizable`,
   `set_always_on_top`/`is_always_on_top`, `show`/`hide`/`is_visible`, `focus`,
   `quit`, `post_ui_task`.
@@ -69,9 +69,9 @@ The pointers group into:
 See [the feature pages](window-management.md) for behavior and per-platform
 differences.
 
-## Values (`wef_value_t`)
+## Values (`laufey_value_t`)
 
-`wef_value_t` is an opaque, dynamically-typed value used for everything crossing
+`laufey_value_t` is an opaque, dynamically-typed value used for everything crossing
 the JS ↔ native boundary (call arguments, results, menu templates, notification
 options). It models the JSON types plus binary blobs and JS-callback handles:
 
@@ -99,16 +99,16 @@ and free it with `release_js_callback(id)`.
 ## JavaScript call flow
 
 1. The runtime exposes a namespace in the page (`set_js_namespace`, default
-   `"Wef"`) and registers `set_js_call_handler`.
-2. Page JS calls `Wef.someMethod(args…)`; the backend invokes the handler with a
-   `call_id`, the method name, and the arguments as a `wef_value_t` list.
+   `"Laufey"`) and registers `set_js_call_handler`.
+2. Page JS calls `Laufey.someMethod(args…)`; the backend invokes the handler with a
+   `call_id`, the method name, and the arguments as a `laufey_value_t` list.
 3. The runtime does its work and replies with
    `js_call_respond(call_id, result,
    error)` — resolving or rejecting the
    JS-side promise.
 
 `execute_js` runs a script in a window and delivers its result/error through a
-`wef_js_result_fn`. When the runtime services calls off the UI thread, the
+`laufey_js_result_fn`. When the runtime services calls off the UI thread, the
 backend signals readiness via `set_js_call_notify` and the runtime drains the
 queue with `poll_js_calls`.
 

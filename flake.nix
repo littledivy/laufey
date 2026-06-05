@@ -1,5 +1,5 @@
 {
-  description = "wef";
+  description = "laufey";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -87,14 +87,14 @@
         };
 
         # Import sub-flakes
-        wefInclude = ./capi/include;
+        laufeyInclude = ./capi/include;
 
         cefFlake = import ./cef/flake.nix;
-        cefOutputs = cefFlake.outputs { self = cefFlake; inherit nixpkgs flake-utils; inherit wefInclude; };
+        cefOutputs = cefFlake.outputs { self = cefFlake; inherit nixpkgs flake-utils; inherit laufeyInclude; };
         cefApp = cefOutputs.packages.${system}.default;
 
         webviewFlake = import ./webview/flake.nix;
-        webviewOutputs = webviewFlake.outputs { self = webviewFlake; inherit nixpkgs flake-utils; inherit wefInclude; };
+        webviewOutputs = webviewFlake.outputs { self = webviewFlake; inherit nixpkgs flake-utils; inherit laufeyInclude; };
         webviewApp = webviewOutputs.packages.${system}.default;
 
       in {
@@ -106,32 +106,32 @@
           webview = webviewApp;
 
           cef-hello = pkgs.stdenv.mkDerivation {
-            pname = "wef-cef-hello";
+            pname = "laufey-cef-hello";
             version = "0.1.0";
             dontUnpack = true;
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/Applications
-              cp -R ${cefApp}/Applications/wef.app $out/Applications/
+              cp -R ${cefApp}/Applications/laufey.app $out/Applications/
               cp ${helloRuntime}/lib/libhello_runtime.dylib $out/lib/
-              cat > $out/bin/wef-cef-hello <<'EOF'
+              cat > $out/bin/laufey-cef-hello <<'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$SCRIPT_DIR/Applications/wef.app/Contents/MacOS/wef" --runtime "$SCRIPT_DIR/lib/libhello_runtime.dylib" "$@"
+exec "$SCRIPT_DIR/Applications/laufey.app/Contents/MacOS/laufey" --runtime "$SCRIPT_DIR/lib/libhello_runtime.dylib" "$@"
 EOF
-              chmod +x $out/bin/wef-cef-hello
+              chmod +x $out/bin/laufey-cef-hello
             '';
           };
 
           cef-ddcore = pkgs.stdenv.mkDerivation {
-            pname = "wef-cef-ddcore";
+            pname = "laufey-cef-ddcore";
             version = "0.1.0";
             dontUnpack = true;
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/share/ddcore $out/Applications
-              cp -R ${cefApp}/Applications/wef.app $out/Applications/
+              cp -R ${cefApp}/Applications/laufey.app $out/Applications/
               cp ${ddcoreRuntime}/lib/libddcore_runtime.dylib $out/lib/
               cp ${./examples/ddcore/index.html} $out/share/ddcore/index.html
-              cat > $out/bin/wef-cef-ddcore <<'EOF'
+              cat > $out/bin/laufey-cef-ddcore <<'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ARGS=()
@@ -143,39 +143,39 @@ for arg in "$@"; do
   fi
 done
 cd "$SCRIPT_DIR/share/ddcore"
-exec "$SCRIPT_DIR/Applications/wef.app/Contents/MacOS/wef" --runtime "$SCRIPT_DIR/lib/libddcore_runtime.dylib" "''${ARGS[@]}"
+exec "$SCRIPT_DIR/Applications/laufey.app/Contents/MacOS/laufey" --runtime "$SCRIPT_DIR/lib/libddcore_runtime.dylib" "''${ARGS[@]}"
 EOF
-              chmod +x $out/bin/wef-cef-ddcore
+              chmod +x $out/bin/laufey-cef-ddcore
             '';
           };
 
           webview-hello = pkgs.stdenv.mkDerivation {
-            pname = "wef-webview-hello";
+            pname = "laufey-webview-hello";
             version = "0.1.0";
             dontUnpack = true;
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/Applications
-              cp -R ${webviewApp}/Applications/wef_webview.app $out/Applications/
+              cp -R ${webviewApp}/Applications/laufey_webview.app $out/Applications/
               cp ${helloRuntime}/lib/libhello_runtime.dylib $out/lib/
-              cat > $out/bin/wef-webview-hello <<'EOF'
+              cat > $out/bin/laufey-webview-hello <<'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$SCRIPT_DIR/Applications/wef_webview.app/Contents/MacOS/wef_webview" --runtime "$SCRIPT_DIR/lib/libhello_runtime.dylib" "$@"
+exec "$SCRIPT_DIR/Applications/laufey_webview.app/Contents/MacOS/laufey_webview" --runtime "$SCRIPT_DIR/lib/libhello_runtime.dylib" "$@"
 EOF
-              chmod +x $out/bin/wef-webview-hello
+              chmod +x $out/bin/laufey-webview-hello
             '';
           };
 
           webview-ddcore = pkgs.stdenv.mkDerivation {
-            pname = "wef-webview-ddcore";
+            pname = "laufey-webview-ddcore";
             version = "0.1.0";
             dontUnpack = true;
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/share/ddcore $out/Applications
-              cp -R ${webviewApp}/Applications/wef_webview.app $out/Applications/
+              cp -R ${webviewApp}/Applications/laufey_webview.app $out/Applications/
               cp ${ddcoreRuntime}/lib/libddcore_runtime.dylib $out/lib/
               cp ${./examples/ddcore/index.html} $out/share/ddcore/index.html
-              cat > $out/bin/wef-webview-ddcore <<'EOF'
+              cat > $out/bin/laufey-webview-ddcore <<'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ARGS=()
@@ -187,43 +187,43 @@ for arg in "$@"; do
   fi
 done
 cd "$SCRIPT_DIR/share/ddcore"
-exec "$SCRIPT_DIR/Applications/wef_webview.app/Contents/MacOS/wef_webview" --runtime "$SCRIPT_DIR/lib/libddcore_runtime.dylib" "''${ARGS[@]}"
+exec "$SCRIPT_DIR/Applications/laufey_webview.app/Contents/MacOS/laufey_webview" --runtime "$SCRIPT_DIR/lib/libddcore_runtime.dylib" "''${ARGS[@]}"
 EOF
-              chmod +x $out/bin/wef-webview-ddcore
+              chmod +x $out/bin/laufey-webview-ddcore
             '';
           };
 
           cef-presentation = pkgs.stdenv.mkDerivation {
-            pname = "wef-cef-presentation";
+            pname = "laufey-cef-presentation";
             version = "0.1.0";
             dontUnpack = true;
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/Applications
-              cp -R ${cefApp}/Applications/wef.app $out/Applications/
+              cp -R ${cefApp}/Applications/laufey.app $out/Applications/
               cp ${presentationRuntime}/lib/libpresentation_runtime.dylib $out/lib/
-              cat > $out/bin/wef-cef-presentation <<'EOF'
+              cat > $out/bin/laufey-cef-presentation <<'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$SCRIPT_DIR/Applications/wef.app/Contents/MacOS/wef" --runtime "$SCRIPT_DIR/lib/libpresentation_runtime.dylib" "$@"
+exec "$SCRIPT_DIR/Applications/laufey.app/Contents/MacOS/laufey" --runtime "$SCRIPT_DIR/lib/libpresentation_runtime.dylib" "$@"
 EOF
-              chmod +x $out/bin/wef-cef-presentation
+              chmod +x $out/bin/laufey-cef-presentation
             '';
           };
 
           webview-presentation = pkgs.stdenv.mkDerivation {
-            pname = "wef-webview-presentation";
+            pname = "laufey-webview-presentation";
             version = "0.1.0";
             dontUnpack = true;
             installPhase = ''
               mkdir -p $out/bin $out/lib $out/Applications
-              cp -R ${webviewApp}/Applications/wef_webview.app $out/Applications/
+              cp -R ${webviewApp}/Applications/laufey_webview.app $out/Applications/
               cp ${presentationRuntime}/lib/libpresentation_runtime.dylib $out/lib/
-              cat > $out/bin/wef-webview-presentation <<'EOF'
+              cat > $out/bin/laufey-webview-presentation <<'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "$SCRIPT_DIR/Applications/wef_webview.app/Contents/MacOS/wef_webview" --runtime "$SCRIPT_DIR/lib/libpresentation_runtime.dylib" "$@"
+exec "$SCRIPT_DIR/Applications/laufey_webview.app/Contents/MacOS/laufey_webview" --runtime "$SCRIPT_DIR/lib/libpresentation_runtime.dylib" "$@"
 EOF
-              chmod +x $out/bin/wef-webview-presentation
+              chmod +x $out/bin/laufey-webview-presentation
             '';
           };
 
@@ -242,7 +242,7 @@ EOF
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
 
           shellHook = ''
-            echo "wef dev shell"
+            echo "laufey dev shell"
             echo "nix build .#cef-hello"
           '';
         };

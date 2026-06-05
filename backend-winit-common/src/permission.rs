@@ -9,23 +9,23 @@
 //!
 //! Windows / Linux: `notify-rust` targets shell-level notification APIs
 //! that have no permission model, so we report `GRANTED` synchronously
-//! for `WEF_PERMISSION_NOTIFICATIONS` and `UNSUPPORTED` for any other
+//! for `LAUFEY_PERMISSION_NOTIFICATIONS` and `UNSUPPORTED` for any other
 //! kind.
 
 use std::ffi::{c_int, c_void};
 
-pub const WEF_PERMISSION_INVALID: c_int = 0;
-pub const WEF_PERMISSION_NOTIFICATIONS: c_int = 1;
+pub const LAUFEY_PERMISSION_INVALID: c_int = 0;
+pub const LAUFEY_PERMISSION_NOTIFICATIONS: c_int = 1;
 
-pub const WEF_PERMISSION_STATUS_GRANTED: c_int = 0;
-pub const WEF_PERMISSION_STATUS_DENIED: c_int = 1;
-pub const WEF_PERMISSION_STATUS_PROMPT: c_int = 2;
-pub const WEF_PERMISSION_STATUS_UNSUPPORTED: c_int = 3;
+pub const LAUFEY_PERMISSION_STATUS_GRANTED: c_int = 0;
+pub const LAUFEY_PERMISSION_STATUS_DENIED: c_int = 1;
+pub const LAUFEY_PERMISSION_STATUS_PROMPT: c_int = 2;
+pub const LAUFEY_PERMISSION_STATUS_UNSUPPORTED: c_int = 3;
 
-pub type WefPermissionCallbackFn = unsafe extern "C" fn(*mut c_void, c_int);
+pub type LaufeyPermissionCallbackFn = unsafe extern "C" fn(*mut c_void, c_int);
 
 #[cfg(not(target_os = "macos"))]
-fn fire(cb: Option<WefPermissionCallbackFn>, ud: *mut c_void, status: c_int) {
+fn fire(cb: Option<LaufeyPermissionCallbackFn>, ud: *mut c_void, status: c_int) {
   if let Some(cb) = cb {
     unsafe { cb(ud, status) };
   }
@@ -45,12 +45,12 @@ mod imp {
 
   fn map_status(s: UNAuthorizationStatus) -> c_int {
     match s {
-      UNAuthorizationStatus::NotDetermined => WEF_PERMISSION_STATUS_PROMPT,
-      UNAuthorizationStatus::Denied => WEF_PERMISSION_STATUS_DENIED,
+      UNAuthorizationStatus::NotDetermined => LAUFEY_PERMISSION_STATUS_PROMPT,
+      UNAuthorizationStatus::Denied => LAUFEY_PERMISSION_STATUS_DENIED,
       UNAuthorizationStatus::Authorized
       | UNAuthorizationStatus::Provisional
-      | UNAuthorizationStatus::Ephemeral => WEF_PERMISSION_STATUS_GRANTED,
-      _ => WEF_PERMISSION_STATUS_UNSUPPORTED,
+      | UNAuthorizationStatus::Ephemeral => LAUFEY_PERMISSION_STATUS_GRANTED,
+      _ => LAUFEY_PERMISSION_STATUS_UNSUPPORTED,
     }
   }
 
@@ -63,10 +63,10 @@ mod imp {
   }
 
   // Hop the callback onto the main thread via dispatch_async. UN
-  // completion handlers fire on a background queue; we promise the wef
+  // completion handlers fire on a background queue; we promise the laufey
   // ABI to deliver on the UI thread, so route through libdispatch.
   fn fire_on_main(
-    cb: Option<WefPermissionCallbackFn>,
+    cb: Option<LaufeyPermissionCallbackFn>,
     ud: *mut c_void,
     status: c_int,
   ) {
@@ -79,11 +79,11 @@ mod imp {
 
   pub(super) fn query(
     kind: c_int,
-    cb: Option<WefPermissionCallbackFn>,
+    cb: Option<LaufeyPermissionCallbackFn>,
     user_data: *mut c_void,
   ) {
-    if kind != WEF_PERMISSION_NOTIFICATIONS || !process_is_bundled() {
-      fire_on_main(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    if kind != LAUFEY_PERMISSION_NOTIFICATIONS || !process_is_bundled() {
+      fire_on_main(cb, user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
       return;
     }
     let center = UNUserNotificationCenter::currentNotificationCenter();
@@ -100,11 +100,11 @@ mod imp {
 
   pub(super) fn request(
     kind: c_int,
-    cb: Option<WefPermissionCallbackFn>,
+    cb: Option<LaufeyPermissionCallbackFn>,
     user_data: *mut c_void,
   ) {
-    if kind != WEF_PERMISSION_NOTIFICATIONS || !process_is_bundled() {
-      fire_on_main(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    if kind != LAUFEY_PERMISSION_NOTIFICATIONS || !process_is_bundled() {
+      fire_on_main(cb, user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
       return;
     }
     let center = UNUserNotificationCenter::currentNotificationCenter();
@@ -126,7 +126,7 @@ mod imp {
           let status = if granted_b {
             map_status(auth)
           } else if auth == UNAuthorizationStatus::NotDetermined {
-            WEF_PERMISSION_STATUS_DENIED
+            LAUFEY_PERMISSION_STATUS_DENIED
           } else {
             map_status(auth)
           };
@@ -145,20 +145,20 @@ mod imp {
 
   pub(super) fn query(
     kind: c_int,
-    cb: Option<WefPermissionCallbackFn>,
+    cb: Option<LaufeyPermissionCallbackFn>,
     user_data: *mut c_void,
   ) {
-    let status = if kind == WEF_PERMISSION_NOTIFICATIONS {
-      WEF_PERMISSION_STATUS_GRANTED
+    let status = if kind == LAUFEY_PERMISSION_NOTIFICATIONS {
+      LAUFEY_PERMISSION_STATUS_GRANTED
     } else {
-      WEF_PERMISSION_STATUS_UNSUPPORTED
+      LAUFEY_PERMISSION_STATUS_UNSUPPORTED
     };
     fire(cb, user_data, status);
   }
 
   pub(super) fn request(
     kind: c_int,
-    cb: Option<WefPermissionCallbackFn>,
+    cb: Option<LaufeyPermissionCallbackFn>,
     user_data: *mut c_void,
   ) {
     query(kind, cb, user_data);
@@ -172,7 +172,7 @@ mod imp {
 /// passed through to it unchanged.
 pub unsafe fn query_permission(
   kind: c_int,
-  cb: Option<WefPermissionCallbackFn>,
+  cb: Option<LaufeyPermissionCallbackFn>,
   user_data: *mut c_void,
 ) {
   imp::query(kind, cb, user_data);
@@ -185,7 +185,7 @@ pub unsafe fn query_permission(
 /// passed through to it unchanged.
 pub unsafe fn request_permission(
   kind: c_int,
-  cb: Option<WefPermissionCallbackFn>,
+  cb: Option<LaufeyPermissionCallbackFn>,
   user_data: *mut c_void,
 ) {
   imp::request(kind, cb, user_data);

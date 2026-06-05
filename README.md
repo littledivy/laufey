@@ -1,14 +1,14 @@
-![wef-doodle](https://github.com/user-attachments/assets/c7d55981-ab29-4bea-a4c6-28feeb1b4520)
+<img src="docs/laufey.png" alt="laufey" width="320">
 
-wef ("Web embedded framework") lets you build cross platform apps using web
+laufey is a web embedded framework: build cross platform apps using web
 technologies with your choice of browser engine.
 
 ### How it works
 
-wef is built around a C ABI that separates browser engines (backends) from
+laufey is built around a C ABI that separates browser engines (backends) from
 application logic (runtimes). Prebuilt backends for [CEF](./cef) and the system
-[WebView](./webview) implement the `wef_backend_api_t` interface defined in
-[`capi/include/wef.h`](capi/include/wef.h), and a [Winit](./winit) backend
+[WebView](./webview) implement the `laufey_backend_api_t` interface defined in
+[`capi/include/laufey.h`](capi/include/laufey.h), and a [Winit](./winit) backend
 handles windowing without a web engine. (A Servo-based backend lives on the
 [`servo`](https://github.com/littledivy/wef/tree/servo) branch.)
 
@@ -17,12 +17,12 @@ backend starts, it loads the runtime dylib and hands control to the runtime. The
 runtime uses the interface to create windows, register JavaScript bindings, and
 respond to calls from the web content.
 
-wef also handles bidirectional marshalling that abstracts message passing
+laufey also handles bidirectional marshalling that abstracts message passing
 between JS and native code. This modular approach leads to fast development and
-packaging of wef applications.
+packaging of laufey applications.
 
 ```rust
-use just_wef::{Value, Window};
+use laufey::{Value, Window};
 
 fn main() {
     Window::new(800, 600)
@@ -38,13 +38,13 @@ fn main() {
         .load("index.html");
 }
 
-just_wef::main!(main);
+laufey::main!(main);
 ```
 
 ### Docs
 
 - [architecture.md](docs/architecture.md) — backend/runtime split
-- [c-abi.md](docs/c-abi.md) — the `wef.h` C ABI: runtime entry points, the API
+- [c-abi.md](docs/c-abi.md) — the `laufey.h` C ABI: runtime entry points, the API
   table, the value model, and the JS call flow
 - [backends.md](docs/backends.md) — CEF, WebView, and Winit
 - [features/](docs/features/) — one page per feature, with a usage example and

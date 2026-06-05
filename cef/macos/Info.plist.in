@@ -23,7 +23,7 @@
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSPrincipalClass</key>
-  <string>WefApplication</string>
+  <string>LaufeyApplication</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
   <key>NSAppTransportSecurity</key>

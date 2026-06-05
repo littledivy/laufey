@@ -5,13 +5,13 @@
 // This module owns the per-window saved-title map so each backend
 // (CEF Win+Linux, webview Win, webview Linux) doesn't have its own copy.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <map>
 #include <mutex>
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
@@ -52,4 +52,4 @@ void ForgetTitlePrefixBadge(uint64_t window_key) {
   SavedTitles().erase(window_key);
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

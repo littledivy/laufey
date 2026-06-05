@@ -1,13 +1,13 @@
 # Window management
 
-Every wef application is built around one or more native windows. A `Window`
+Every laufey application is built around one or more native windows. A `Window`
 controls its title, size, position, resizable and always-on-top flags,
 visibility, and focus. The type is a builder, so you can configure a window
 fluently when you create it, and each property also has a plain setter you can
 call later while the window is open.
 
 ```rust
-use just_wef::Window;
+use laufey::Window;
 
 let win = Window::new(800, 600)
   .title("My App")

@@ -1,14 +1,14 @@
 //! End-to-end harness for the CEF backend.
 //!
 //! Designed to run under `xvfb-run` on Linux CI. Exercises the parts
-//! of the wef contract a unit test can't reach: the C ABI handshake,
+//! of the laufey contract a unit test can't reach: the C ABI handshake,
 //! window/webview creation, navigate() actually loading a page, the
 //! JS bindings round-trip, executeJs returning a value, and clean
 //! shutdown.
 //!
 //! Doesn't drive dialogs (alert/confirm/prompt) because those need
 //! either real OS input or a backend-side test stub — neither exists
-//! today. Adding a `WEF_TEST_MODE` flag in the CEF backend is the
+//! today. Adding a `LAUFEY_TEST_MODE` flag in the CEF backend is the
 //! next step if dialog coverage in CI matters.
 //!
 //! Exit status 0 on PASS, 1 on FAIL. Each check prints
@@ -17,7 +17,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
-use just_wef::{Value, Window};
+use laufey::{Value, Window};
 use tokio::sync::oneshot;
 
 static FAILED: AtomicBool = AtomicBool::new(false);
@@ -44,13 +44,13 @@ async fn wait_for<F: Fn() -> bool>(f: F, attempts: u32, step_ms: u64) -> bool {
 fn e2e_main() {
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
   rt.block_on(async move {
-        // Spawn the wef event-loop pump. Without this, queued JS calls
-        // (Wef.report, Wef.add) never reach our bind handlers because
+        // Spawn the laufey event-loop pump. Without this, queued JS calls
+        // (Laufey.report, Laufey.add) never reach our bind handlers because
         // poll_js_calls() never gets called.
-        tokio::spawn(async { just_wef::run().await });
+        tokio::spawn(async { laufey::run().await });
 
         // Counter of binding invocations from the page. The page below
-        // calls `Wef.report("loaded")` on DOMContentLoaded; if the
+        // calls `Laufey.report("loaded")` on DOMContentLoaded; if the
         // binding pipeline works end-to-end (CEF process model, IPC
         // back to the browser process, JsCall dispatch through capi)
         // we see the counter increment.
@@ -87,11 +87,11 @@ fn e2e_main() {
 <html><body>
 <script>
 // CEF registers bindings asynchronously via IPC from the browser
-// process. They may not be on Wef.* the moment this script runs —
+// process. They may not be on Laufey.* the moment this script runs —
 // wait up to 5s for each.
 async function waitForBinding(name) {
   for (let i = 0; i < 100; i++) {
-    if (typeof Wef === 'object' && typeof Wef[name] === 'function') return;
+    if (typeof Laufey === 'object' && typeof Laufey[name] === 'function') return;
     await new Promise(r => setTimeout(r, 50));
   }
   throw new Error('binding never appeared: ' + name);
@@ -99,13 +99,13 @@ async function waitForBinding(name) {
 (async () => {
   try {
     await waitForBinding('report');
-    await Wef.report('loaded');
+    await Laufey.report('loaded');
     await waitForBinding('add');
-    const sum = await Wef.add(2, 40);
-    await Wef.report('sum=' + sum);
+    const sum = await Laufey.add(2, 40);
+    await Laufey.report('sum=' + sum);
   } catch (e) {
     document.body.innerText = 'JS ERROR: ' + (e && e.message);
-    try { await Wef.report('js-error:' + (e && e.message)); } catch(_) {}
+    try { await Laufey.report('js-error:' + (e && e.message)); } catch(_) {}
   }
 })();
 </script>
@@ -120,7 +120,7 @@ async function waitForBinding(name) {
         for attempt in 0..60u32 {
             let (probe_tx, probe_rx) = oneshot::channel::<Result<Value, Value>>();
             win.execute_js(
-                "(typeof Wef === 'object' && typeof document !== 'undefined') ? 'ready' : 'no'",
+                "(typeof Laufey === 'object' && typeof document !== 'undefined') ? 'ready' : 'no'",
                 Some(move |r: Result<Value, Value>| {
                     let _ = probe_tx.send(r);
                 }),
@@ -155,7 +155,7 @@ async function waitForBinding(name) {
             50,
         )
         .await;
-        check("Wef.report('loaded') round-tripped to Deno binding", saw_loaded);
+        check("Laufey.report('loaded') round-tripped to Deno binding", saw_loaded);
 
         let saw_sum = wait_for(
             || {
@@ -170,7 +170,7 @@ async function waitForBinding(name) {
             50,
         )
         .await;
-        check("Wef.add(2, 40) returned 42 to JS", saw_sum);
+        check("Laufey.add(2, 40) returned 42 to JS", saw_sum);
 
         check(
             "at least two binding invocations recorded",
@@ -211,7 +211,7 @@ async function waitForBinding(name) {
         // Shut down: close the window then quit the backend.
         win.close();
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        just_wef::quit();
+        laufey::quit();
 
         if FAILED.load(Ordering::SeqCst) {
             eprintln!("[e2e] OVERALL FAIL");
@@ -221,4 +221,4 @@ async function waitForBinding(name) {
     });
 }
 
-just_wef::main!(e2e_main);
+laufey::main!(e2e_main);

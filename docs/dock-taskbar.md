@@ -1,18 +1,18 @@
 # Dock / taskbar
 
-wef can badge the application icon, request the user's attention, and — on macOS
+laufey can badge the application icon, request the user's attention, and — on macOS
 — drive the dock menu, the icon's visibility, and a reopen callback. These are
 free functions rather than window methods, because the dock is
 application-scoped on macOS, while on Windows and Linux the equivalent
 operations act on the currently focused window's taskbar button.
 
 ```rust
-use just_wef::DockBounceType;
+use laufey::DockBounceType;
 
-just_wef::set_dock_badge(Some("3"));      // pass None to clear the badge
-just_wef::bounce_dock(DockBounceType::Critical);
+laufey::set_dock_badge(Some("3"));      // pass None to clear the badge
+laufey::bounce_dock(DockBounceType::Critical);
 
-just_wef::on_dock_reopen(|has_visible_windows| {
+laufey::on_dock_reopen(|has_visible_windows| {
   // On macOS, the user clicked the dock icon while no windows were open.
 });
 ```

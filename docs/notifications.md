@@ -1,12 +1,12 @@
 # Notifications
 
-wef can post system notifications. The options mirror a subset of the Web
+laufey can post system notifications. The options mirror a subset of the Web
 Notifications API: a title and body, an icon, a tag that replaces an earlier
 notification carrying the same tag, a silent flag, a require-interaction flag,
 and action buttons. Notifications are application-scoped.
 
 ```rust
-use just_wef::Notification;
+use laufey::Notification;
 
 let handle = Notification::new("Build finished")
   .body("3 warnings")

@@ -1,5 +1,5 @@
 [package]
-name = "just-wef"
+name = "laufey"
 version = "0.2.0"
 edition = "2021"
 description = "Just a Web embedded framework"

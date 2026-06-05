@@ -1,6 +1,6 @@
 # Native dialogs
 
-wef can show the operating system's standard alert, confirmation, and prompt
+laufey can show the operating system's standard alert, confirmation, and prompt
 dialogs. Each call is modal and blocks until the user dismisses the dialog, then
 returns the user's response. A dialog can be attached to a specific window or
 shown at the application level.
@@ -22,8 +22,8 @@ Although the call blocks the calling thread, the underlying platform routine —
 keeps pumping operating-system events while the dialog is open, so your other
 windows continue to render and respond. A prompt returns the text the user
 entered, or `None` if the user cancelled. The same three operations are also
-available as the application-scoped free functions `just_wef::alert`,
-`just_wef::confirm`, and `just_wef::prompt`.
+available as the application-scoped free functions `laufey::alert`,
+`laufey::confirm`, and `laufey::prompt`.
 
 On the CEF and WebView backends, the page's own `alert()`, `confirm()`, and
 `prompt()` calls are routed to these native dialogs. The Winit backend has no

@@ -2,16 +2,16 @@
 
 ## Overview
 
-wef separates browser engines (**backends**) from application logic
+laufey separates browser engines (**backends**) from application logic
 (**runtimes**). Backends are native executables; runtimes are shared libraries
 (`.dylib`/`.so`/`.dll`) loaded at startup. They communicate through a C ABI
-defined in `capi/include/wef.h`.
+defined in `capi/include/laufey.h`.
 
 ```
 ┌──────────────────┐         ┌───────────────────┐
 │  Backend (exe)   │ ──C ABI──▶  Runtime (dylib) │
 │  CEF / WebView / ◀─────────│  User app logic   │
-│  Winit           │         │  (links wef capi) │
+│  Winit           │         │  (links laufey capi) │
 └──────────────────┘         └───────────────────┘
 ```
 
@@ -29,29 +29,29 @@ An experimental Servo backend lives on the
 ### Runtime (capi)
 
 `capi/` provides the Rust crate that runtimes link against. It wraps the raw C
-function pointers from `wef_backend_api_t` into safe Rust types (`Window`,
+function pointers from `laufey_backend_api_t` into safe Rust types (`Window`,
 `Value`, `JsCall`, `KeyboardEvent`, `MouseClickEvent`, etc.).
 
 ## Key Patterns
 
-### The C ABI contract (`wef_backend_api_t`)
+### The C ABI contract (`laufey_backend_api_t`)
 
-The central interface is a struct of function pointers (`capi/include/wef.h`).
-The backend fills this struct and passes a pointer to `wef_runtime_init()`. The
+The central interface is a struct of function pointers (`capi/include/laufey.h`).
+The backend fills this struct and passes a pointer to `laufey_runtime_init()`. The
 runtime stores it for the process lifetime. Every capability (navigation, JS
 execution, event handlers, window management) is a nullable function pointer in
 this struct.
 
-**Adding a new API**: add the field to `wef_backend_api_t` in
-`capi/include/wef.h`, then implement it in every backend. Both C++ backends
-include the canonical header from `capi/include/` via the `WEF_INCLUDE_DIR`
+**Adding a new API**: add the field to `laufey_backend_api_t` in
+`capi/include/laufey.h`, then implement it in every backend. Both C++ backends
+include the canonical header from `capi/include/` via the `LAUFEY_INCLUDE_DIR`
 CMake variable — there is no second copy to sync.
 
 ### Callback registration (event handlers)
 
 All event handlers follow the same pattern:
 
-1. Define a C callback type (`wef_keyboard_event_fn`, `wef_mouse_click_fn`)
+1. Define a C callback type (`laufey_keyboard_event_fn`, `laufey_mouse_click_fn`)
 2. Add a `set_*_handler(backend_data, callback, user_data)` function pointer to
    the API struct
 3. Backend stores the callback+user_data behind a mutex
@@ -67,13 +67,13 @@ underlying engine. This is an interception model, not a consumption model.
 
 The CEF and webview backends both link `backend-common/`, a CMake static library
 that holds platform implementations of APIs the two backends would otherwise
-duplicate. Each backend `add_subdirectory`s it and links `wef_backend_common`
+duplicate. Each backend `add_subdirectory`s it and links `laufey_backend_common`
 from its platform branch.
 
 The bridge is intentionally minimal — common code never touches the
-backend-specific `wef_value_t` types. Each backend pre-parses `wef_value_t` into
-plain C++ structs (`wef_common::NotificationOptions`, etc.) before calling into
-common functions. Header: `backend-common/include/wef_backend_common.h`.
+backend-specific `laufey_value_t` types. Each backend pre-parses `laufey_value_t` into
+plain C++ structs (`laufey_common::NotificationOptions`, etc.) before calling into
+common functions. Header: `backend-common/include/laufey_backend_common.h`.
 
 Currently shared:
 
@@ -86,7 +86,7 @@ Currently shared:
 | **Key mapping**                    | `keymap_mac.mm` (NSEvent → W3C)                                                                                  | `keymap_vk.cc` (VK → W3C; CEF uses on every platform)          | `keymap_gdk.cc` (GDK → W3C)                                                |
 | **App / context menu**             | `menu_mac.mm` (NSMenu)                                                                                           | `capi/include/win32_menu.h` (HMENU + SetMenu / TrackPopupMenu) | `menu_linux.cc` (GtkMenu / GtkMenuBar)                                     |
 | **Tray icons**                     | `tray_mac.mm` (NSStatusItem)                                                                                     | `tray_win.cc` (Shell_NotifyIcon + WIC + HMENU)                 | `tray_linux.cc` (libappindicator + g_idle_add)                             |
-| **Option parsing**                 | `parse_options.cc` (compiled on every platform; bridges `wef_value_t` → plain structs)                           |                                                                |                                                                            |
+| **Option parsing**                 | `parse_options.cc` (compiled on every platform; bridges `laufey_value_t` → plain structs)                           |                                                                |                                                                            |
 | **Title-prefix badge bookkeeping** | `title_badge.cc` (`ApplyTitlePrefixBadge` — used by CEF Win+Linux and webview Win+Linux for Dock-badge fallback) |                                                                |                                                                            |
 
 Notes:
@@ -99,12 +99,12 @@ Notes:
   backend (because the native title-get/set APIs differ — `SetWindowTextW(HWND)`
   vs `gtk_window_set_title(GtkWindow*)` vs CEF's `CefWindow::SetTitle`), but the
   saved-titles bookkeeping and `"(badge) " + title` string concatenation are
-  unified in `wef_common::ApplyTitlePrefixBadge`.
+  unified in `laufey_common::ApplyTitlePrefixBadge`.
 - FlashWindow (Windows) and `gtk_window_set_urgency_hint` (Linux) for
   `bounce_dock` remain per-backend — each is ~5 LOC and the native call differs
   enough that an abstraction would cost more than it saves.
 
-To add a new shared API: declare it in `wef_backend_common.h`, add the
+To add a new shared API: declare it in `laufey_backend_common.h`, add the
 implementation file(s) to `backend-common/CMakeLists.txt`, then call it from
 each backend's existing API trampoline.
 
@@ -120,7 +120,7 @@ branch shares this same code. Shared code lives in
   functions for all common operations (title, size, position, visibility, event
   handlers, etc.).
 - **`fill_common_api!` macro**: wires those generated functions into a
-  `WefBackendApi` struct.
+  `LaufeyBackendApi` struct.
 - **`CommonState`**: holds pending window mutations (`Mutex<Option<T>>`) and
   event handler callbacks.
 - **`handle_common_event()`**: processes `CommonEvent` variants against a winit
@@ -160,7 +160,7 @@ event system:
 
 The monitor functions (`InstallNativeMouseMonitor()` /
 `RemoveNativeMouseMonitor()`) are declared in `cef/src/runtime_loader.h` and
-called from `WefWindowDelegate::OnWindowCreated` / `OnWindowDestroyed` in
+called from `LaufeyWindowDelegate::OnWindowCreated` / `OnWindowDestroyed` in
 `cef/src/app.cc`. This is the same approach Electron uses -- Electron creates
 native windows directly (bypassing CEF Views), but since we use CEF Views, we
 instead install post-hoc monitors on the window CEF creates.
@@ -195,7 +195,7 @@ Each platform has its own mapping:
 
 ### Mouse button mapping
 
-Mouse buttons are normalized to `WEF_MOUSE_BUTTON_*` constants.
+Mouse buttons are normalized to `LAUFEY_MOUSE_BUTTON_*` constants.
 Platform-specific mappings:
 
 - **NSEvent** `buttonNumber`: 0=left, 1=right, 2+=other (detect via event type
@@ -206,7 +206,7 @@ Platform-specific mappings:
 
 ### Value marshalling
 
-The wef API has a rich value type (`wef_value_t`) for JS interop. Backends own
+The laufey API has a rich value type (`laufey_value_t`) for JS interop. Backends own
 the value representation:
 
 - **CEF**: wraps `CefValue` / `CefListValue` directly
@@ -223,10 +223,10 @@ representation.
 All platforms normalize keyboard modifiers to a shared bitmask:
 
 ```
-WEF_MOD_SHIFT   = 1 << 0
-WEF_MOD_CONTROL = 1 << 1
-WEF_MOD_ALT     = 1 << 2
-WEF_MOD_META    = 1 << 3
+LAUFEY_MOD_SHIFT   = 1 << 0
+LAUFEY_MOD_CONTROL = 1 << 1
+LAUFEY_MOD_ALT     = 1 << 2
+LAUFEY_MOD_META    = 1 << 3
 ```
 
 Each platform maps from its native representation (`NSEventModifierFlags`,

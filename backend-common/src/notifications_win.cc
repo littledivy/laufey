@@ -10,7 +10,7 @@
 // backend-common (task #4), the two can share one HWND — for now keeping
 // them separate so this module is self-contained.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -23,17 +23,17 @@
 #include <string>
 #include <vector>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
-#define WM_WEF_COMMON_NOTIFICATION (WM_APP + 64)
+#define WM_LAUFEY_COMMON_NOTIFICATION (WM_APP + 64)
 
 struct WinNotifEntry {
   UINT uid;
   HICON hicon;  // hidden icon for the balloon (one per notification)
   std::string tag;
-  wef_notification_event_fn on_event;
+  laufey_notification_event_fn on_event;
   void* user_data;
 };
 
@@ -158,7 +158,7 @@ HICON LoadDefaultAppIcon() {
 }
 
 LRESULT CALLBACK NotifWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-  if (msg != WM_WEF_COMMON_NOTIFICATION)
+  if (msg != WM_LAUFEY_COMMON_NOTIFICATION)
     return DefWindowProc(hwnd, msg, wp, lp);
 
   UINT uid = (UINT)wp;
@@ -174,17 +174,17 @@ LRESULT CALLBACK NotifWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   int reason = -1;
   if (event == NIN_BALLOONSHOW)
-    reason = WEF_NOTIFICATION_SHOWN;
+    reason = LAUFEY_NOTIFICATION_SHOWN;
   else if (event == NIN_BALLOONUSERCLICK)
-    reason = WEF_NOTIFICATION_CLICKED;
+    reason = LAUFEY_NOTIFICATION_CLICKED;
   else if (event == NIN_BALLOONHIDE || event == NIN_BALLOONTIMEOUT)
-    reason = WEF_NOTIFICATION_CLOSED;
+    reason = LAUFEY_NOTIFICATION_CLOSED;
   if (reason < 0)
     return 0;
-  wef_notification_event_fn fn = nullptr;
+  laufey_notification_event_fn fn = nullptr;
   void* user_data = nullptr;
-  bool is_terminal = (reason == WEF_NOTIFICATION_CLOSED ||
-                      reason == WEF_NOTIFICATION_CLICKED);
+  bool is_terminal = (reason == LAUFEY_NOTIFICATION_CLOSED ||
+                      reason == LAUFEY_NOTIFICATION_CLICKED);
   {
     std::lock_guard<std::mutex> lock(NotifMutex());
     auto it = NotifMap().find(nid);
@@ -222,7 +222,7 @@ HWND EnsureNotifMessageWindow() {
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = NotifWndProc;
   wc.hInstance = GetModuleHandleW(nullptr);
-  wc.lpszClassName = L"WefCommonNotifWindow";
+  wc.lpszClassName = L"LaufeyCommonNotifWindow";
   RegisterClassExW(&wc);
   g_notif_msg_hwnd =
       CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
@@ -245,7 +245,7 @@ std::wstring Utf8ToWide(const std::string& s) {
 }  // namespace
 
 uint32_t ShowNotificationWin(const NotificationOptions& opts,
-                             wef_notification_event_fn on_event,
+                             laufey_notification_event_fn on_event,
                              void* user_data) {
   // Tag-based replacement: drop any existing notification with the same tag.
   if (!opts.tag.empty()) {
@@ -300,7 +300,7 @@ uint32_t ShowNotificationWin(const NotificationOptions& opts,
   nd.hWnd = hwnd;
   nd.uID = uid;
   nd.uFlags = NIF_MESSAGE | NIF_ICON | NIF_INFO;
-  nd.uCallbackMessage = WM_WEF_COMMON_NOTIFICATION;
+  nd.uCallbackMessage = WM_LAUFEY_COMMON_NOTIFICATION;
   nd.hIcon = hicon;
   wcsncpy_s(nd.szInfoTitle, wtitle.c_str(), _TRUNCATE);
   wcsncpy_s(nd.szInfo, wbody.c_str(), _TRUNCATE);
@@ -328,7 +328,7 @@ uint32_t ShowNotificationWin(const NotificationOptions& opts,
 
 void CloseNotificationWin(uint32_t notification_id) {
   HWND hwnd = g_notif_msg_hwnd;
-  wef_notification_event_fn fn = nullptr;
+  laufey_notification_event_fn fn = nullptr;
   void* ud = nullptr;
   {
     std::lock_guard<std::mutex> lock(NotifMutex());
@@ -350,7 +350,7 @@ void CloseNotificationWin(uint32_t notification_id) {
     NotifMap().erase(it);
   }
   if (fn)
-    fn(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
+    fn(ud, notification_id, LAUFEY_NOTIFICATION_CLOSED, nullptr);
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

@@ -12,15 +12,15 @@
 #include "include/wrapper/cef_library_loader.h"
 #include "app.h"
 #include "runtime_loader.h"
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
-@interface WefApplication : NSApplication <CefAppProtocol> {
+@interface LaufeyApplication : NSApplication <CefAppProtocol> {
  @private
   BOOL handlingSendEvent_;
 }
 @end
 
-@implementation WefApplication
+@implementation LaufeyApplication
 - (BOOL)isHandlingSendEvent {
   return handlingSendEvent_;
 }
@@ -43,7 +43,7 @@
 }
 
 - (void)terminate:(id)sender {
-  WefHandler* handler = WefHandler::GetInstance();
+  LaufeyHandler* handler = LaufeyHandler::GetInstance();
   if (handler && !handler->IsClosing()) {
     handler->CloseAllBrowsers(false);
   }
@@ -51,12 +51,12 @@
 @end
 
 // Dock menu + reopen handler storage lives in backend-common
-// (wef_common::{Get,Set}DockMenuMac, {Set,Fire}DockReopenHandlerMac).
+// (laufey_common::{Get,Set}DockMenuMac, {Set,Fire}DockReopenHandlerMac).
 
-@interface WefAppDelegate : NSObject <NSApplicationDelegate>
+@interface LaufeyAppDelegate : NSObject <NSApplicationDelegate>
 @end
 
-@implementation WefAppDelegate
+@implementation LaufeyAppDelegate
 - (NSApplicationTerminateReply)applicationShouldTerminate:
     (NSApplication*)sender {
   return NSTerminateNow;
@@ -68,14 +68,14 @@
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender
                     hasVisibleWindows:(BOOL)hasVisibleWindows {
-  wef_common::FireDockReopenMac(hasVisibleWindows ? true : false);
+  laufey_common::FireDockReopenMac(hasVisibleWindows ? true : false);
   // Always swallow the default "show last hidden window" behavior — the
   // embedder's callback decides what to do.
   return NO;
 }
 
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
-  return wef_common::GetDockMenuMac();
+  return laufey_common::GetDockMenuMac();
 }
 @end
 
@@ -85,12 +85,12 @@
 // creation, notifications, etc. — never runs. Instead we enable
 // settings.external_message_pump and pump CefDoMessageLoopWork() from the main
 // NSRunLoop driven by [NSApp run], which DOES drain the main queue.
-@interface WefPumpTarget : NSObject
+@interface LaufeyPumpTarget : NSObject
 - (void)start;
 - (void)tick;
 @end
 
-@implementation WefPumpTarget {
+@implementation LaufeyPumpTarget {
   NSTimer* _timer;
   BOOL _working;
 }
@@ -115,9 +115,9 @@
 }
 @end
 
-static WefPumpTarget* g_pump = nil;
+static LaufeyPumpTarget* g_pump = nil;
 
-void WefApp::OnScheduleMessagePumpWork(int64_t delay_ms) {
+void LaufeyApp::OnScheduleMessagePumpWork(int64_t delay_ms) {
   // Nudge an immediate pump for snappier response; the steady timer guarantees
   // progress regardless.
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -126,7 +126,7 @@ void WefApp::OnScheduleMessagePumpWork(int64_t delay_ms) {
   });
 }
 
-void WefQuitMainLoopMac() {
+void LaufeyQuitMainLoopMac() {
   dispatch_async(dispatch_get_main_queue(), ^{
     [NSApp stop:nil];
     // [NSApp run] only returns after it dequeues one more event; nudge it.
@@ -217,7 +217,7 @@ static int run_headless(const char* runtimePath) {
   if (runtimePath) {
     path = runtimePath;
   } else {
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       path = envPath;
     }
@@ -294,15 +294,15 @@ int main(int argc, char* argv[]) {
     // process name for an exec'd, non-LaunchServices-registered bundle like
     // ours, so set it before the menu is built. Do this before
     // +sharedApplication so the first read already sees the new name.
-    if (const char* app_name = getenv("WEF_APP_NAME")) {
+    if (const char* app_name = getenv("LAUFEY_APP_NAME")) {
       if (*app_name) {
         [[NSProcessInfo processInfo]
             setProcessName:[NSString stringWithUTF8String:app_name]];
       }
     }
 
-    [WefApplication sharedApplication];
-    CHECK([NSApp isKindOfClass:[WefApplication class]]);
+    [LaufeyApplication sharedApplication];
+    CHECK([NSApp isKindOfClass:[LaufeyApplication class]]);
 
     // The bundle's CFBundleExecutable is a sh launcher that exec's this
     // binary, so LaunchServices doesn't auto-register us as a foreground
@@ -315,7 +315,7 @@ int main(int argc, char* argv[]) {
     // favicon during `deno desktop --hmr`). Setting it programmatically
     // bypasses LaunchServices' icon cache and the bundle's CFBundleIconFile,
     // both of which we can't rely on for the shared dev bundle.
-    if (const char* icon_path = getenv("WEF_APP_ICON")) {
+    if (const char* icon_path = getenv("LAUFEY_APP_ICON")) {
       NSString* path = [NSString stringWithUTF8String:icon_path];
       NSImage* icon = [[NSImage alloc] initWithContentsOfFile:path];
       if (icon) {
@@ -325,26 +325,26 @@ int main(int argc, char* argv[]) {
 
     CefSettings settings;
     settings.no_sandbox = true;
-    // Run [NSApp run] as the message loop (see WefPumpTarget) so the main
+    // Run [NSApp run] as the message loop (see LaufeyPumpTarget) so the main
     // libdispatch queue is serviced — required for tray/status items.
     settings.external_message_pump = true;
 
     std::string cache_path = std::string(NSTemporaryDirectory().UTF8String) +
-                             "wef_cef_" + std::to_string(getpid());
+                             "laufey_cef_" + std::to_string(getpid());
     CefString(&settings.root_cache_path) = cache_path;
 
-    if (const char* port_env = getenv("WEF_REMOTE_DEBUGGING_PORT")) {
+    if (const char* port_env = getenv("LAUFEY_REMOTE_DEBUGGING_PORT")) {
       int port = atoi(port_env);
       if (port > 0 && port < 65536) {
         settings.remote_debugging_port = port;
       }
     }
 
-    CefRefPtr<WefApp> app(new WefApp);
+    CefRefPtr<LaufeyApp> app(new LaufeyApp);
 
     // Must exist before CefInitialize so the first OnScheduleMessagePumpWork
     // (which kicks OnContextInitialized → runtime start) isn't dropped.
-    g_pump = [[WefPumpTarget alloc] init];
+    g_pump = [[LaufeyPumpTarget alloc] init];
 
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
       return CefGetExitCode();
@@ -354,7 +354,7 @@ int main(int argc, char* argv[]) {
 
     // NSApp.delegate is a weak property — keep a strong reference here so
     // the delegate isn't released immediately under ARC.
-    static WefAppDelegate* delegate = [[WefAppDelegate alloc] init];
+    static LaufeyAppDelegate* delegate = [[LaufeyAppDelegate alloc] init];
     NSApp.delegate = delegate;
 
     [NSApp activateIgnoringOtherApps:YES];

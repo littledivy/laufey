@@ -1,8 +1,8 @@
 # Backends
 
 A backend is the native executable that hosts a browser (or windowing) engine
-and implements the [C ABI](c-abi.md). wef ships three; a fourth is on a branch.
-All implement the same `wef_backend_api_t`, so a runtime is portable across them
+and implements the [C ABI](c-abi.md). laufey ships three; a fourth is on a branch.
+All implement the same `laufey_backend_api_t`, so a runtime is portable across them
 — the differences are in engine, process model, size, and a few features that a
 given engine can't express on a given OS (see
 [the feature pages](window-management.md)).

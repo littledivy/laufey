@@ -2,7 +2,7 @@
 
 #include "runtime_loader.h"
 #include "app.h"
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
@@ -104,7 +104,7 @@ static void Backend_SetTitle(void* data, uint32_t window_id,
 }
 
 static void Backend_ExecuteJs(void* data, uint32_t window_id,
-                              const char* script, wef_js_result_fn callback,
+                              const char* script, laufey_js_result_fn callback,
                               void* callback_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
@@ -132,7 +132,7 @@ static void Backend_ExecuteJs(void* data, uint32_t window_id,
               base::BindOnce(
                   [](CefRefPtr<CefBrowser> b, uint64_t id, std::string s) {
                     CefRefPtr<CefProcessMessage> msg =
-                        CefProcessMessage::Create("wef_eval");
+                        CefProcessMessage::Create("laufey_eval");
                     CefRefPtr<CefListValue> args = msg->GetArgumentList();
                     args->SetDouble(0, static_cast<double>(id));
                     args->SetString(1, s);
@@ -416,39 +416,39 @@ static void Backend_PostUiTask(void* data, void (*task)(void*),
   }
 }
 
-// --- CefValue <-> wef::Value conversion (IPC boundary only) ---
+// --- CefValue <-> laufey::Value conversion (IPC boundary only) ---
 //
 // Values cross the renderer<->browser process boundary as CefValue trees, but
-// the shared marshalling layer operates on wef::Value. Convert once on the way
+// the shared marshalling layer operates on laufey::Value. Convert once on the way
 // in (incoming JS args / eval results) and once on the way out (responses,
 // callback args). A JS function is encoded by the renderer as a dictionary
-// {"__callback__": "<id>"}; decode it to wef::Value::Callback so that
+// {"__callback__": "<id>"}; decode it to laufey::Value::Callback so that
 // value_is_callback works, matching the webview backend.
 
-static wef::ValuePtr CefValueToWef(CefRefPtr<CefValue> v) {
+static laufey::ValuePtr CefValueToLaufey(CefRefPtr<CefValue> v) {
   if (!v)
-    return wef::Value::Null();
+    return laufey::Value::Null();
   switch (v->GetType()) {
     case VTYPE_BOOL:
-      return wef::Value::Bool(v->GetBool());
+      return laufey::Value::Bool(v->GetBool());
     case VTYPE_INT:
-      return wef::Value::Int(v->GetInt());
+      return laufey::Value::Int(v->GetInt());
     case VTYPE_DOUBLE:
-      return wef::Value::Double(v->GetDouble());
+      return laufey::Value::Double(v->GetDouble());
     case VTYPE_STRING:
-      return wef::Value::String(v->GetString().ToString());
+      return laufey::Value::String(v->GetString().ToString());
     case VTYPE_BINARY: {
       CefRefPtr<CefBinaryValue> bin = v->GetBinary();
       std::vector<uint8_t> buf(bin->GetSize());
       if (!buf.empty())
         bin->GetData(buf.data(), buf.size(), 0);
-      return wef::Value::Binary(buf.data(), buf.size());
+      return laufey::Value::Binary(buf.data(), buf.size());
     }
     case VTYPE_LIST: {
       CefRefPtr<CefListValue> list = v->GetList();
-      auto out = wef::Value::List();
+      auto out = laufey::Value::List();
       for (size_t i = 0; i < list->GetSize(); ++i) {
-        out->GetList().push_back(CefValueToWef(list->GetValue(i)));
+        out->GetList().push_back(CefValueToLaufey(list->GetValue(i)));
       }
       return out;
     }
@@ -459,71 +459,71 @@ static wef::ValuePtr CefValueToWef(CefRefPtr<CefValue> v) {
         // std::stoull (which throws); strtoull returns 0 on a malformed id.
         std::string id = dict->GetString("__callback__").ToString();
         uint64_t cb_id = std::strtoull(id.c_str(), nullptr, 10);
-        return wef::Value::Callback(cb_id);
+        return laufey::Value::Callback(cb_id);
       }
-      auto out = wef::Value::Dict();
+      auto out = laufey::Value::Dict();
       CefDictionaryValue::KeyList keys;
       dict->GetKeys(keys);
       for (const auto& key : keys) {
-        out->GetDict()[key.ToString()] = CefValueToWef(dict->GetValue(key));
+        out->GetDict()[key.ToString()] = CefValueToLaufey(dict->GetValue(key));
       }
       return out;
     }
     case VTYPE_NULL:
     case VTYPE_INVALID:
     default:
-      return wef::Value::Null();
+      return laufey::Value::Null();
   }
 }
 
-static CefRefPtr<CefValue> WefToCefValue(const wef::ValuePtr& v) {
+static CefRefPtr<CefValue> LaufeyToCefValue(const laufey::ValuePtr& v) {
   CefRefPtr<CefValue> out = CefValue::Create();
   if (!v) {
     out->SetNull();
     return out;
   }
   switch (v->type) {
-    case wef::ValueType::Bool:
+    case laufey::ValueType::Bool:
       out->SetBool(v->GetBool());
       break;
-    case wef::ValueType::Int:
+    case laufey::ValueType::Int:
       out->SetInt(v->GetInt());
       break;
-    case wef::ValueType::Double:
+    case laufey::ValueType::Double:
       out->SetDouble(v->GetDouble());
       break;
-    case wef::ValueType::String:
+    case laufey::ValueType::String:
       out->SetString(v->GetString());
       break;
-    case wef::ValueType::Binary: {
+    case laufey::ValueType::Binary: {
       const auto& bin = v->GetBinary();
       out->SetBinary(CefBinaryValue::Create(bin.data.data(), bin.data.size()));
       break;
     }
-    case wef::ValueType::List: {
+    case laufey::ValueType::List: {
       CefRefPtr<CefListValue> list = CefListValue::Create();
       const auto& items = v->GetList();
       for (size_t i = 0; i < items.size(); ++i) {
-        list->SetValue(i, WefToCefValue(items[i]));
+        list->SetValue(i, LaufeyToCefValue(items[i]));
       }
       out->SetList(list);
       break;
     }
-    case wef::ValueType::Dict: {
+    case laufey::ValueType::Dict: {
       CefRefPtr<CefDictionaryValue> dict = CefDictionaryValue::Create();
       for (const auto& pair : v->GetDict()) {
-        dict->SetValue(pair.first, WefToCefValue(pair.second));
+        dict->SetValue(pair.first, LaufeyToCefValue(pair.second));
       }
       out->SetDictionary(dict);
       break;
     }
-    case wef::ValueType::Callback: {
+    case laufey::ValueType::Callback: {
       CefRefPtr<CefDictionaryValue> dict = CefDictionaryValue::Create();
       dict->SetString("__callback__", std::to_string(v->GetCallbackId()));
       out->SetDictionary(dict);
       break;
     }
-    case wef::ValueType::Null:
+    case laufey::ValueType::Null:
     default:
       out->SetNull();
       break;
@@ -531,13 +531,13 @@ static CefRefPtr<CefValue> WefToCefValue(const wef::ValuePtr& v) {
   return out;
 }
 
-// Build a CefListValue from a wef list value (empty list otherwise).
-static CefRefPtr<CefListValue> WefListToCef(const wef::ValuePtr& v) {
+// Build a CefListValue from a laufey list value (empty list otherwise).
+static CefRefPtr<CefListValue> LaufeyListToCef(const laufey::ValuePtr& v) {
   CefRefPtr<CefListValue> list = CefListValue::Create();
   if (v && v->IsList()) {
     const auto& items = v->GetList();
     for (size_t i = 0; i < items.size(); ++i) {
-      list->SetValue(i, WefToCefValue(items[i]));
+      list->SetValue(i, LaufeyToCefValue(items[i]));
     }
   }
   return list;
@@ -545,28 +545,28 @@ static CefRefPtr<CefListValue> WefListToCef(const wef::ValuePtr& v) {
 
 // --- JS call/callback handling ---
 
-static void Backend_SetJsCallHandler(void* data, wef_js_call_fn handler,
+static void Backend_SetJsCallHandler(void* data, laufey_js_call_fn handler,
                                      void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetJsCallHandler(handler, user_data);
 }
 
 static void Backend_JsCallRespond(void* data, uint64_t call_id,
-                                  wef_value_t* result, wef_value_t* error) {
+                                  laufey_value_t* result, laufey_value_t* error) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   uint32_t window_id = loader->ConsumeCallWindow(call_id);
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (!browser)
     return;
 
-  CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("wef_response");
+  CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("laufey_response");
   CefRefPtr<CefListValue> args = msg->GetArgumentList();
   // IDs are 64-bit; carry as double (exact to 2^53) since CefValue has no
   // int64.
   args->SetDouble(0, static_cast<double>(call_id));
 
   if (result && result->value) {
-    args->SetValue(1, WefToCefValue(result->value));
+    args->SetValue(1, LaufeyToCefValue(result->value));
   } else {
     CefRefPtr<CefValue> null_val = CefValue::Create();
     null_val->SetNull();
@@ -574,7 +574,7 @@ static void Backend_JsCallRespond(void* data, uint64_t call_id,
   }
 
   if (error && error->value) {
-    args->SetValue(2, WefToCefValue(error->value));
+    args->SetValue(2, LaufeyToCefValue(error->value));
   } else {
     CefRefPtr<CefValue> null_val = CefValue::Create();
     null_val->SetNull();
@@ -590,14 +590,14 @@ static void Backend_JsCallRespond(void* data, uint64_t call_id,
 }
 
 static void Backend_InvokeJsCallback(void* data, uint64_t callback_id,
-                                     wef_value_t* args) {
+                                     laufey_value_t* args) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
 
-  CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("wef_callback");
+  CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("laufey_callback");
   CefRefPtr<CefListValue> msgArgs = msg->GetArgumentList();
   msgArgs->SetDouble(0, static_cast<double>(callback_id));
 
-  msgArgs->SetList(1, WefListToCef(args ? args->value : nullptr));
+  msgArgs->SetList(1, LaufeyListToCef(args ? args->value : nullptr));
 
   loader->ForEachBrowser([&msg](CefRefPtr<CefBrowser> browser) {
     CefPostTask(
@@ -611,49 +611,49 @@ static void Backend_InvokeJsCallback(void* data, uint64_t callback_id,
 }
 
 static void Backend_SetKeyboardEventHandler(void* data,
-                                            wef_keyboard_event_fn handler,
+                                            laufey_keyboard_event_fn handler,
                                             void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetKeyboardEventHandler(handler, user_data);
 }
 
-static void Backend_SetMouseClickHandler(void* data, wef_mouse_click_fn handler,
+static void Backend_SetMouseClickHandler(void* data, laufey_mouse_click_fn handler,
                                          void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetMouseClickHandler(handler, user_data);
 }
 
-static void Backend_SetMouseMoveHandler(void* data, wef_mouse_move_fn handler,
+static void Backend_SetMouseMoveHandler(void* data, laufey_mouse_move_fn handler,
                                         void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetMouseMoveHandler(handler, user_data);
 }
 
-static void Backend_SetWheelHandler(void* data, wef_wheel_fn handler,
+static void Backend_SetWheelHandler(void* data, laufey_wheel_fn handler,
                                     void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetWheelHandler(handler, user_data);
 }
 
 static void Backend_SetCursorEnterLeaveHandler(
-    void* data, wef_cursor_enter_leave_fn handler, void* user_data) {
+    void* data, laufey_cursor_enter_leave_fn handler, void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetCursorEnterLeaveHandler(handler, user_data);
 }
 
-static void Backend_SetFocusedHandler(void* data, wef_focused_fn handler,
+static void Backend_SetFocusedHandler(void* data, laufey_focused_fn handler,
                                       void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetFocusedHandler(handler, user_data);
 }
 
-static void Backend_SetResizeHandler(void* data, wef_resize_fn handler,
+static void Backend_SetResizeHandler(void* data, laufey_resize_fn handler,
                                      void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetResizeHandler(handler, user_data);
 }
 
-static void Backend_SetMoveHandler(void* data, wef_move_fn handler,
+static void Backend_SetMoveHandler(void* data, laufey_move_fn handler,
                                    void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetMoveHandler(handler, user_data);
@@ -663,7 +663,7 @@ static void Backend_ReleaseJsCallback(void* data, uint64_t callback_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
 
   CefRefPtr<CefProcessMessage> msg =
-      CefProcessMessage::Create("wef_release_callback");
+      CefProcessMessage::Create("laufey_release_callback");
   CefRefPtr<CefListValue> msgArgs = msg->GetArgumentList();
   msgArgs->SetDouble(0, static_cast<double>(callback_id));
 
@@ -685,21 +685,21 @@ static void Backend_ReleaseJsCallback(void* data, uint64_t callback_id) {
 #include <win32_menu.h>
 
 static void Backend_SetApplicationMenu(void* data, uint32_t window_id,
-                                       wef_value_t* menu_template,
-                                       wef_menu_click_fn on_click,
+                                       laufey_value_t* menu_template,
+                                       laufey_menu_click_fn on_click,
                                        void* on_click_data) {
   if (!menu_template)
     return;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
 
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (browser) {
     CefPostTask(
         TID_UI,
         base::BindOnce(
-            [](CefRefPtr<CefBrowser> b, uint32_t wid, wef_value_t* tmpl,
-               const wef_backend_api_t* a, wef_menu_click_fn fn, void* d) {
+            [](CefRefPtr<CefBrowser> b, uint32_t wid, laufey_value_t* tmpl,
+               const laufey_backend_api_t* a, laufey_menu_click_fn fn, void* d) {
               HWND hwnd = b->GetHost()->GetWindowHandle();
               if (hwnd) {
                 win32_menu::SetApplicationMenu(hwnd, tmpl, a, fn, d, wid);
@@ -710,21 +710,21 @@ static void Backend_SetApplicationMenu(void* data, uint32_t window_id,
 }
 
 static void Backend_ShowContextMenu(void* data, uint32_t window_id, int x,
-                                    int y, wef_value_t* menu_template,
-                                    wef_menu_click_fn on_click,
+                                    int y, laufey_value_t* menu_template,
+                                    laufey_menu_click_fn on_click,
                                     void* on_click_data) {
   if (!menu_template)
     return;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
 
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (browser) {
     CefPostTask(TID_UI,
                 base::BindOnce(
                     [](CefRefPtr<CefBrowser> b, uint32_t wid, int cx, int cy,
-                       wef_value_t* tmpl, const wef_backend_api_t* a,
-                       wef_menu_click_fn fn, void* d) {
+                       laufey_value_t* tmpl, const laufey_backend_api_t* a,
+                       laufey_menu_click_fn fn, void* d) {
                       HWND hwnd = b->GetHost()->GetWindowHandle();
                       if (hwnd) {
                         win32_menu::ShowContextMenu(hwnd, cx, cy, tmpl, a, fn,
@@ -738,21 +738,21 @@ static void Backend_ShowContextMenu(void* data, uint32_t window_id, int x,
 #elif defined(__APPLE__)
 // Defined in runtime_loader_mac.mm
 extern void Backend_SetApplicationMenu_Mac(void* data, uint32_t window_id,
-                                           wef_value_t* menu_template,
-                                           wef_menu_click_fn on_click,
+                                           laufey_value_t* menu_template,
+                                           laufey_menu_click_fn on_click,
                                            void* on_click_data);
 extern void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x,
-                                        int y, wef_value_t* menu_template,
-                                        wef_menu_click_fn on_click,
+                                        int y, laufey_value_t* menu_template,
+                                        laufey_menu_click_fn on_click,
                                         void* on_click_data);
 extern void Backend_SetDockBadge_Mac(void* data, const char* badge_or_null);
 extern void Backend_BounceDock_Mac(void* data, int type);
-extern void Backend_SetDockMenu_Mac(void* data, wef_value_t* menu_template,
-                                    wef_menu_click_fn on_click,
+extern void Backend_SetDockMenu_Mac(void* data, laufey_value_t* menu_template,
+                                    laufey_menu_click_fn on_click,
                                     void* on_click_data);
 extern void Backend_SetDockVisible_Mac(void* data, bool visible);
 extern void Backend_SetDockReopenHandler_Mac(void* data,
-                                             wef_dock_reopen_fn handler,
+                                             laufey_dock_reopen_fn handler,
                                              void* user_data);
 
 extern uint32_t Backend_CreateTrayIcon_Mac(void* data);
@@ -762,34 +762,34 @@ extern void Backend_SetTrayIcon_Mac(void* data, uint32_t tray_id,
 extern void Backend_SetTrayTooltip_Mac(void* data, uint32_t tray_id,
                                        const char* tooltip_or_null);
 extern void Backend_SetTrayMenu_Mac(void* data, uint32_t tray_id,
-                                    wef_value_t* menu_template,
-                                    wef_menu_click_fn on_click,
+                                    laufey_value_t* menu_template,
+                                    laufey_menu_click_fn on_click,
                                     void* on_click_data);
 extern void Backend_SetTrayClickHandler_Mac(void* data, uint32_t tray_id,
-                                            wef_tray_click_fn handler,
+                                            laufey_tray_click_fn handler,
                                             void* user_data);
 extern void Backend_SetTrayDoubleClickHandler_Mac(void* data, uint32_t tray_id,
-                                                  wef_tray_click_fn handler,
+                                                  laufey_tray_click_fn handler,
                                                   void* user_data);
 extern void Backend_SetTrayIconDark_Mac(void* data, uint32_t tray_id,
                                         const void* png_bytes, size_t len);
 extern bool Backend_GetTrayIconBounds_Mac(void* data, uint32_t tray_id, int* x,
                                           int* y, int* width, int* height);
-extern uint32_t Backend_ShowNotification_Mac(void* data, wef_value_t* options,
-                                             wef_notification_event_fn on_event,
+extern uint32_t Backend_ShowNotification_Mac(void* data, laufey_value_t* options,
+                                             laufey_notification_event_fn on_event,
                                              void* user_data);
 extern void Backend_CloseNotification_Mac(void* data, uint32_t notification_id);
 extern void Backend_QueryPermission_Mac(void* data, int kind,
-                                        wef_permission_callback_fn cb,
+                                        laufey_permission_callback_fn cb,
                                         void* user_data);
 extern void Backend_RequestPermission_Mac(void* data, int kind,
-                                          wef_permission_callback_fn cb,
+                                          laufey_permission_callback_fn cb,
                                           void* user_data);
 #elif defined(__linux__)
 // Defined in runtime_loader_linux.cc
 extern void Backend_ShowContextMenu_Linux(void* data, uint32_t window_id, int x,
-                                          int y, wef_value_t* menu_template,
-                                          wef_menu_click_fn on_click,
+                                          int y, laufey_value_t* menu_template,
+                                          laufey_menu_click_fn on_click,
                                           void* on_click_data);
 extern uint32_t Backend_CreateTrayIcon_Linux(void* data);
 extern void Backend_DestroyTrayIcon_Linux(void* data, uint32_t tray_id);
@@ -798,20 +798,20 @@ extern void Backend_SetTrayIcon_Linux(void* data, uint32_t tray_id,
 extern void Backend_SetTrayTooltip_Linux(void* data, uint32_t tray_id,
                                          const char* tooltip_or_null);
 extern void Backend_SetTrayMenu_Linux(void* data, uint32_t tray_id,
-                                      wef_value_t* menu_template,
-                                      wef_menu_click_fn on_click,
+                                      laufey_value_t* menu_template,
+                                      laufey_menu_click_fn on_click,
                                       void* on_click_data);
 extern void Backend_SetTrayClickHandler_Linux(void* data, uint32_t tray_id,
-                                              wef_tray_click_fn handler,
+                                              laufey_tray_click_fn handler,
                                               void* user_data);
 extern void Backend_SetTrayDoubleClickHandler_Linux(void* data,
                                                     uint32_t tray_id,
-                                                    wef_tray_click_fn handler,
+                                                    laufey_tray_click_fn handler,
                                                     void* user_data);
 extern void Backend_SetTrayIconDark_Linux(void* data, uint32_t tray_id,
                                           const void* png_bytes, size_t len);
 extern "C" uint32_t Backend_ShowNotification_Linux(
-    void* data, wef_value_t* options, wef_notification_event_fn on_event,
+    void* data, laufey_value_t* options, laufey_notification_event_fn on_event,
     void* user_data);
 extern "C" void Backend_CloseNotification_Linux(void* data,
                                                 uint32_t notification_id);
@@ -821,18 +821,18 @@ extern "C" void Backend_CloseNotification_Linux(void* data,
 //
 // macOS routes to UNUserNotificationCenter (see runtime_loader_mac.mm).
 // Windows + Linux permission stubs live in backend-common
-// (wef_common::QueryPermissionStub / RequestPermissionStub).
+// (laufey_common::QueryPermissionStub / RequestPermissionStub).
 #if !defined(__APPLE__)
 static void Backend_QueryPermission_Stub(void* /*data*/, int kind,
-                                         wef_permission_callback_fn cb,
+                                         laufey_permission_callback_fn cb,
                                          void* user_data) {
-  wef_common::QueryPermissionStub(kind, cb, user_data);
+  laufey_common::QueryPermissionStub(kind, cb, user_data);
 }
 
 static void Backend_RequestPermission_Stub(void* /*data*/, int kind,
-                                           wef_permission_callback_fn cb,
+                                           laufey_permission_callback_fn cb,
                                            void* user_data) {
-  wef_common::RequestPermissionStub(kind, cb, user_data);
+  laufey_common::RequestPermissionStub(kind, cb, user_data);
 }
 #endif
 
@@ -840,8 +840,8 @@ static void Backend_RequestPermission_Stub(void* /*data*/, int kind,
 //
 // The dock is a macOS concept; on Windows the analog is the taskbar button
 // (per-window), and on Linux it's the WM urgency hint. Bounce maps cleanly:
-//   - Windows: FlashWindowEx on every WEF window's HWND.
-//   - Linux:   X11 UrgencyHint on every WEF window's X11 Window.
+//   - Windows: FlashWindowEx on every LAUFEY window's HWND.
+//   - Linux:   X11 UrgencyHint on every LAUFEY window's X11 Window.
 // Badge is implemented as a `"(N) " prefix on each window's title — the
 // convention used by Slack/Discord/Telegram. If user code updates the title
 // while a badge is active, the badge falls off (best-effort v1; proper
@@ -882,7 +882,7 @@ static void Backend_SetDockBadge_TitlePrefix(void* data,
                         return;
                       std::string current = win->GetTitle().ToString();
                       std::string next =
-                          wef_common::ApplyTitlePrefixBadge(wid, current, bg);
+                          laufey_common::ApplyTitlePrefixBadge(wid, current, bg);
                       win->SetTitle(next);
                     },
                     wid, browser, badge));
@@ -908,7 +908,7 @@ static void Backend_BounceDock_Win(void* data, int type) {
                                 return;
                               FLASHWINFO fi = {sizeof(FLASHWINFO), hwnd, 0, 0,
                                                0};
-                              if (t == WEF_DOCK_BOUNCE_CRITICAL) {
+                              if (t == LAUFEY_DOCK_BOUNCE_CRITICAL) {
                                 fi.dwFlags = FLASHW_ALL | FLASHW_TIMER;
                                 fi.uCount = 0;
                               } else {
@@ -935,10 +935,10 @@ uint32_t Backend_CreateTrayIcon_Win(void* /*data*/) {
   // Allocate the id synchronously; do the Shell_NotifyIcon setup on the
   // UI thread so the message-only window is owned by the thread that
   // pumps messages for it.
-  uint32_t tray_id = wef_common::CreateTrayIconWin();
+  uint32_t tray_id = laufey_common::CreateTrayIconWin();
   CefPostTask(
       TID_UI,
-      base::BindOnce([](uint32_t tid) { wef_common::FinalizeTrayIconWin(tid); },
+      base::BindOnce([](uint32_t tid) { laufey_common::FinalizeTrayIconWin(tid); },
                      tray_id));
   return tray_id;
 }
@@ -946,7 +946,7 @@ uint32_t Backend_CreateTrayIcon_Win(void* /*data*/) {
 void Backend_DestroyTrayIcon_Win(void* /*data*/, uint32_t tray_id) {
   CefPostTask(
       TID_UI,
-      base::BindOnce([](uint32_t tid) { wef_common::DestroyTrayIconWin(tid); },
+      base::BindOnce([](uint32_t tid) { laufey_common::DestroyTrayIconWin(tid); },
                      tray_id));
 }
 
@@ -957,7 +957,7 @@ void Backend_SetTrayIcon_Win(void* /*data*/, uint32_t tray_id,
   std::vector<BYTE> copy((const BYTE*)png_bytes, (const BYTE*)png_bytes + len);
   CefPostTask(TID_UI, base::BindOnce(
                           [](uint32_t tid, std::vector<BYTE> b) {
-                            wef_common::SetTrayIconWin(tid, b.data(), b.size());
+                            laufey_common::SetTrayIconWin(tid, b.data(), b.size());
                           },
                           tray_id, std::move(copy)));
 }
@@ -970,7 +970,7 @@ void Backend_SetTrayIconDark_Win(void* /*data*/, uint32_t tray_id,
   }
   CefPostTask(TID_UI, base::BindOnce(
                           [](uint32_t tid, std::vector<BYTE> b) {
-                            wef_common::SetTrayIconDarkWin(
+                            laufey_common::SetTrayIconDarkWin(
                                 tid, b.empty() ? nullptr : b.data(), b.size());
                           },
                           tray_id, std::move(copy)));
@@ -982,17 +982,17 @@ bool Backend_GetTrayIconBounds_Win(void* /*data*/, uint32_t tray_id, int* x,
   // thread, so query synchronously there.
   bool ok = false;
   cef_invoke_sync([&] {
-    ok = wef_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
+    ok = laufey_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
   });
   return ok;
 }
 
 void Backend_SetTrayDoubleClickHandler_Win(void* /*data*/, uint32_t tray_id,
-                                           wef_tray_click_fn handler,
+                                           laufey_tray_click_fn handler,
                                            void* user_data) {
   CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid, wef_tray_click_fn h, void* d) {
-                            wef_common::SetTrayDoubleClickHandlerWin(tid, h, d);
+                          [](uint32_t tid, laufey_tray_click_fn h, void* d) {
+                            laufey_common::SetTrayDoubleClickHandlerWin(tid, h, d);
                           },
                           tray_id, handler, user_data));
 }
@@ -1002,33 +1002,33 @@ void Backend_SetTrayTooltip_Win(void* /*data*/, uint32_t tray_id,
   std::string tip = tooltip_or_null ? tooltip_or_null : std::string();
   CefPostTask(TID_UI, base::BindOnce(
                           [](uint32_t tid, std::string t) {
-                            wef_common::SetTrayTooltipWin(
+                            laufey_common::SetTrayTooltipWin(
                                 tid, t.empty() ? nullptr : t.c_str());
                           },
                           tray_id, std::move(tip)));
 }
 
 void Backend_SetTrayMenu_Win(void* data, uint32_t tray_id,
-                             wef_value_t* menu_template,
-                             wef_menu_click_fn on_click, void* on_click_data) {
+                             laufey_value_t* menu_template,
+                             laufey_menu_click_fn on_click, void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
   CefPostTask(
       TID_UI,
       base::BindOnce(
-          [](uint32_t tid, wef_value_t* tmpl, const wef_backend_api_t* a,
-             wef_menu_click_fn cb, void* cb_data) {
-            wef_common::SetTrayMenuWin(tid, tmpl, a, cb, cb_data);
+          [](uint32_t tid, laufey_value_t* tmpl, const laufey_backend_api_t* a,
+             laufey_menu_click_fn cb, void* cb_data) {
+            laufey_common::SetTrayMenuWin(tid, tmpl, a, cb, cb_data);
           },
           tray_id, menu_template, api, on_click, on_click_data));
 }
 
 void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
-                                     wef_tray_click_fn handler,
+                                     laufey_tray_click_fn handler,
                                      void* user_data) {
   CefPostTask(TID_UI, base::BindOnce(
-                          [](uint32_t tid, wef_tray_click_fn h, void* d) {
-                            wef_common::SetTrayClickHandlerWin(tid, h, d);
+                          [](uint32_t tid, laufey_tray_click_fn h, void* d) {
+                            laufey_common::SetTrayClickHandlerWin(tid, h, d);
                           },
                           tray_id, handler, user_data));
 }
@@ -1037,18 +1037,18 @@ void Backend_SetTrayClickHandler_Win(void* /*data*/, uint32_t tray_id,
 //
 // Thin trampolines over backend-common/src/notifications_win.cc.
 
-static uint32_t Backend_ShowNotification_Win(void* data, wef_value_t* options,
-                                             wef_notification_event_fn on_event,
+static uint32_t Backend_ShowNotification_Win(void* data, laufey_value_t* options,
+                                             laufey_notification_event_fn on_event,
                                              void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  wef_common::NotificationOptions opts =
-      wef_common::ParseNotificationOptions(options, &loader->GetBackendApi());
-  return wef_common::ShowNotificationWin(opts, on_event, user_data);
+  laufey_common::NotificationOptions opts =
+      laufey_common::ParseNotificationOptions(options, &loader->GetBackendApi());
+  return laufey_common::ShowNotificationWin(opts, on_event, user_data);
 }
 
 static void Backend_CloseNotification_Win(void* /*data*/,
                                           uint32_t notification_id) {
-  wef_common::CloseNotificationWin(notification_id);
+  laufey_common::CloseNotificationWin(notification_id);
 }
 
 #elif defined(__linux__)
@@ -1061,7 +1061,7 @@ static void Backend_CloseNotification_Win(void* /*data*/,
 
 static void Backend_BounceDock_Linux(void* data, int /*type*/) {
   // X11 urgency hint is binary — there's no informational vs critical. Set
-  // it on every WEF window; WMs will surface this (taskbar flash, workspace
+  // it on every LAUFEY window; WMs will surface this (taskbar flash, workspace
   // indicator, etc.).
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->ForEachBrowser([](CefRefPtr<CefBrowser> browser) {
@@ -1128,27 +1128,27 @@ static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
   CefPostTask(TID_UI,
               base::BindOnce(
                   [](uint32_t wid, uint32_t window_flags) {
-                    auto* handler = WefHandler::GetInstance();
+                    auto* handler = LaufeyHandler::GetInstance();
                     if (!handler)
                       return;
 
-                    // Push wef_id before creating the browser so
+                    // Push laufey_id before creating the browser so
                     // OnAfterCreated can pop it. Both run on the UI
                     // thread so no race.
-                    g_pending_wef_ids.push(wid);
+                    g_pending_laufey_ids.push(wid);
 
                     CefBrowserSettings browser_settings;
                     CefRefPtr<CefDictionaryValue> extra_info =
                         CefDictionaryValue::Create();
                     extra_info->SetString(
-                        "wef_js_namespace",
+                        "laufey_js_namespace",
                         RuntimeLoader::GetInstance()->GetJsNamespace());
                     CefRefPtr<CefBrowserView> browser_view =
                         CefBrowserView::CreateBrowserView(
                             handler, "about:blank", browser_settings,
                             extra_info, nullptr, nullptr);
                     CefWindow::CreateTopLevelWindow(
-                        new WefWindowDelegate(browser_view, wid, window_flags));
+                        new LaufeyWindowDelegate(browser_view, wid, window_flags));
                   },
                   window_id, flags));
 
@@ -1180,7 +1180,7 @@ static void Backend_CloseWindow(void* data, uint32_t window_id) {
 }
 
 static void Backend_SetCloseRequestedHandler(void* data,
-                                             wef_close_requested_fn handler,
+                                             laufey_close_requested_fn handler,
                                              void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetCloseRequestedHandler(handler, user_data);
@@ -1194,13 +1194,13 @@ static int Backend_ShowDialog(void* /*data*/, uint32_t /*window_id*/,
   std::string message_str = message ? message : "";
   std::string default_str = default_value ? default_value : "";
 #ifdef __APPLE__
-  return wef_common::ShowDialogMac(dialog_type, title_str, message_str,
+  return laufey_common::ShowDialogMac(dialog_type, title_str, message_str,
                                    default_str, out_input_value);
 #elif defined(__linux__)
-  return wef_common::ShowDialogLinux(dialog_type, title_str, message_str,
+  return laufey_common::ShowDialogLinux(dialog_type, title_str, message_str,
                                      default_str, out_input_value);
 #elif defined(_WIN32)
-  return wef_common::ShowDialogWin(dialog_type, title_str, message_str,
+  return laufey_common::ShowDialogWin(dialog_type, title_str, message_str,
                                    default_str, out_input_value);
 #else
   (void)out_input_value;
@@ -1215,7 +1215,7 @@ static void Backend_StringFree(void* /*data*/, char* s) {
 
 void RuntimeLoader::InitializeBackendApi() {
   memset(&backend_api_, 0, sizeof(backend_api_));
-  backend_api_.version = WEF_API_VERSION;
+  backend_api_.version = LAUFEY_API_VERSION;
   backend_api_.backend_data = this;
 
   backend_api_.create_window = Backend_CreateWindow;
@@ -1240,7 +1240,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.focus = Backend_Focus;
   backend_api_.post_ui_task = Backend_PostUiTask;
 
-  wef_register_value_api(&backend_api_);
+  laufey_register_value_api(&backend_api_);
 
   backend_api_.set_js_call_handler = Backend_SetJsCallHandler;
   backend_api_.js_call_respond = Backend_JsCallRespond;
@@ -1256,15 +1256,15 @@ void RuntimeLoader::InitializeBackendApi() {
   };
 #if defined(_WIN32)
   backend_api_.get_window_handle_type = [](void*, uint32_t) -> int {
-    return WEF_WINDOW_HANDLE_WIN32;
+    return LAUFEY_WINDOW_HANDLE_WIN32;
   };
 #elif defined(__APPLE__)
   backend_api_.get_window_handle_type = [](void*, uint32_t) -> int {
-    return WEF_WINDOW_HANDLE_APPKIT;
+    return LAUFEY_WINDOW_HANDLE_APPKIT;
   };
 #else
   backend_api_.get_window_handle_type = [](void*, uint32_t) -> int {
-    return WEF_WINDOW_HANDLE_X11;
+    return LAUFEY_WINDOW_HANDLE_X11;
   };
 #endif
 
@@ -1304,8 +1304,8 @@ void RuntimeLoader::InitializeBackendApi() {
   // host — and that path breaks on XWayland (cross-client X11 child
   // windows aren't supported in Wayland-native ways). Context menus and
   // tray menus still work because GtkMenu popups don't need a GtkWindow.
-  backend_api_.set_application_menu = [](void*, uint32_t, wef_value_t*,
-                                         wef_menu_click_fn, void*) {};
+  backend_api_.set_application_menu = [](void*, uint32_t, laufey_value_t*,
+                                         laufey_menu_click_fn, void*) {};
   backend_api_.show_context_menu = Backend_ShowContextMenu_Linux;
 #endif
 
@@ -1426,26 +1426,26 @@ bool RuntimeLoader::Load(const std::string& path) {
     return false;
   }
 
-  init_fn_ = reinterpret_cast<wef_runtime_init_fn>(
-      dlsym(library_handle_, WEF_RUNTIME_INIT_SYMBOL));
+  init_fn_ = reinterpret_cast<laufey_runtime_init_fn>(
+      dlsym(library_handle_, LAUFEY_RUNTIME_INIT_SYMBOL));
   if (!init_fn_) {
-    std::cerr << "Failed to find " << WEF_RUNTIME_INIT_SYMBOL << ": "
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_INIT_SYMBOL << ": "
               << dlerror() << std::endl;
     return false;
   }
 
-  start_fn_ = reinterpret_cast<wef_runtime_start_fn>(
-      dlsym(library_handle_, WEF_RUNTIME_START_SYMBOL));
+  start_fn_ = reinterpret_cast<laufey_runtime_start_fn>(
+      dlsym(library_handle_, LAUFEY_RUNTIME_START_SYMBOL));
   if (!start_fn_) {
-    std::cerr << "Failed to find " << WEF_RUNTIME_START_SYMBOL << ": "
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_START_SYMBOL << ": "
               << dlerror() << std::endl;
     return false;
   }
 
-  shutdown_fn_ = reinterpret_cast<wef_runtime_shutdown_fn>(
-      dlsym(library_handle_, WEF_RUNTIME_SHUTDOWN_SYMBOL));
+  shutdown_fn_ = reinterpret_cast<laufey_runtime_shutdown_fn>(
+      dlsym(library_handle_, LAUFEY_RUNTIME_SHUTDOWN_SYMBOL));
   if (!shutdown_fn_) {
-    std::cerr << "Failed to find " << WEF_RUNTIME_SHUTDOWN_SYMBOL << ": "
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_SHUTDOWN_SYMBOL << ": "
               << dlerror() << std::endl;
     return false;
   }
@@ -1457,24 +1457,24 @@ bool RuntimeLoader::Load(const std::string& path) {
     return false;
   }
 
-  init_fn_ = reinterpret_cast<wef_runtime_init_fn>(GetProcAddress(
-      static_cast<HMODULE>(library_handle_), WEF_RUNTIME_INIT_SYMBOL));
+  init_fn_ = reinterpret_cast<laufey_runtime_init_fn>(GetProcAddress(
+      static_cast<HMODULE>(library_handle_), LAUFEY_RUNTIME_INIT_SYMBOL));
   if (!init_fn_) {
-    std::cerr << "Failed to find " << WEF_RUNTIME_INIT_SYMBOL << std::endl;
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_INIT_SYMBOL << std::endl;
     return false;
   }
 
-  start_fn_ = reinterpret_cast<wef_runtime_start_fn>(GetProcAddress(
-      static_cast<HMODULE>(library_handle_), WEF_RUNTIME_START_SYMBOL));
+  start_fn_ = reinterpret_cast<laufey_runtime_start_fn>(GetProcAddress(
+      static_cast<HMODULE>(library_handle_), LAUFEY_RUNTIME_START_SYMBOL));
   if (!start_fn_) {
-    std::cerr << "Failed to find " << WEF_RUNTIME_START_SYMBOL << std::endl;
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_START_SYMBOL << std::endl;
     return false;
   }
 
-  shutdown_fn_ = reinterpret_cast<wef_runtime_shutdown_fn>(GetProcAddress(
-      static_cast<HMODULE>(library_handle_), WEF_RUNTIME_SHUTDOWN_SYMBOL));
+  shutdown_fn_ = reinterpret_cast<laufey_runtime_shutdown_fn>(GetProcAddress(
+      static_cast<HMODULE>(library_handle_), LAUFEY_RUNTIME_SHUTDOWN_SYMBOL));
   if (!shutdown_fn_) {
-    std::cerr << "Failed to find " << WEF_RUNTIME_SHUTDOWN_SYMBOL << std::endl;
+    std::cerr << "Failed to find " << LAUFEY_RUNTIME_SHUTDOWN_SYMBOL << std::endl;
     return false;
   }
 #endif
@@ -1538,11 +1538,11 @@ void RuntimeLoader::HandleEvalResult(uint64_t eval_id,
   }
 
   if (!error.empty()) {
-    wef_value errWef(wef::Value::String(error));
-    eval.callback(nullptr, &errWef, eval.callback_data);
+    laufey_value errLaufey(laufey::Value::String(error));
+    eval.callback(nullptr, &errLaufey, eval.callback_data);
   } else if (result && result->GetType() != VTYPE_NULL) {
-    wef_value resultWef(CefValueToWef(result));
-    eval.callback(&resultWef, nullptr, eval.callback_data);
+    laufey_value resultLaufey(CefValueToLaufey(result));
+    eval.callback(&resultLaufey, nullptr, eval.callback_data);
   } else {
     eval.callback(nullptr, nullptr, eval.callback_data);
   }
@@ -1581,7 +1581,7 @@ void RuntimeLoader::PollPendingJsCalls() {
   if (calls.empty())
     return;
 
-  wef_js_call_fn handler;
+  laufey_js_call_fn handler;
   void* user_data;
   {
     std::lock_guard<std::mutex> lock(handler_mutex_);
@@ -1593,12 +1593,12 @@ void RuntimeLoader::PollPendingJsCalls() {
     if (handler) {
       CefRefPtr<CefValue> argsValue = CefValue::Create();
       argsValue->SetList(call.args);
-      wef_value_t* argsWrapper = new wef_value(CefValueToWef(argsValue));
+      laufey_value_t* argsWrapper = new laufey_value(CefValueToLaufey(argsValue));
       handler(user_data, call.window_id, call.call_id, call.method_path.c_str(),
               argsWrapper);
     } else {
-      wef_value_t errWrapper(
-          wef::Value::String("No JS call handler registered"));
+      laufey_value_t errWrapper(
+          laufey::Value::String("No JS call handler registered"));
       Backend_JsCallRespond(this, call.call_id, nullptr, &errWrapper);
     }
   }

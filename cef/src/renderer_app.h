@@ -1,23 +1,23 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#ifndef WEF_RENDERER_APP_H_
-#define WEF_RENDERER_APP_H_
+#ifndef LAUFEY_RENDERER_APP_H_
+#define LAUFEY_RENDERER_APP_H_
 
 #include "include/cef_app.h"
 #include "render_process_handler.h"
 
-class WefRendererApp : public CefApp {
+class LaufeyRendererApp : public CefApp {
  public:
-  WefRendererApp();
+  LaufeyRendererApp();
 
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
     return render_handler_;
   }
 
  private:
-  CefRefPtr<WefRenderProcessHandler> render_handler_;
+  CefRefPtr<LaufeyRenderProcessHandler> render_handler_;
 
-  IMPLEMENT_REFCOUNTING(WefRendererApp);
+  IMPLEMENT_REFCOUNTING(LaufeyRendererApp);
 };
 
 #endif

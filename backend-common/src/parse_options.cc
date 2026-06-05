@@ -1,14 +1,14 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
-std::string ReadDictString(const wef_backend_api_t* api, wef_value_t* dict,
+std::string ReadDictString(const laufey_backend_api_t* api, laufey_value_t* dict,
                            const char* key) {
-  wef_value_t* v = api->value_dict_get(dict, key);
+  laufey_value_t* v = api->value_dict_get(dict, key);
   if (!v || !api->value_is_string(v))
     return std::string();
   size_t len = 0;
@@ -20,9 +20,9 @@ std::string ReadDictString(const wef_backend_api_t* api, wef_value_t* dict,
   return out;
 }
 
-bool ReadDictBool(const wef_backend_api_t* api, wef_value_t* dict,
+bool ReadDictBool(const laufey_backend_api_t* api, laufey_value_t* dict,
                   const char* key, bool dfl) {
-  wef_value_t* v = api->value_dict_get(dict, key);
+  laufey_value_t* v = api->value_dict_get(dict, key);
   if (!v || !api->value_is_bool(v))
     return dfl;
   return api->value_get_bool(v);
@@ -30,8 +30,8 @@ bool ReadDictBool(const wef_backend_api_t* api, wef_value_t* dict,
 
 }  // namespace
 
-NotificationOptions ParseNotificationOptions(wef_value_t* options,
-                                             const wef_backend_api_t* api) {
+NotificationOptions ParseNotificationOptions(laufey_value_t* options,
+                                             const laufey_backend_api_t* api) {
   NotificationOptions opts;
   if (!options)
     return opts;
@@ -47,12 +47,12 @@ NotificationOptions ParseNotificationOptions(wef_value_t* options,
   opts.require_interaction =
       ReadDictBool(api, options, "require_interaction", false);
 
-  wef_value_t* actions_val = api->value_dict_get(options, "actions");
+  laufey_value_t* actions_val = api->value_dict_get(options, "actions");
   if (actions_val && api->value_is_list(actions_val)) {
     size_t n = api->value_list_size(actions_val);
     opts.actions.reserve(n);
     for (size_t i = 0; i < n; ++i) {
-      wef_value_t* a = api->value_list_get(actions_val, i);
+      laufey_value_t* a = api->value_list_get(actions_val, i);
       if (!a || !api->value_is_dict(a))
         continue;
       NotificationAction act;
@@ -63,7 +63,7 @@ NotificationOptions ParseNotificationOptions(wef_value_t* options,
     }
   }
 
-  wef_value_t* icon_val = api->value_dict_get(options, "icon");
+  laufey_value_t* icon_val = api->value_dict_get(options, "icon");
   if (icon_val && api->value_is_binary(icon_val)) {
     size_t len = 0;
     const void* ptr = api->value_get_binary(icon_val, &len);
@@ -77,4 +77,4 @@ NotificationOptions ParseNotificationOptions(wef_value_t* options,
   return opts;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

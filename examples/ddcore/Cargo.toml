@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-just-wef = { path = "../../capi" }
+laufey = { path = "../../capi" }
 deno_core = "0.382"
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }
 serde = { version = "1", features = ["derive"] }

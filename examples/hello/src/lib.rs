@@ -1,9 +1,9 @@
-use just_wef::{DockBounceType, MenuItem, Value, Window};
+use laufey::{DockBounceType, MenuItem, Value, Window};
 
 fn hello_main() {
   let rt = tokio::runtime::Runtime::new().unwrap();
   rt.block_on(async {
-    just_wef::on_dock_reopen(|has_visible| {
+    laufey::on_dock_reopen(|has_visible| {
       println!("dock reopen fired; has_visible_windows = {}", has_visible);
     });
 
@@ -11,7 +11,7 @@ fn hello_main() {
     // let _tray = ...;
 
     let _win = Window::new(800, 600)
-      .title("WEF - Bindings Demo")
+      .title("LAUFEY - Bindings Demo")
       .bind("greet", |call| {
         let name = call
           .args
@@ -28,14 +28,14 @@ fn hello_main() {
       })
       .bind("getInfo", |call| {
         let mut info = std::collections::HashMap::new();
-        info.insert("name".to_string(), Value::String("WEF".to_string()));
+        info.insert("name".to_string(), Value::String("LAUFEY".to_string()));
         info.insert("version".to_string(), Value::String("0.1.0".to_string()));
         info.insert("rust".to_string(), Value::Bool(true));
         call.resolve(Value::Dict(info));
       })
       .bind("setDockBadge", |call| {
         let text = call.args.first().and_then(|v| v.as_string());
-        just_wef::set_dock_badge(text);
+        laufey::set_dock_badge(text);
         call.resolve(Value::Null);
       })
       .bind("bounceDock", |call| {
@@ -44,7 +44,7 @@ fn hello_main() {
           .first()
           .and_then(|v| v.as_bool())
           .unwrap_or(false);
-        just_wef::bounce_dock(if critical {
+        laufey::bounce_dock(if critical {
           DockBounceType::Critical
         } else {
           DockBounceType::Informational
@@ -57,7 +57,7 @@ fn hello_main() {
           .first()
           .and_then(|v| v.as_bool())
           .unwrap_or(true);
-        just_wef::set_dock_visible(visible);
+        laufey::set_dock_visible(visible);
         call.resolve(Value::Null);
       })
       .bind("setDockMenu", |call| {
@@ -76,7 +76,7 @@ fn hello_main() {
             enabled: true,
           },
         ];
-        just_wef::set_dock_menu(&items, |id| {
+        laufey::set_dock_menu(&items, |id| {
           println!("dock menu clicked: {}", id);
         });
         call.resolve(Value::Null);
@@ -86,7 +86,7 @@ fn hello_main() {
 <html>
 <head>
     <meta charset="utf-8">
-    <title>WEF hello example</title>
+    <title>LAUFEY hello example</title>
     <style>
         body {
             font-family: system-ui, -apple-system, sans-serif;
@@ -120,23 +120,23 @@ fn hello_main() {
     </style>
 </head>
 <body>
-    <h1>WEF Bindings</h1>
+    <h1>LAUFEY Bindings</h1>
     <p>Call Rust functions from JavaScript:</p>
     <div>
-        <button onclick="testGreet()">Wef.greet("Alice")</button>
-        <button onclick="testAdd()">Wef.add(10, 25)</button>
-        <button onclick="testInfo()">Wef.getInfo()</button>
-        <button onclick="testUnknown()">Wef.unknown()</button>
+        <button onclick="testGreet()">Laufey.greet("Alice")</button>
+        <button onclick="testAdd()">Laufey.add(10, 25)</button>
+        <button onclick="testInfo()">Laufey.getInfo()</button>
+        <button onclick="testUnknown()">Laufey.unknown()</button>
     </div>
     <h2>Dock / Taskbar</h2>
     <div>
-        <button onclick="Wef.setDockBadge('3')">Badge "3"</button>
-        <button onclick="Wef.setDockBadge('')">Clear Badge</button>
-        <button onclick="Wef.bounceDock(false)">Bounce</button>
-        <button onclick="Wef.bounceDock(true)">Bounce (Critical)</button>
-        <button onclick="Wef.setDockMenu()">Set Dock Menu</button>
-        <button onclick="Wef.setDockVisible(false)">Hide from Dock</button>
-        <button onclick="Wef.setDockVisible(true)">Show in Dock</button>
+        <button onclick="Laufey.setDockBadge('3')">Badge "3"</button>
+        <button onclick="Laufey.setDockBadge('')">Clear Badge</button>
+        <button onclick="Laufey.bounceDock(false)">Bounce</button>
+        <button onclick="Laufey.bounceDock(true)">Bounce (Critical)</button>
+        <button onclick="Laufey.setDockMenu()">Set Dock Menu</button>
+        <button onclick="Laufey.setDockVisible(false)">Hide from Dock</button>
+        <button onclick="Laufey.setDockVisible(true)">Show in Dock</button>
     </div>
     <pre id="output">Click a button to test...</pre>
     <script>
@@ -146,25 +146,25 @@ fn hello_main() {
         }
         async function testGreet() {
             try {
-                const result = await Wef.greet('Alice');
+                const result = await Laufey.greet('Alice');
                 log('greet: ' + result);
             } catch(e) { log('Error: ' + e.message, true); }
         }
         async function testAdd() {
             try {
-                const result = await Wef.add(10, 25);
+                const result = await Laufey.add(10, 25);
                 log('add: ' + result);
             } catch(e) { log('Error: ' + e.message, true); }
         }
         async function testInfo() {
             try {
-                const result = await Wef.getInfo();
+                const result = await Laufey.getInfo();
                 log('getInfo: ' + JSON.stringify(result));
             } catch(e) { log('Error: ' + e.message, true); }
         }
         async function testUnknown() {
             try {
-                const result = await Wef.unknown();
+                const result = await Laufey.unknown();
                 log('unknown: ' + result);
             } catch(e) { log('Error: ' + e.message, true); }
         }
@@ -174,8 +174,8 @@ fn hello_main() {
 </html>"#,
       );
 
-    just_wef::run().await;
+    laufey::run().await;
   });
 }
 
-just_wef::main!(hello_main);
+laufey::main!(hello_main);

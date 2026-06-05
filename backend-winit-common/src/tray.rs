@@ -16,9 +16,9 @@ use tray_icon::{
   TrayIconEventReceiver,
 };
 
-use crate::{ParsedMenuItem, WefMenuClickFn};
+use crate::{ParsedMenuItem, LaufeyMenuClickFn};
 
-pub type WefTrayClickFn = unsafe extern "C" fn(*mut c_void, u32);
+pub type LaufeyTrayClickFn = unsafe extern "C" fn(*mut c_void, u32);
 
 static NEXT_TRAY_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -29,8 +29,8 @@ pub fn allocate_tray_id() -> u32 {
 
 struct TrayEntry {
   icon: TrayIcon,
-  click_fn: Option<(WefTrayClickFn, usize)>,
-  dblclick_fn: Option<(WefTrayClickFn, usize)>,
+  click_fn: Option<(LaufeyTrayClickFn, usize)>,
+  dblclick_fn: Option<(LaufeyTrayClickFn, usize)>,
   light_png: Option<Vec<u8>>,
   dark_png: Option<Vec<u8>>,
 }
@@ -120,7 +120,7 @@ pub enum TrayOp {
   SetMenu {
     tray_id: u32,
     items: Vec<ParsedMenuItem>,
-    callback: Option<WefMenuClickFn>,
+    callback: Option<LaufeyMenuClickFn>,
     callback_data: usize,
   },
   ClearMenu {
@@ -128,12 +128,12 @@ pub enum TrayOp {
   },
   SetClickHandler {
     tray_id: u32,
-    handler: Option<WefTrayClickFn>,
+    handler: Option<LaufeyTrayClickFn>,
     user_data: usize,
   },
   SetDoubleClickHandler {
     tray_id: u32,
-    handler: Option<WefTrayClickFn>,
+    handler: Option<LaufeyTrayClickFn>,
     user_data: usize,
   },
   SetIconDark {
@@ -249,7 +249,7 @@ fn apply_create(tray_id: u32) {
 fn apply_set_menu(
   tray_id: u32,
   items: Vec<ParsedMenuItem>,
-  callback: Option<WefMenuClickFn>,
+  callback: Option<LaufeyMenuClickFn>,
   callback_data: usize,
 ) {
   // Register menu-item callbacks in the shared MENU_CLICK_STORE; the

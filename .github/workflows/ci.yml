@@ -58,8 +58,8 @@ jobs:
       # Only the capi crate has unit-testable logic (pure conversions /
       # builders). The example runtimes are cdylibs and the winit/webview
       # backends require display servers, so we don't run their tests in CI.
-      - run: cargo test -p just-wef --lib
-      - run: cargo test -p just-wef --doc
+      - run: cargo test -p laufey --lib
+      - run: cargo test -p laufey --doc
 
   build-winit:
     name: winit / ${{ matrix.target }}
@@ -101,19 +101,19 @@ jobs:
         run: |
           mkdir staging
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp target/release/wef_winit.exe staging/
-            cd staging && 7z a ../wef-winit-${{ matrix.target }}.zip *
+            cp target/release/laufey_winit.exe staging/
+            cd staging && 7z a ../laufey-winit-${{ matrix.target }}.zip *
           else
-            cp target/release/wef_winit staging/
-            tar czf wef-winit-${{ matrix.target }}.tar.gz -C staging .
+            cp target/release/laufey_winit staging/
+            tar czf laufey-winit-${{ matrix.target }}.tar.gz -C staging .
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wef-winit-${{ matrix.target }}
+          name: laufey-winit-${{ matrix.target }}
           path: |
-            wef-winit-${{ matrix.target }}.tar.gz
-            wef-winit-${{ matrix.target }}.zip
+            laufey-winit-${{ matrix.target }}.tar.gz
+            laufey-winit-${{ matrix.target }}.zip
 
   build-webview:
     name: webview / ${{ matrix.target }}
@@ -163,19 +163,19 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            tar czf wef-webview-${{ matrix.target }}.tar.gz -C webview/build wef_webview.app
+            tar czf laufey-webview-${{ matrix.target }}.tar.gz -C webview/build laufey_webview.app
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            cd webview/build && 7z a ../../wef-webview-${{ matrix.target }}.zip wef_webview.exe
+            cd webview/build && 7z a ../../laufey-webview-${{ matrix.target }}.zip laufey_webview.exe
           else
-            tar czf wef-webview-${{ matrix.target }}.tar.gz -C webview/build wef_webview
+            tar czf laufey-webview-${{ matrix.target }}.tar.gz -C webview/build laufey_webview
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wef-webview-${{ matrix.target }}
+          name: laufey-webview-${{ matrix.target }}
           path: |
-            wef-webview-${{ matrix.target }}.tar.gz
-            wef-webview-${{ matrix.target }}.zip
+            laufey-webview-${{ matrix.target }}.tar.gz
+            laufey-webview-${{ matrix.target }}.zip
 
   e2e-cef-linux:
     name: e2e / cef / x86_64-unknown-linux-gnu (Xvfb)
@@ -220,16 +220,16 @@ jobs:
         # block for the full 6-hour ceiling if a binding pipeline
         # regression makes the harness hang forever.
         run: |
-          export WEF_BIN="$PWD/cef/build/Release/wef"
-          if [ ! -x "$WEF_BIN" ]; then
-            echo "::error::CEF backend binary not at $WEF_BIN — build step changed layout?"
+          export LAUFEY_BIN="$PWD/cef/build/Release/laufey"
+          if [ ! -x "$LAUFEY_BIN" ]; then
+            echo "::error::CEF backend binary not at $LAUFEY_BIN — build step changed layout?"
             ls cef/build/Release || true
             exit 1
           fi
           timeout 90 \
             xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
             dbus-launch --exit-with-session \
-            "$WEF_BIN" --runtime "$PWD/target/release/libcef_e2e_runtime.so"
+            "$LAUFEY_BIN" --runtime "$PWD/target/release/libcef_e2e_runtime.so"
 
   build-cef:
     name: cef / ${{ matrix.target }}
@@ -280,19 +280,19 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            tar czf wef-cef-${{ matrix.target }}.tar.gz -C cef/build/Release wef.app
+            tar czf laufey-cef-${{ matrix.target }}.tar.gz -C cef/build/Release laufey.app
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            cd cef/build/Release && 7z a ../../../wef-cef-${{ matrix.target }}.zip *
+            cd cef/build/Release && 7z a ../../../laufey-cef-${{ matrix.target }}.zip *
           else
-            tar czf wef-cef-${{ matrix.target }}.tar.gz -C cef/build/Release .
+            tar czf laufey-cef-${{ matrix.target }}.tar.gz -C cef/build/Release .
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wef-cef-${{ matrix.target }}
+          name: laufey-cef-${{ matrix.target }}
           path: |
-            wef-cef-${{ matrix.target }}.tar.gz
-            wef-cef-${{ matrix.target }}.zip
+            laufey-cef-${{ matrix.target }}.tar.gz
+            laufey-cef-${{ matrix.target }}.zip
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -327,7 +327,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish wef crate to crates.io
+      - name: Publish laufey crate to crates.io
         working-directory: capi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

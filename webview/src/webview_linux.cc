@@ -4,8 +4,8 @@
 #include <gdk/gdkkeysyms.h>
 
 #include "runtime_loader.h"
-#include "wef_backend_common.h"
-#include "wef_json.h"
+#include "laufey_backend_common.h"
+#include "laufey_json.h"
 #include "init_script.h"
 #include <webkit2/webkit2.h>
 #include <JavaScriptCore/JavaScript.h>
@@ -52,51 +52,51 @@ static void gtk_invoke_sync(F&& fn) {
 namespace keyboard {
 
 // GDK → W3C key/code lives in backend-common
-// (wef_common::GdkKeyvalToKey / GdkKeycodeToCode).
+// (laufey_common::GdkKeyvalToKey / GdkKeycodeToCode).
 inline std::string GdkKeyvalToKey(guint keyval) {
-  return wef_common::GdkKeyvalToKey(keyval);
+  return laufey_common::GdkKeyvalToKey(keyval);
 }
 inline std::string GdkKeycodeToCode(guint16 hardware_keycode) {
-  return wef_common::GdkKeycodeToCode(hardware_keycode);
+  return laufey_common::GdkKeycodeToCode(hardware_keycode);
 }
 
-uint32_t GdkModifiersToWef(guint state) {
+uint32_t GdkModifiersToLaufey(guint state) {
   uint32_t modifiers = 0;
   if (state & GDK_SHIFT_MASK)
-    modifiers |= WEF_MOD_SHIFT;
+    modifiers |= LAUFEY_MOD_SHIFT;
   if (state & GDK_CONTROL_MASK)
-    modifiers |= WEF_MOD_CONTROL;
+    modifiers |= LAUFEY_MOD_CONTROL;
   if (state & GDK_MOD1_MASK)
-    modifiers |= WEF_MOD_ALT;
+    modifiers |= LAUFEY_MOD_ALT;
   if (state & GDK_MOD4_MASK)
-    modifiers |= WEF_MOD_META;
+    modifiers |= LAUFEY_MOD_META;
   return modifiers;
 }
 
 }  // namespace keyboard
 
-// GtkWidget → wef_id mapping for event routing
-static std::map<GtkWidget*, uint32_t> g_widget_to_wef_id;
+// GtkWidget → laufey_id mapping for event routing
+static std::map<GtkWidget*, uint32_t> g_widget_to_laufey_id;
 static std::mutex g_widget_mutex;
 
-static uint32_t WefIdForWidget(GtkWidget* widget) {
+static uint32_t LaufeyIdForWidget(GtkWidget* widget) {
   if (!widget)
     return 0;
   // Walk up to find the toplevel window
   GtkWidget* toplevel = gtk_widget_get_toplevel(widget);
   std::lock_guard<std::mutex> lock(g_widget_mutex);
-  auto it = g_widget_to_wef_id.find(toplevel);
-  return it != g_widget_to_wef_id.end() ? it->second : 0;
+  auto it = g_widget_to_laufey_id.find(toplevel);
+  return it != g_widget_to_laufey_id.end() ? it->second : 0;
 }
 
 static void RegisterWidget(GtkWidget* widget, uint32_t window_id) {
   std::lock_guard<std::mutex> lock(g_widget_mutex);
-  g_widget_to_wef_id[widget] = window_id;
+  g_widget_to_laufey_id[widget] = window_id;
 }
 
 static void UnregisterWidget(GtkWidget* widget) {
   std::lock_guard<std::mutex> lock(g_widget_mutex);
-  g_widget_to_wef_id.erase(widget);
+  g_widget_to_laufey_id.erase(widget);
 }
 
 // Per-window state
@@ -114,7 +114,7 @@ static int32_t g_last_click_count = 1;
 
 static gboolean on_button_event(GtkWidget* widget, GdkEventButton* event,
                                 gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
 
@@ -123,51 +123,51 @@ static gboolean on_button_event(GtkWidget* widget, GdkEventButton* event,
 
   switch (event->type) {
     case GDK_BUTTON_PRESS:
-      state = WEF_MOUSE_PRESSED;
+      state = LAUFEY_MOUSE_PRESSED;
       click_count = 1;
       break;
     case GDK_2BUTTON_PRESS:
-      state = WEF_MOUSE_PRESSED;
+      state = LAUFEY_MOUSE_PRESSED;
       click_count = 2;
       break;
     case GDK_3BUTTON_PRESS:
-      state = WEF_MOUSE_PRESSED;
+      state = LAUFEY_MOUSE_PRESSED;
       click_count = 2;
       break;
     case GDK_BUTTON_RELEASE:
-      state = WEF_MOUSE_RELEASED;
+      state = LAUFEY_MOUSE_RELEASED;
       click_count = g_last_click_count;
       break;
     default:
       return FALSE;
   }
 
-  if (state == WEF_MOUSE_PRESSED) {
+  if (state == LAUFEY_MOUSE_PRESSED) {
     g_last_click_count = click_count;
   }
 
   int button;
   switch (event->button) {
     case 1:
-      button = WEF_MOUSE_BUTTON_LEFT;
+      button = LAUFEY_MOUSE_BUTTON_LEFT;
       break;
     case 2:
-      button = WEF_MOUSE_BUTTON_MIDDLE;
+      button = LAUFEY_MOUSE_BUTTON_MIDDLE;
       break;
     case 3:
-      button = WEF_MOUSE_BUTTON_RIGHT;
+      button = LAUFEY_MOUSE_BUTTON_RIGHT;
       break;
     case 8:
-      button = WEF_MOUSE_BUTTON_BACK;
+      button = LAUFEY_MOUSE_BUTTON_BACK;
       break;
     case 9:
-      button = WEF_MOUSE_BUTTON_FORWARD;
+      button = LAUFEY_MOUSE_BUTTON_FORWARD;
       break;
     default:
       button = static_cast<int>(event->button);
       break;
   }
-  uint32_t modifiers = keyboard::GdkModifiersToWef(event->state);
+  uint32_t modifiers = keyboard::GdkModifiersToLaufey(event->state);
 
   RuntimeLoader::GetInstance()->DispatchMouseClickEvent(
       wid, state, button, event->x, event->y, modifiers, click_count);
@@ -177,10 +177,10 @@ static gboolean on_button_event(GtkWidget* widget, GdkEventButton* event,
 
 static gboolean on_motion_event(GtkWidget* widget, GdkEventMotion* event,
                                 gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
-  uint32_t modifiers = keyboard::GdkModifiersToWef(event->state);
+  uint32_t modifiers = keyboard::GdkModifiersToLaufey(event->state);
   RuntimeLoader::GetInstance()->DispatchMouseMoveEvent(wid, event->x, event->y,
                                                        modifiers);
   return FALSE;
@@ -188,12 +188,12 @@ static gboolean on_motion_event(GtkWidget* widget, GdkEventMotion* event,
 
 static gboolean on_scroll_event(GtkWidget* widget, GdkEventScroll* event,
                                 gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
 
   double delta_x = 0, delta_y = 0;
-  int32_t delta_mode = WEF_WHEEL_DELTA_LINE;
+  int32_t delta_mode = LAUFEY_WHEEL_DELTA_LINE;
 
   switch (event->direction) {
     case GDK_SCROLL_UP:
@@ -210,11 +210,11 @@ static gboolean on_scroll_event(GtkWidget* widget, GdkEventScroll* event,
       break;
     case GDK_SCROLL_SMOOTH:
       gdk_event_get_scroll_deltas((GdkEvent*)event, &delta_x, &delta_y);
-      delta_mode = WEF_WHEEL_DELTA_PIXEL;
+      delta_mode = LAUFEY_WHEEL_DELTA_PIXEL;
       break;
   }
 
-  uint32_t modifiers = keyboard::GdkModifiersToWef(event->state);
+  uint32_t modifiers = keyboard::GdkModifiersToLaufey(event->state);
   RuntimeLoader::GetInstance()->DispatchWheelEvent(
       wid, delta_x, delta_y, event->x, event->y, modifiers, delta_mode);
   return FALSE;
@@ -223,10 +223,10 @@ static gboolean on_scroll_event(GtkWidget* widget, GdkEventScroll* event,
 static gboolean on_enter_notify_event(GtkWidget* widget,
                                       GdkEventCrossing* event,
                                       gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
-  uint32_t modifiers = keyboard::GdkModifiersToWef(event->state);
+  uint32_t modifiers = keyboard::GdkModifiersToLaufey(event->state);
   RuntimeLoader::GetInstance()->DispatchCursorEnterLeaveEvent(
       wid, 1, event->x, event->y, modifiers);
   return FALSE;
@@ -235,10 +235,10 @@ static gboolean on_enter_notify_event(GtkWidget* widget,
 static gboolean on_leave_notify_event(GtkWidget* widget,
                                       GdkEventCrossing* event,
                                       gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
-  uint32_t modifiers = keyboard::GdkModifiersToWef(event->state);
+  uint32_t modifiers = keyboard::GdkModifiersToLaufey(event->state);
   RuntimeLoader::GetInstance()->DispatchCursorEnterLeaveEvent(
       wid, 0, event->x, event->y, modifiers);
   return FALSE;
@@ -246,7 +246,7 @@ static gboolean on_leave_notify_event(GtkWidget* widget,
 
 static gboolean on_focus_in_event(GtkWidget* widget, GdkEventFocus* event,
                                   gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
   RuntimeLoader::GetInstance()->DispatchFocusedEvent(wid, 1);
@@ -255,7 +255,7 @@ static gboolean on_focus_in_event(GtkWidget* widget, GdkEventFocus* event,
 
 static gboolean on_focus_out_event(GtkWidget* widget, GdkEventFocus* event,
                                    gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
   RuntimeLoader::GetInstance()->DispatchFocusedEvent(wid, 0);
@@ -264,7 +264,7 @@ static gboolean on_focus_out_event(GtkWidget* widget, GdkEventFocus* event,
 
 static gboolean on_configure_event(GtkWidget* widget, GdkEventConfigure* event,
                                    gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
   RuntimeLoader::GetInstance()->DispatchResizeEvent(wid, event->width,
@@ -275,15 +275,15 @@ static gboolean on_configure_event(GtkWidget* widget, GdkEventConfigure* event,
 
 static gboolean on_key_event(GtkWidget* widget, GdkEventKey* event,
                              gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid == 0)
     return FALSE;
 
   int state =
-      (event->type == GDK_KEY_PRESS) ? WEF_KEY_PRESSED : WEF_KEY_RELEASED;
+      (event->type == GDK_KEY_PRESS) ? LAUFEY_KEY_PRESSED : LAUFEY_KEY_RELEASED;
   std::string key = keyboard::GdkKeyvalToKey(event->keyval);
   std::string code = keyboard::GdkKeycodeToCode(event->hardware_keycode);
-  uint32_t modifiers = keyboard::GdkModifiersToWef(event->state);
+  uint32_t modifiers = keyboard::GdkModifiersToLaufey(event->state);
 
   RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
       wid, state, key.c_str(), code.c_str(), modifiers, false);
@@ -295,7 +295,7 @@ static gboolean on_key_event(GtkWidget* widget, GdkEventKey* event,
 // WebKitGTK Backend
 // ============================================================================
 
-class WebKitGTKBackend : public WefBackend {
+class WebKitGTKBackend : public LaufeyBackend {
  public:
   WebKitGTKBackend();
   ~WebKitGTKBackend() override;
@@ -308,7 +308,7 @@ class WebKitGTKBackend : public WefBackend {
   void Navigate(uint32_t window_id, const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
-                 wef_js_result_fn callback, void* callback_data) override;
+                 laufey_js_result_fn callback, void* callback_data) override;
   void Quit() override;
   void SetWindowSize(uint32_t window_id, int width, int height) override;
   void GetWindowSize(uint32_t window_id, int* width, int* height) override;
@@ -325,21 +325,21 @@ class WebKitGTKBackend : public WefBackend {
   void PostUiTask(void (*task)(void*), void* data) override;
 
   void InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
-                        wef::ValuePtr args) override;
+                        laufey::ValuePtr args) override;
   void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) override;
   void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                       wef::ValuePtr result, wef::ValuePtr error) override;
+                       laufey::ValuePtr result, laufey::ValuePtr error) override;
 
   void Run() override;
 
-  void SetApplicationMenu(uint32_t window_id, wef_value_t* menu_template,
-                          const wef_backend_api_t* api,
-                          wef_menu_click_fn on_click,
+  void SetApplicationMenu(uint32_t window_id, laufey_value_t* menu_template,
+                          const laufey_backend_api_t* api,
+                          laufey_menu_click_fn on_click,
                           void* on_click_data) override;
 
   void ShowContextMenu(uint32_t window_id, int x, int y,
-                       wef_value_t* menu_template, const wef_backend_api_t* api,
-                       wef_menu_click_fn on_click,
+                       laufey_value_t* menu_template, const laufey_backend_api_t* api,
+                       laufey_menu_click_fn on_click,
                        void* on_click_data) override;
 
   void OpenDevTools(uint32_t window_id) override;
@@ -356,25 +356,25 @@ class WebKitGTKBackend : public WefBackend {
   void SetTrayIcon(uint32_t tray_id, const void* png_bytes,
                    size_t len) override;
   void SetTrayTooltip(uint32_t tray_id, const char* tooltip_or_null) override;
-  void SetTrayMenu(uint32_t tray_id, wef_value_t* menu_template,
-                   const wef_backend_api_t* api, wef_menu_click_fn on_click,
+  void SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+                   const laufey_backend_api_t* api, laufey_menu_click_fn on_click,
                    void* on_click_data) override;
-  void SetTrayClickHandler(uint32_t tray_id, wef_tray_click_fn handler,
+  void SetTrayClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
                            void* user_data) override;
 
-  uint32_t ShowNotification(wef_value_t* options, const wef_backend_api_t* api,
-                            wef_notification_event_fn on_event,
+  uint32_t ShowNotification(laufey_value_t* options, const laufey_backend_api_t* api,
+                            laufey_notification_event_fn on_event,
                             void* user_data) override;
   void CloseNotification(uint32_t notification_id) override;
 
   // libnotify / notify-send have no permission model — always granted.
-  void QueryPermission(int kind, wef_permission_callback_fn cb,
+  void QueryPermission(int kind, laufey_permission_callback_fn cb,
                        void* user_data) override {
-    wef_common::QueryPermissionStub(kind, cb, user_data);
+    laufey_common::QueryPermissionStub(kind, cb, user_data);
   }
-  void RequestPermission(int kind, wef_permission_callback_fn cb,
+  void RequestPermission(int kind, laufey_permission_callback_fn cb,
                          void* user_data) override {
-    wef_common::RequestPermissionStub(kind, cb, user_data);
+    laufey_common::RequestPermissionStub(kind, cb, user_data);
   }
 
   void HandleJsMessage(uint32_t window_id, const char* json);
@@ -391,13 +391,13 @@ static WebKitGTKBackend* g_gtk_backend = nullptr;
 
 // GtkWidget → window_id mapping for script message routing
 static std::map<WebKitUserContentManager*, uint32_t>
-    g_content_manager_to_wef_id;
+    g_content_manager_to_laufey_id;
 
 static void on_script_message(WebKitUserContentManager* manager,
                               WebKitJavascriptResult* js_result,
                               gpointer user_data) {
-  auto it = g_content_manager_to_wef_id.find(manager);
-  uint32_t wid = (it != g_content_manager_to_wef_id.end()) ? it->second : 0;
+  auto it = g_content_manager_to_laufey_id.find(manager);
+  uint32_t wid = (it != g_content_manager_to_laufey_id.end()) ? it->second : 0;
 
   JSCValue* value = webkit_javascript_result_get_js_value(js_result);
   if (jsc_value_is_string(value)) {
@@ -410,7 +410,7 @@ static void on_script_message(WebKitUserContentManager* manager,
 }
 
 static void on_window_destroy(GtkWidget* widget, gpointer user_data) {
-  uint32_t wid = WefIdForWidget(widget);
+  uint32_t wid = LaufeyIdForWidget(widget);
   if (wid > 0) {
     RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
     UnregisterWidget(widget);
@@ -418,7 +418,7 @@ static void on_window_destroy(GtkWidget* widget, gpointer user_data) {
   // If no more windows, quit
   {
     std::lock_guard<std::mutex> lock(g_widget_mutex);
-    if (g_widget_to_wef_id.empty()) {
+    if (g_widget_to_laufey_id.empty()) {
       gtk_main_quit();
     }
   }
@@ -432,8 +432,8 @@ WebKitGTKBackend::~WebKitGTKBackend() {
   std::lock_guard<std::mutex> lock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
     webkit_user_content_manager_unregister_script_message_handler(
-        state.content_manager, "wef");
-    g_content_manager_to_wef_id.erase(state.content_manager);
+        state.content_manager, "laufey");
+    g_content_manager_to_laufey_id.erase(state.content_manager);
     UnregisterWidget(state.window);
   }
   windows_.clear();
@@ -509,10 +509,10 @@ void WebKitGTKBackend::CreateWindow(uint32_t window_id, int width, int height) {
 void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                                       uint32_t flags) {
   GtkWidget* window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-  if (flags & WEF_WINDOW_FLAG_FRAMELESS) {
+  if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
     gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
   }
-  if (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) {
+  if (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) {
     // Treat as a utility/panel window: out of taskbar & pager, and don't
     // grab focus when shown (the GTK equivalent of a non-activating panel).
     gtk_window_set_type_hint(GTK_WINDOW(window), GDK_WINDOW_TYPE_HINT_UTILITY);
@@ -552,11 +552,11 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
   RegisterWidget(window, window_id);
 
   WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
-  g_signal_connect(content_manager, "script-message-received::wef",
+  g_signal_connect(content_manager, "script-message-received::laufey",
                    G_CALLBACK(on_script_message), nullptr);
   webkit_user_content_manager_register_script_message_handler(content_manager,
-                                                              "wef");
-  g_content_manager_to_wef_id[content_manager] = window_id;
+                                                              "laufey");
+  g_content_manager_to_laufey_id[content_manager] = window_id;
 
   WebKitWebView* webview = WEBKIT_WEB_VIEW(
       webkit_web_view_new_with_user_content_manager(content_manager));
@@ -569,7 +569,7 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
   std::string initScript = BuildInitScript(
       RuntimeLoader::GetInstance()->GetJsNamespace(),
-      "window.webkit.messageHandlers.wef.postMessage(JSON.stringify({\n"
+      "window.webkit.messageHandlers.laufey.postMessage(JSON.stringify({\n"
       "            callId: callId,\n"
       "            method: path.join('.'),\n"
       "            args: processedArgs\n"
@@ -605,8 +605,8 @@ void WebKitGTKBackend::CloseWindow(uint32_t window_id) {
   auto* state = GetWindow(window_id);
   if (state) {
     webkit_user_content_manager_unregister_script_message_handler(
-        state->content_manager, "wef");
-    g_content_manager_to_wef_id.erase(state->content_manager);
+        state->content_manager, "laufey");
+    g_content_manager_to_laufey_id.erase(state->content_manager);
     UnregisterWidget(state->window);
     gtk_widget_destroy(state->window);
     windows_.erase(window_id);
@@ -630,7 +630,7 @@ void WebKitGTKBackend::SetTitle(uint32_t window_id, const std::string& title) {
 }
 
 struct ExecuteJsCallbackData {
-  wef_js_result_fn callback;
+  laufey_js_result_fn callback;
   void* user_data;
 };
 
@@ -643,42 +643,42 @@ static void on_execute_js_finished(GObject* source, GAsyncResult* result,
       WEBKIT_WEB_VIEW(source), result, &error);
 
   if (error) {
-    auto errVal = wef::Value::String(error->message);
-    wef_value errWef(errVal);
-    cb_data->callback(nullptr, &errWef, cb_data->user_data);
+    auto errVal = laufey::Value::String(error->message);
+    laufey_value errLaufey(errVal);
+    cb_data->callback(nullptr, &errLaufey, cb_data->user_data);
     g_error_free(error);
   } else if (js_result) {
     JSCValue* value = webkit_javascript_result_get_js_value(js_result);
     if (jsc_value_is_null(value) || jsc_value_is_undefined(value)) {
       cb_data->callback(nullptr, nullptr, cb_data->user_data);
     } else if (jsc_value_is_boolean(value)) {
-      auto val = wef::Value::Bool(jsc_value_to_boolean(value));
-      wef_value wef(val);
-      cb_data->callback(&wef, nullptr, cb_data->user_data);
+      auto val = laufey::Value::Bool(jsc_value_to_boolean(value));
+      laufey_value laufey(val);
+      cb_data->callback(&laufey, nullptr, cb_data->user_data);
     } else if (jsc_value_is_number(value)) {
       double d = jsc_value_to_double(value);
       if (d == (int)d && d >= INT_MIN && d <= INT_MAX) {
-        auto val = wef::Value::Int((int)d);
-        wef_value wef(val);
-        cb_data->callback(&wef, nullptr, cb_data->user_data);
+        auto val = laufey::Value::Int((int)d);
+        laufey_value laufey(val);
+        cb_data->callback(&laufey, nullptr, cb_data->user_data);
       } else {
-        auto val = wef::Value::Double(d);
-        wef_value wef(val);
-        cb_data->callback(&wef, nullptr, cb_data->user_data);
+        auto val = laufey::Value::Double(d);
+        laufey_value laufey(val);
+        cb_data->callback(&laufey, nullptr, cb_data->user_data);
       }
     } else if (jsc_value_is_string(value)) {
       gchar* str = jsc_value_to_string(value);
-      auto val = wef::Value::String(str);
-      wef_value wef(val);
-      cb_data->callback(&wef, nullptr, cb_data->user_data);
+      auto val = laufey::Value::String(str);
+      laufey_value laufey(val);
+      cb_data->callback(&laufey, nullptr, cb_data->user_data);
       g_free(str);
     } else {
       // For objects/arrays, serialize to JSON and parse
       gchar* json = jsc_value_to_json(value, 0);
       if (json) {
         auto val = json::ParseJson(json);
-        wef_value wef(val);
-        cb_data->callback(&wef, nullptr, cb_data->user_data);
+        laufey_value laufey(val);
+        cb_data->callback(&laufey, nullptr, cb_data->user_data);
         g_free(json);
       } else {
         cb_data->callback(nullptr, nullptr, cb_data->user_data);
@@ -693,7 +693,7 @@ static void on_execute_js_finished(GObject* source, GAsyncResult* result,
 }
 
 void WebKitGTKBackend::ExecuteJs(uint32_t window_id, const std::string& script,
-                                 wef_js_result_fn callback,
+                                 laufey_js_result_fn callback,
                                  void* callback_data) {
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
@@ -868,7 +868,7 @@ void WebKitGTKBackend::PostUiTask(void (*task)(void*), void* data) {
 
 void WebKitGTKBackend::InvokeJsCallback(uint32_t window_id,
                                         uint64_t callback_id,
-                                        wef::ValuePtr args) {
+                                        laufey::ValuePtr args) {
   std::string argsJson = json::Serialize(args);
   std::string script = BuildInvokeCallbackScript(callback_id, argsJson);
   std::lock_guard<std::mutex> lock(windows_mutex_);
@@ -905,8 +905,8 @@ void WebKitGTKBackend::ReleaseJsCallback(uint32_t window_id,
 }
 
 void WebKitGTKBackend::RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                                       wef::ValuePtr result,
-                                       wef::ValuePtr error) {
+                                       laufey::ValuePtr result,
+                                       laufey::ValuePtr error) {
   std::string resultJson = json::Serialize(result);
   std::string errorJson =
       (error && !error->IsNull()) ? json::Serialize(error) : "null";
@@ -926,7 +926,7 @@ void WebKitGTKBackend::Run() {
 
 void WebKitGTKBackend::HandleJsMessage(uint32_t window_id,
                                        const char* jsonStr) {
-  wef::ValuePtr msg = json::ParseJson(jsonStr);
+  laufey::ValuePtr msg = json::ParseJson(jsonStr);
   if (!msg || !msg->IsDict())
     return;
 
@@ -948,8 +948,8 @@ void WebKitGTKBackend::HandleJsMessage(uint32_t window_id,
 
   std::string method =
       methodIt->second->IsString() ? methodIt->second->GetString() : "";
-  wef::ValuePtr args =
-      (argsIt != dict.end()) ? argsIt->second : wef::Value::List();
+  laufey::ValuePtr args =
+      (argsIt != dict.end()) ? argsIt->second : laufey::Value::List();
 
   RuntimeLoader::GetInstance()->OnJsCall(window_id, call_id, method, args);
 }
@@ -959,12 +959,12 @@ void WebKitGTKBackend::HandleJsMessage(uint32_t window_id,
 // ============================================================================
 //
 // Menu construction lives in backend-common
-// (wef_common::BuildGtkMenuFromValue).
+// (laufey_common::BuildGtkMenuFromValue).
 
 void WebKitGTKBackend::SetApplicationMenu(uint32_t window_id,
-                                          wef_value_t* menu_template,
-                                          const wef_backend_api_t* api,
-                                          wef_menu_click_fn on_click,
+                                          laufey_value_t* menu_template,
+                                          const laufey_backend_api_t* api,
+                                          laufey_menu_click_fn on_click,
                                           void* on_click_data) {
   if (!menu_template)
     return;
@@ -979,7 +979,7 @@ void WebKitGTKBackend::SetApplicationMenu(uint32_t window_id,
     state->menu_bar = nullptr;
   }
 
-  GtkWidget* menu_bar = wef_common::BuildGtkMenuFromValue(
+  GtkWidget* menu_bar = laufey_common::BuildGtkMenuFromValue(
       menu_template, api, window_id, on_click, on_click_data, true);
   if (menu_bar) {
     // Pack menu bar at the top (before the webview)
@@ -991,14 +991,14 @@ void WebKitGTKBackend::SetApplicationMenu(uint32_t window_id,
 }
 
 void WebKitGTKBackend::ShowContextMenu(uint32_t window_id, int /*x*/, int /*y*/,
-                                       wef_value_t* menu_template,
-                                       const wef_backend_api_t* api,
-                                       wef_menu_click_fn on_click,
+                                       laufey_value_t* menu_template,
+                                       const laufey_backend_api_t* api,
+                                       laufey_menu_click_fn on_click,
                                        void* on_click_data) {
   if (!menu_template)
     return;
 
-  GtkWidget* menu = wef_common::BuildGtkMenuFromValue(
+  GtkWidget* menu = laufey_common::BuildGtkMenuFromValue(
       menu_template, api, window_id, on_click, on_click_data, false);
   if (!menu)
     return;
@@ -1030,7 +1030,7 @@ int WebKitGTKBackend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
                                  const std::string& message,
                                  const std::string& default_value,
                                  char** out_input_value) {
-  return wef_common::ShowDialogLinux(dialog_type, title, message, default_value,
+  return laufey_common::ShowDialogLinux(dialog_type, title, message, default_value,
                                      out_input_value);
 }
 
@@ -1040,7 +1040,7 @@ int WebKitGTKBackend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
 
 void WebKitGTKBackend::BounceDock(int /*type*/) {
   // X11 urgency hint is binary (no informational vs critical). Set it on
-  // every WEF window; the WM surfaces attention (flash the taskbar button,
+  // every LAUFEY window; the WM surfaces attention (flash the taskbar button,
   // highlight the window in overview, etc.).
   std::lock_guard<std::mutex> lock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
@@ -1051,7 +1051,7 @@ void WebKitGTKBackend::BounceDock(int /*type*/) {
 }
 
 // Badge via title prefix. Saved-titles map lives in
-// wef_common::ApplyTitlePrefixBadge.
+// laufey_common::ApplyTitlePrefixBadge.
 void WebKitGTKBackend::SetDockBadge(const char* badge_or_null) {
   std::string badge =
       (badge_or_null && *badge_or_null) ? std::string(badge_or_null) : "";
@@ -1061,7 +1061,7 @@ void WebKitGTKBackend::SetDockBadge(const char* badge_or_null) {
       continue;
     GtkWindow* gw = GTK_WINDOW(state.window);
     const char* current = gtk_window_get_title(gw);
-    std::string next = wef_common::ApplyTitlePrefixBadge(
+    std::string next = laufey_common::ApplyTitlePrefixBadge(
         wid, current ? std::string(current) : std::string(), badge);
     gtk_window_set_title(gw, next.c_str());
   }
@@ -1074,30 +1074,30 @@ void WebKitGTKBackend::SetDockBadge(const char* badge_or_null) {
 // Thin trampolines over backend-common/src/tray_linux.cc.
 
 uint32_t WebKitGTKBackend::CreateTrayIcon() {
-  return wef_common::CreateTrayIconLinux();
+  return laufey_common::CreateTrayIconLinux();
 }
 void WebKitGTKBackend::DestroyTrayIcon(uint32_t tray_id) {
-  wef_common::DestroyTrayIconLinux(tray_id);
+  laufey_common::DestroyTrayIconLinux(tray_id);
 }
 void WebKitGTKBackend::SetTrayIcon(uint32_t tray_id, const void* png_bytes,
                                    size_t len) {
-  wef_common::SetTrayIconLinux(tray_id, png_bytes, len);
+  laufey_common::SetTrayIconLinux(tray_id, png_bytes, len);
 }
 void WebKitGTKBackend::SetTrayTooltip(uint32_t tray_id,
                                       const char* tooltip_or_null) {
-  wef_common::SetTrayTooltipLinux(tray_id, tooltip_or_null);
+  laufey_common::SetTrayTooltipLinux(tray_id, tooltip_or_null);
 }
-void WebKitGTKBackend::SetTrayMenu(uint32_t tray_id, wef_value_t* menu_template,
-                                   const wef_backend_api_t* api,
-                                   wef_menu_click_fn on_click,
+void WebKitGTKBackend::SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+                                   const laufey_backend_api_t* api,
+                                   laufey_menu_click_fn on_click,
                                    void* on_click_data) {
-  wef_common::SetTrayMenuLinux(tray_id, menu_template, api, on_click,
+  laufey_common::SetTrayMenuLinux(tray_id, menu_template, api, on_click,
                                on_click_data);
 }
 void WebKitGTKBackend::SetTrayClickHandler(uint32_t tray_id,
-                                           wef_tray_click_fn handler,
+                                           laufey_tray_click_fn handler,
                                            void* user_data) {
-  wef_common::SetTrayClickHandlerLinux(tray_id, handler, user_data);
+  laufey_common::SetTrayClickHandlerLinux(tray_id, handler, user_data);
 }
 
 // ============================================================================
@@ -1107,23 +1107,23 @@ void WebKitGTKBackend::SetTrayClickHandler(uint32_t tray_id,
 // Thin trampoline over the shared notify-send implementation in
 // backend-common/src/notifications_linux.cc.
 
-uint32_t WebKitGTKBackend::ShowNotification(wef_value_t* options,
-                                            const wef_backend_api_t* api,
-                                            wef_notification_event_fn on_event,
+uint32_t WebKitGTKBackend::ShowNotification(laufey_value_t* options,
+                                            const laufey_backend_api_t* api,
+                                            laufey_notification_event_fn on_event,
                                             void* user_data) {
-  wef_common::NotificationOptions opts =
-      wef_common::ParseNotificationOptions(options, api);
-  return wef_common::ShowNotificationLinux(opts, on_event, user_data);
+  laufey_common::NotificationOptions opts =
+      laufey_common::ParseNotificationOptions(options, api);
+  return laufey_common::ShowNotificationLinux(opts, on_event, user_data);
 }
 
 void WebKitGTKBackend::CloseNotification(uint32_t notification_id) {
-  wef_common::CloseNotificationLinux(notification_id);
+  laufey_common::CloseNotificationLinux(notification_id);
 }
 
 // ============================================================================
 // Factory Function
 // ============================================================================
 
-WefBackend* CreateWefBackend() {
+LaufeyBackend* CreateLaufeyBackend() {
   return new WebKitGTKBackend();
 }

@@ -4,14 +4,14 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-  let header = "include/wef.h";
+  let header = "include/laufey.h";
   println!("cargo:rerun-if-changed={}", header);
 
   let mut builder = bindgen::Builder::default()
     .header(header)
     .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-    .allowlist_type("wef_.*")
-    .allowlist_var("WEF_.*");
+    .allowlist_type("laufey_.*")
+    .allowlist_var("LAUFEY_.*");
 
   // MSVC's bundled clang headers conflict with the system LLVM clang headers.
   // Add compatibility flags to resolve wchar_t typedef redefinition and

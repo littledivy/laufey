@@ -1,7 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#ifndef WEF_JSON_H_
-#define WEF_JSON_H_
+#ifndef LAUFEY_JSON_H_
+#define LAUFEY_JSON_H_
 
 #include "webview_value.h"
 
@@ -49,9 +49,9 @@ inline std::string Escape(const std::string& s) {
   return result;
 }
 
-inline std::string Serialize(const wef::ValuePtr& value);
+inline std::string Serialize(const laufey::ValuePtr& value);
 
-inline std::string SerializeList(const wef::ValueList& list) {
+inline std::string SerializeList(const laufey::ValueList& list) {
   std::ostringstream ss;
   ss << "[";
   for (size_t i = 0; i < list.size(); ++i) {
@@ -63,7 +63,7 @@ inline std::string SerializeList(const wef::ValueList& list) {
   return ss.str();
 }
 
-inline std::string SerializeDict(const wef::ValueDict& dict) {
+inline std::string SerializeDict(const laufey::ValueDict& dict) {
   std::ostringstream ss;
   ss << "{";
   bool first = true;
@@ -77,24 +77,24 @@ inline std::string SerializeDict(const wef::ValueDict& dict) {
   return ss.str();
 }
 
-inline std::string Serialize(const wef::ValuePtr& value) {
+inline std::string Serialize(const laufey::ValuePtr& value) {
   if (!value)
     return "null";
   switch (value->type) {
-    case wef::ValueType::Null:
+    case laufey::ValueType::Null:
       return "null";
-    case wef::ValueType::Bool:
+    case laufey::ValueType::Bool:
       return value->GetBool() ? "true" : "false";
-    case wef::ValueType::Int:
+    case laufey::ValueType::Int:
       return std::to_string(value->GetInt());
-    case wef::ValueType::Double: {
+    case laufey::ValueType::Double: {
       char buf[64];
       snprintf(buf, sizeof(buf), "%.17g", value->GetDouble());
       return buf;
     }
-    case wef::ValueType::String:
+    case laufey::ValueType::String:
       return "\"" + Escape(value->GetString()) + "\"";
-    case wef::ValueType::Binary: {
+    case laufey::ValueType::Binary: {
       const auto& binary = value->GetBinary();
       std::string base64;
       static const char* chars =
@@ -116,18 +116,18 @@ inline std::string Serialize(const wef::ValuePtr& value) {
       }
       return "{\"__binary__\":\"" + base64 + "\"}";
     }
-    case wef::ValueType::List:
+    case laufey::ValueType::List:
       return SerializeList(value->GetList());
-    case wef::ValueType::Dict:
+    case laufey::ValueType::Dict:
       return SerializeDict(value->GetDict());
-    case wef::ValueType::Callback:
+    case laufey::ValueType::Callback:
       return "{\"__callback__\":\"" + std::to_string(value->GetCallbackId()) +
              "\"}";
   }
   return "null";
 }
 
-inline wef::ValuePtr Parse(const char*& p);
+inline laufey::ValuePtr Parse(const char*& p);
 
 inline void SkipWhitespace(const char*& p) {
   while (*p && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
@@ -193,8 +193,8 @@ inline std::string ParseString(const char*& p) {
   return result;
 }
 
-inline wef::ValuePtr ParseArray(const char*& p) {
-  auto list = wef::Value::List();
+inline laufey::ValuePtr ParseArray(const char*& p) {
+  auto list = laufey::Value::List();
   ++p;
   SkipWhitespace(p);
   while (*p && *p != ']') {
@@ -209,8 +209,8 @@ inline wef::ValuePtr ParseArray(const char*& p) {
   return list;
 }
 
-inline wef::ValuePtr ParseObject(const char*& p) {
-  auto dict = wef::Value::Dict();
+inline laufey::ValuePtr ParseObject(const char*& p) {
+  auto dict = laufey::Value::Dict();
   ++p;
   SkipWhitespace(p);
   while (*p && *p != '}') {
@@ -237,9 +237,9 @@ inline wef::ValuePtr ParseObject(const char*& p) {
     // JS-supplied; a malformed id must not throw out of the JSON parser.
     try {
       uint64_t id = std::stoull(it->second->GetString());
-      return wef::Value::Callback(id);
+      return laufey::Value::Callback(id);
     } catch (const std::exception&) {
-      return wef::Value::Null();
+      return laufey::Value::Null();
     }
   }
   it = d.find("__binary__");
@@ -276,31 +276,31 @@ inline wef::ValuePtr ParseObject(const char*& p) {
         bits -= 8;
       }
     }
-    return wef::Value::Binary(data.data(), data.size());
+    return laufey::Value::Binary(data.data(), data.size());
   }
 
   return dict;
 }
 
-inline wef::ValuePtr Parse(const char*& p) {
+inline laufey::ValuePtr Parse(const char*& p) {
   SkipWhitespace(p);
   if (!*p)
-    return wef::Value::Null();
+    return laufey::Value::Null();
 
   if (*p == 'n' && strncmp(p, "null", 4) == 0) {
     p += 4;
-    return wef::Value::Null();
+    return laufey::Value::Null();
   }
   if (*p == 't' && strncmp(p, "true", 4) == 0) {
     p += 4;
-    return wef::Value::Bool(true);
+    return laufey::Value::Bool(true);
   }
   if (*p == 'f' && strncmp(p, "false", 5) == 0) {
     p += 5;
-    return wef::Value::Bool(false);
+    return laufey::Value::Bool(false);
   }
   if (*p == '"') {
-    return wef::Value::String(ParseString(p));
+    return laufey::Value::String(ParseString(p));
   }
   if (*p == '[') {
     return ParseArray(p);
@@ -320,19 +320,19 @@ inline wef::ValuePtr Parse(const char*& p) {
     }
     p = end;
     if (isInt && d >= INT_MIN && d <= INT_MAX) {
-      return wef::Value::Int((int)d);
+      return laufey::Value::Int((int)d);
     }
-    return wef::Value::Double(d);
+    return laufey::Value::Double(d);
   }
 
-  return wef::Value::Null();
+  return laufey::Value::Null();
 }
 
-inline wef::ValuePtr ParseJson(const std::string& json) {
+inline laufey::ValuePtr ParseJson(const std::string& json) {
   const char* p = json.c_str();
   return Parse(p);
 }
 
 }  // namespace json
 
-#endif  // WEF_JSON_H_
+#endif  // LAUFEY_JSON_H_

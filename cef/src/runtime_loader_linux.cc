@@ -24,10 +24,10 @@
 #include "include/wrapper/cef_closure_task.h"
 
 #include "runtime_loader.h"
-#include "wef.h"
-#include "wef_backend_common.h"
+#include "laufey.h"
+#include "laufey_backend_common.h"
 
-#ifdef WEF_HAVE_APPINDICATOR
+#ifdef LAUFEY_HAVE_APPINDICATOR
 extern "C" {
 #include <libappindicator/app-indicator.h>
 }
@@ -49,28 +49,28 @@ static void EnsureGtkInit() {
 }
 
 // Menu-template → GtkMenu conversion lives in backend-common
-// (wef_common::BuildGtkMenuFromValue).
+// (laufey_common::BuildGtkMenuFromValue).
 
 // ---------------------------------------------------------------------------
 // Context menu
 // ---------------------------------------------------------------------------
 
 void Backend_ShowContextMenu_Linux(void* data, uint32_t window_id, int /*x*/,
-                                   int /*y*/, wef_value_t* menu_template,
-                                   wef_menu_click_fn on_click,
+                                   int /*y*/, laufey_value_t* menu_template,
+                                   laufey_menu_click_fn on_click,
                                    void* on_click_data) {
   if (!menu_template)
     return;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
 
   CefPostTask(
       TID_UI,
       base::BindOnce(
-          [](uint32_t wid, wef_value_t* tmpl, const wef_backend_api_t* a,
-             wef_menu_click_fn cb, void* cb_data) {
+          [](uint32_t wid, laufey_value_t* tmpl, const laufey_backend_api_t* a,
+             laufey_menu_click_fn cb, void* cb_data) {
             EnsureGtkInit();
-            GtkWidget* menu = wef_common::BuildGtkMenuFromValue(
+            GtkWidget* menu = laufey_common::BuildGtkMenuFromValue(
                 tmpl, a, wid, cb, cb_data, false);
             a->value_free(tmpl);
             if (!menu)
@@ -78,7 +78,7 @@ void Backend_ShowContextMenu_Linux(void* data, uint32_t window_id, int /*x*/,
             gtk_widget_show_all(menu);
             // gtk_menu_popup_at_pointer uses the current X11 event to position
             // the menu — in practice, the click that triggered
-            // show_context_menu is still fresh. (x,y) args from the WEF call
+            // show_context_menu is still fresh. (x,y) args from the LAUFEY call
             // are window-relative and would require a GdkWindow reference to
             // honor; pointer-positioning is the robust fallback.
             gtk_menu_popup_at_pointer(GTK_MENU(menu), nullptr);
@@ -95,40 +95,40 @@ void Backend_ShowContextMenu_Linux(void* data, uint32_t window_id, int /*x*/,
 // allocates the id atomically and returns immediately.
 
 uint32_t Backend_CreateTrayIcon_Linux(void* /*data*/) {
-  return wef_common::CreateTrayIconLinux();
+  return laufey_common::CreateTrayIconLinux();
 }
 void Backend_DestroyTrayIcon_Linux(void* /*data*/, uint32_t tray_id) {
-  wef_common::DestroyTrayIconLinux(tray_id);
+  laufey_common::DestroyTrayIconLinux(tray_id);
 }
 void Backend_SetTrayIcon_Linux(void* /*data*/, uint32_t tray_id,
                                const void* png_bytes, size_t len) {
-  wef_common::SetTrayIconLinux(tray_id, png_bytes, len);
+  laufey_common::SetTrayIconLinux(tray_id, png_bytes, len);
 }
 void Backend_SetTrayTooltip_Linux(void* /*data*/, uint32_t tray_id,
                                   const char* tooltip_or_null) {
-  wef_common::SetTrayTooltipLinux(tray_id, tooltip_or_null);
+  laufey_common::SetTrayTooltipLinux(tray_id, tooltip_or_null);
 }
 void Backend_SetTrayMenu_Linux(void* data, uint32_t tray_id,
-                               wef_value_t* menu_template,
-                               wef_menu_click_fn on_click,
+                               laufey_value_t* menu_template,
+                               laufey_menu_click_fn on_click,
                                void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  wef_common::SetTrayMenuLinux(tray_id, menu_template, &loader->GetBackendApi(),
+  laufey_common::SetTrayMenuLinux(tray_id, menu_template, &loader->GetBackendApi(),
                                on_click, on_click_data);
 }
 void Backend_SetTrayClickHandler_Linux(void* /*data*/, uint32_t tray_id,
-                                       wef_tray_click_fn handler,
+                                       laufey_tray_click_fn handler,
                                        void* user_data) {
-  wef_common::SetTrayClickHandlerLinux(tray_id, handler, user_data);
+  laufey_common::SetTrayClickHandlerLinux(tray_id, handler, user_data);
 }
 void Backend_SetTrayDoubleClickHandler_Linux(void* /*data*/, uint32_t tray_id,
-                                             wef_tray_click_fn handler,
+                                             laufey_tray_click_fn handler,
                                              void* user_data) {
-  wef_common::SetTrayDoubleClickHandlerLinux(tray_id, handler, user_data);
+  laufey_common::SetTrayDoubleClickHandlerLinux(tray_id, handler, user_data);
 }
 void Backend_SetTrayIconDark_Linux(void* /*data*/, uint32_t tray_id,
                                    const void* png_bytes, size_t len) {
-  wef_common::SetTrayIconDarkLinux(tray_id, png_bytes, len);
+  laufey_common::SetTrayIconDarkLinux(tray_id, png_bytes, len);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,15 +138,15 @@ void Backend_SetTrayIconDark_Linux(void* /*data*/, uint32_t tray_id,
 // ---------------------------------------------------------------------------
 
 extern "C" uint32_t Backend_ShowNotification_Linux(
-    void* data, wef_value_t* options, wef_notification_event_fn on_event,
+    void* data, laufey_value_t* options, laufey_notification_event_fn on_event,
     void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  wef_common::NotificationOptions opts =
-      wef_common::ParseNotificationOptions(options, &loader->GetBackendApi());
-  return wef_common::ShowNotificationLinux(opts, on_event, user_data);
+  laufey_common::NotificationOptions opts =
+      laufey_common::ParseNotificationOptions(options, &loader->GetBackendApi());
+  return laufey_common::ShowNotificationLinux(opts, on_event, user_data);
 }
 
 extern "C" void Backend_CloseNotification_Linux(void* /*data*/,
                                                 uint32_t notification_id) {
-  wef_common::CloseNotificationLinux(notification_id);
+  laufey_common::CloseNotificationLinux(notification_id);
 }

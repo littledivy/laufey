@@ -4,14 +4,14 @@
 // the webview Linux backend (CEF normalizes to Windows VK and uses
 // keymap_vk.cc).
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <gdk/gdk.h>
 #include <gdk/gdkkeysyms.h>
 
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 std::string GdkKeyvalToKey(unsigned int keyval) {
   switch (keyval) {
@@ -170,4 +170,4 @@ std::string GdkKeycodeToCode(unsigned int hardware_keycode) {
   }
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

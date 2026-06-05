@@ -556,7 +556,7 @@ dependencies = [
 name = "cef_e2e_runtime"
 version = "0.1.0"
 dependencies = [
- "just-wef",
+ "laufey",
  "tokio",
 ]
 
@@ -743,7 +743,7 @@ version = "0.1.0"
 dependencies = [
  "deno_core",
  "dirs 5.0.1",
- "just-wef",
+ "laufey",
  "serde",
  "serde_json",
  "sysinfo",
@@ -1567,7 +1567,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 name = "hello_runtime"
 version = "0.1.0"
 dependencies = [
- "just-wef",
+ "laufey",
  "tokio",
 ]
 
@@ -1841,14 +1841,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "just-wef"
-version = "0.2.0"
-dependencies = [
- "bindgen",
- "tokio",
-]
-
-[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1857,6 +1849,42 @@ dependencies = [
  "bitflags 2.10.0",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "laufey"
+version = "0.2.0"
+dependencies = [
+ "bindgen",
+ "tokio",
+]
+
+[[package]]
+name = "laufey-backend-winit-common"
+version = "0.1.0"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "image",
+ "libloading 0.8.9",
+ "muda",
+ "notify-rust",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-user-notifications 0.3.2",
+ "raw-window-handle",
+ "rfd",
+ "tray-icon",
+ "windows-sys 0.61.2",
+ "winit",
+]
+
+[[package]]
+name = "laufey-winit"
+version = "0.1.0"
+dependencies = [
+ "laufey-backend-winit-common",
 ]
 
 [[package]]
@@ -2808,7 +2836,7 @@ dependencies = [
 name = "presentation_runtime"
 version = "0.1.0"
 dependencies = [
- "just-wef",
+ "laufey",
  "tokio",
 ]
 
@@ -4230,34 +4258,6 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "wef-backend-winit-common"
-version = "0.1.0"
-dependencies = [
- "block2 0.6.2",
- "dispatch2",
- "image",
- "libloading 0.8.9",
- "muda",
- "notify-rust",
- "objc2 0.6.4",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "objc2-user-notifications 0.3.2",
- "raw-window-handle",
- "rfd",
- "tray-icon",
- "windows-sys 0.61.2",
- "winit",
-]
-
-[[package]]
-name = "wef-winit"
-version = "0.1.0"
-dependencies = [
- "wef-backend-winit-common",
 ]
 
 [[package]]

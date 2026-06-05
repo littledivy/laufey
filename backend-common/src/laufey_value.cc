@@ -1,88 +1,88 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-// Shared implementation of the wef_backend_api_t value_* marshalling surface.
-// Operates entirely on wef::Value so every backend links one copy instead of
+// Shared implementation of the laufey_backend_api_t value_* marshalling surface.
+// Operates entirely on laufey::Value so every backend links one copy instead of
 // hand-duplicating these ~35 functions.
 
-#include "wef_value.h"
+#include "laufey_value.h"
 
 #include <cstdlib>
 
 namespace {
 
-bool ValueIsNull(wef_value_t* val) {
+bool ValueIsNull(laufey_value_t* val) {
   if (!val || !val->value)
     return true;
   return val->value->IsNull();
 }
 
-bool ValueIsBool(wef_value_t* val) {
+bool ValueIsBool(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsBool();
 }
 
-bool ValueIsInt(wef_value_t* val) {
+bool ValueIsInt(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsInt();
 }
 
-bool ValueIsDouble(wef_value_t* val) {
+bool ValueIsDouble(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsDouble();
 }
 
-bool ValueIsString(wef_value_t* val) {
+bool ValueIsString(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsString();
 }
 
-bool ValueIsList(wef_value_t* val) {
+bool ValueIsList(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsList();
 }
 
-bool ValueIsDict(wef_value_t* val) {
+bool ValueIsDict(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsDict();
 }
 
-bool ValueIsBinary(wef_value_t* val) {
+bool ValueIsBinary(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->IsBinary();
 }
 
-bool ValueIsCallback(wef_value_t* val) {
+bool ValueIsCallback(laufey_value_t* val) {
   if (!val)
     return false;
   return val->is_callback;
 }
 
-bool ValueGetBool(wef_value_t* val) {
+bool ValueGetBool(laufey_value_t* val) {
   if (!val || !val->value)
     return false;
   return val->value->GetBool();
 }
 
-int ValueGetInt(wef_value_t* val) {
+int ValueGetInt(laufey_value_t* val) {
   if (!val || !val->value)
     return 0;
   return val->value->GetInt();
 }
 
-double ValueGetDouble(wef_value_t* val) {
+double ValueGetDouble(laufey_value_t* val) {
   if (!val || !val->value)
     return 0.0;
   return val->value->GetDouble();
 }
 
-char* ValueGetString(wef_value_t* val, size_t* len_out) {
+char* ValueGetString(laufey_value_t* val, size_t* len_out) {
   if (!val || !val->value || !val->value->IsString()) {
     if (len_out)
       *len_out = 0;
@@ -102,45 +102,45 @@ void ValueFreeString(char* str) {
   free(str);
 }
 
-size_t ValueListSize(wef_value_t* val) {
+size_t ValueListSize(laufey_value_t* val) {
   if (!val || !val->value || !val->value->IsList())
     return 0;
   return val->value->GetList().size();
 }
 
-wef_value_t* ValueListGet(wef_value_t* val, size_t index) {
+laufey_value_t* ValueListGet(laufey_value_t* val, size_t index) {
   if (!val || !val->value || !val->value->IsList())
     return nullptr;
   const auto& list = val->value->GetList();
   if (index >= list.size())
     return nullptr;
-  return new wef_value(list[index]);
+  return new laufey_value(list[index]);
 }
 
-wef_value_t* ValueDictGet(wef_value_t* dict, const char* key) {
+laufey_value_t* ValueDictGet(laufey_value_t* dict, const char* key) {
   if (!dict || !dict->value || !dict->value->IsDict() || !key)
     return nullptr;
   const auto& d = dict->value->GetDict();
   auto it = d.find(key);
   if (it == d.end())
     return nullptr;
-  return new wef_value(it->second);
+  return new laufey_value(it->second);
 }
 
-bool ValueDictHas(wef_value_t* dict, const char* key) {
+bool ValueDictHas(laufey_value_t* dict, const char* key) {
   if (!dict || !dict->value || !dict->value->IsDict() || !key)
     return false;
   const auto& d = dict->value->GetDict();
   return d.find(key) != d.end();
 }
 
-size_t ValueDictSize(wef_value_t* dict) {
+size_t ValueDictSize(laufey_value_t* dict) {
   if (!dict || !dict->value || !dict->value->IsDict())
     return 0;
   return dict->value->GetDict().size();
 }
 
-char** ValueDictKeys(wef_value_t* dict, size_t* count_out) {
+char** ValueDictKeys(laufey_value_t* dict, size_t* count_out) {
   if (!dict || !dict->value || !dict->value->IsDict()) {
     if (count_out)
       *count_out = 0;
@@ -188,7 +188,7 @@ void ValueFreeKeys(char** keys, size_t count) {
   free(keys);
 }
 
-const void* ValueGetBinary(wef_value_t* val, size_t* len_out) {
+const void* ValueGetBinary(laufey_value_t* val, size_t* len_out) {
   if (!val || !val->value || !val->value->IsBinary()) {
     if (len_out)
       *len_out = 0;
@@ -200,45 +200,45 @@ const void* ValueGetBinary(wef_value_t* val, size_t* len_out) {
   return binary.data.data();
 }
 
-uint64_t ValueGetCallbackId(wef_value_t* val) {
+uint64_t ValueGetCallbackId(laufey_value_t* val) {
   if (!val || !val->is_callback)
     return 0;
   return val->callback_id;
 }
 
-wef_value_t* ValueNull(void*) {
-  return new wef_value(wef::Value::Null());
+laufey_value_t* ValueNull(void*) {
+  return new laufey_value(laufey::Value::Null());
 }
 
-wef_value_t* ValueBool(void*, bool v) {
-  return new wef_value(wef::Value::Bool(v));
+laufey_value_t* ValueBool(void*, bool v) {
+  return new laufey_value(laufey::Value::Bool(v));
 }
 
-wef_value_t* ValueInt(void*, int v) {
-  return new wef_value(wef::Value::Int(v));
+laufey_value_t* ValueInt(void*, int v) {
+  return new laufey_value(laufey::Value::Int(v));
 }
 
-wef_value_t* ValueDouble(void*, double v) {
-  return new wef_value(wef::Value::Double(v));
+laufey_value_t* ValueDouble(void*, double v) {
+  return new laufey_value(laufey::Value::Double(v));
 }
 
-wef_value_t* ValueString(void*, const char* v) {
-  return new wef_value(wef::Value::String(v ? v : ""));
+laufey_value_t* ValueString(void*, const char* v) {
+  return new laufey_value(laufey::Value::String(v ? v : ""));
 }
 
-wef_value_t* ValueList(void*) {
-  return new wef_value(wef::Value::List());
+laufey_value_t* ValueList(void*) {
+  return new laufey_value(laufey::Value::List());
 }
 
-wef_value_t* ValueDict(void*) {
-  return new wef_value(wef::Value::Dict());
+laufey_value_t* ValueDict(void*) {
+  return new laufey_value(laufey::Value::Dict());
 }
 
-wef_value_t* ValueBinary(void*, const void* data, size_t len) {
-  return new wef_value(wef::Value::Binary(data, len));
+laufey_value_t* ValueBinary(void*, const void* data, size_t len) {
+  return new laufey_value(laufey::Value::Binary(data, len));
 }
 
-bool ValueListAppend(wef_value_t* list, wef_value_t* val) {
+bool ValueListAppend(laufey_value_t* list, laufey_value_t* val) {
   if (!list || !list->value || !list->value->IsList())
     return false;
   if (!val || !val->value)
@@ -247,7 +247,7 @@ bool ValueListAppend(wef_value_t* list, wef_value_t* val) {
   return true;
 }
 
-bool ValueListSet(wef_value_t* list, size_t index, wef_value_t* val) {
+bool ValueListSet(laufey_value_t* list, size_t index, laufey_value_t* val) {
   if (!list || !list->value || !list->value->IsList())
     return false;
   if (!val || !val->value)
@@ -260,7 +260,7 @@ bool ValueListSet(wef_value_t* list, size_t index, wef_value_t* val) {
   return true;
 }
 
-bool ValueDictSet(wef_value_t* dict, const char* key, wef_value_t* val) {
+bool ValueDictSet(laufey_value_t* dict, const char* key, laufey_value_t* val) {
   if (!dict || !dict->value || !dict->value->IsDict())
     return false;
   if (!key || !val || !val->value)
@@ -269,13 +269,13 @@ bool ValueDictSet(wef_value_t* dict, const char* key, wef_value_t* val) {
   return true;
 }
 
-void ValueFree(wef_value_t* val) {
+void ValueFree(laufey_value_t* val) {
   delete val;
 }
 
 }  // namespace
 
-void wef_register_value_api(wef_backend_api_t* api) {
+void laufey_register_value_api(laufey_backend_api_t* api) {
   api->value_is_null = ValueIsNull;
   api->value_is_bool = ValueIsBool;
   api->value_is_int = ValueIsInt;

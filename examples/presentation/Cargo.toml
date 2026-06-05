@@ -7,5 +7,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-just-wef = { path = "../../capi" }
+laufey = { path = "../../capi" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

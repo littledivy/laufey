@@ -28,40 +28,40 @@ use winit::window::{Window, WindowLevel};
 
 // --- Constants ---
 
-pub const WEF_API_VERSION: u32 = 25;
+pub const LAUFEY_API_VERSION: u32 = 25;
 
-/// Creation-time window style flags (mirror `WEF_WINDOW_FLAG_*` in wef.h).
-pub const WEF_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
-pub const WEF_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
+/// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
+pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
+pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
 
 #[allow(dead_code)]
-pub const WEF_WINDOW_HANDLE_UNKNOWN: c_int = 0;
+pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: c_int = 0;
 #[allow(dead_code)]
-pub const WEF_WINDOW_HANDLE_APPKIT: c_int = 1;
+pub const LAUFEY_WINDOW_HANDLE_APPKIT: c_int = 1;
 #[allow(dead_code)]
-pub const WEF_WINDOW_HANDLE_WIN32: c_int = 2;
+pub const LAUFEY_WINDOW_HANDLE_WIN32: c_int = 2;
 #[allow(dead_code)]
-pub const WEF_WINDOW_HANDLE_X11: c_int = 3;
+pub const LAUFEY_WINDOW_HANDLE_X11: c_int = 3;
 #[allow(dead_code)]
-pub const WEF_WINDOW_HANDLE_WAYLAND: c_int = 4;
+pub const LAUFEY_WINDOW_HANDLE_WAYLAND: c_int = 4;
 
 // --- FFI Types ---
 
 #[repr(C)]
-pub struct WefValue {
+pub struct LaufeyValue {
   _opaque: [u8; 0],
 }
 
-pub type WefJsCallFn = unsafe extern "C" fn(
+pub type LaufeyJsCallFn = unsafe extern "C" fn(
   *mut c_void,   // user_data
   u32,           // window_id
   u64,           // call_id
   *const c_char, // method_path
-  *mut WefValue, // args
+  *mut LaufeyValue, // args
 );
-pub type WefJsResultFn =
-  unsafe extern "C" fn(*mut WefValue, *mut WefValue, *mut c_void);
-pub type WefKeyboardEventFn = unsafe extern "C" fn(
+pub type LaufeyJsResultFn =
+  unsafe extern "C" fn(*mut LaufeyValue, *mut LaufeyValue, *mut c_void);
+pub type LaufeyKeyboardEventFn = unsafe extern "C" fn(
   *mut c_void,   // user_data
   u32,           // window_id
   c_int,         // state (0=pressed, 1=released)
@@ -70,14 +70,14 @@ pub type WefKeyboardEventFn = unsafe extern "C" fn(
   u32,           // modifiers
   bool,          // repeat
 );
-pub type WefMouseMoveFn = unsafe extern "C" fn(
+pub type LaufeyMouseMoveFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   f64,         // x
   f64,         // y
   u32,         // modifiers
 );
-pub type WefMouseClickFn = unsafe extern "C" fn(
+pub type LaufeyMouseClickFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   c_int,       // state (0=pressed, 1=released)
@@ -87,7 +87,7 @@ pub type WefMouseClickFn = unsafe extern "C" fn(
   u32,         // modifiers
   i32,         // click_count
 );
-pub type WefWheelFn = unsafe extern "C" fn(
+pub type LaufeyWheelFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   f64,         // delta_x
@@ -97,7 +97,7 @@ pub type WefWheelFn = unsafe extern "C" fn(
   u32,         // modifiers
   i32,         // delta_mode
 );
-pub type WefCursorEnterLeaveFn = unsafe extern "C" fn(
+pub type LaufeyCursorEnterLeaveFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   c_int,       // entered (1=entered, 0=left)
@@ -105,41 +105,41 @@ pub type WefCursorEnterLeaveFn = unsafe extern "C" fn(
   f64,         // y
   u32,         // modifiers
 );
-pub type WefFocusedFn = unsafe extern "C" fn(
+pub type LaufeyFocusedFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   c_int,       // focused (1=gained, 0=lost)
 );
-pub type WefResizeFn = unsafe extern "C" fn(
+pub type LaufeyResizeFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   c_int,       // width
   c_int,       // height
 );
-pub type WefMoveFn = unsafe extern "C" fn(
+pub type LaufeyMoveFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
   c_int,       // x
   c_int,       // y
 );
-pub type WefCloseRequestedFn = unsafe extern "C" fn(
+pub type LaufeyCloseRequestedFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
 );
-pub const WEF_DIALOG_ALERT: i32 = 0;
-pub const WEF_DIALOG_CONFIRM: i32 = 1;
-pub const WEF_DIALOG_PROMPT: i32 = 2;
+pub const LAUFEY_DIALOG_ALERT: i32 = 0;
+pub const LAUFEY_DIALOG_CONFIRM: i32 = 1;
+pub const LAUFEY_DIALOG_PROMPT: i32 = 2;
 
-pub const WEF_WHEEL_DELTA_PIXEL: i32 = 0;
-pub const WEF_WHEEL_DELTA_LINE: i32 = 1;
+pub const LAUFEY_WHEEL_DELTA_PIXEL: i32 = 0;
+pub const LAUFEY_WHEEL_DELTA_LINE: i32 = 1;
 
 #[repr(C)]
-pub struct WefBackendApi {
+pub struct LaufeyBackendApi {
   pub version: u32,
   pub backend_data: *mut c_void,
   pub create_window: Option<unsafe extern "C" fn(*mut c_void) -> u32>,
   pub close_window: Option<unsafe extern "C" fn(*mut c_void, u32)>,
-  // Must mirror wef.h field order exactly: create_window_ex sits between
+  // Must mirror laufey.h field order exactly: create_window_ex sits between
   // close_window and navigate.
   pub create_window_ex: Option<unsafe extern "C" fn(*mut c_void, u32) -> u32>,
   pub navigate: Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char)>,
@@ -149,7 +149,7 @@ pub struct WefBackendApi {
       *mut c_void,
       u32,
       *const c_char,
-      Option<WefJsResultFn>,
+      Option<LaufeyJsResultFn>,
       *mut c_void,
     ),
   >,
@@ -177,64 +177,64 @@ pub struct WefBackendApi {
       *mut c_void,
     ),
   >,
-  pub value_is_null: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_bool: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_int: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_double: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_string: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_list: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_dict: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_binary: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_is_callback: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_get_bool: Option<unsafe extern "C" fn(*mut WefValue) -> bool>,
-  pub value_get_int: Option<unsafe extern "C" fn(*mut WefValue) -> c_int>,
-  pub value_get_double: Option<unsafe extern "C" fn(*mut WefValue) -> f64>,
+  pub value_is_null: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_bool: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_int: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_double: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_string: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_list: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_dict: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_binary: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_is_callback: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_get_bool: Option<unsafe extern "C" fn(*mut LaufeyValue) -> bool>,
+  pub value_get_int: Option<unsafe extern "C" fn(*mut LaufeyValue) -> c_int>,
+  pub value_get_double: Option<unsafe extern "C" fn(*mut LaufeyValue) -> f64>,
   pub value_get_string:
-    Option<unsafe extern "C" fn(*mut WefValue, *mut usize) -> *mut c_char>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, *mut usize) -> *mut c_char>,
   pub value_free_string: Option<unsafe extern "C" fn(*mut c_char)>,
-  pub value_list_size: Option<unsafe extern "C" fn(*mut WefValue) -> usize>,
+  pub value_list_size: Option<unsafe extern "C" fn(*mut LaufeyValue) -> usize>,
   pub value_list_get:
-    Option<unsafe extern "C" fn(*mut WefValue, usize) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, usize) -> *mut LaufeyValue>,
   pub value_dict_get:
-    Option<unsafe extern "C" fn(*mut WefValue, *const c_char) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, *const c_char) -> *mut LaufeyValue>,
   pub value_dict_has:
-    Option<unsafe extern "C" fn(*mut WefValue, *const c_char) -> bool>,
-  pub value_dict_size: Option<unsafe extern "C" fn(*mut WefValue) -> usize>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, *const c_char) -> bool>,
+  pub value_dict_size: Option<unsafe extern "C" fn(*mut LaufeyValue) -> usize>,
   pub value_dict_keys:
-    Option<unsafe extern "C" fn(*mut WefValue, *mut usize) -> *mut *mut c_char>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, *mut usize) -> *mut *mut c_char>,
   pub value_free_keys: Option<unsafe extern "C" fn(*mut *mut c_char, usize)>,
   pub value_get_binary:
-    Option<unsafe extern "C" fn(*mut WefValue, *mut usize) -> *const c_void>,
-  pub value_get_callback_id: Option<unsafe extern "C" fn(*mut WefValue) -> u64>,
-  pub value_null: Option<unsafe extern "C" fn(*mut c_void) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, *mut usize) -> *const c_void>,
+  pub value_get_callback_id: Option<unsafe extern "C" fn(*mut LaufeyValue) -> u64>,
+  pub value_null: Option<unsafe extern "C" fn(*mut c_void) -> *mut LaufeyValue>,
   pub value_bool:
-    Option<unsafe extern "C" fn(*mut c_void, bool) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut c_void, bool) -> *mut LaufeyValue>,
   pub value_int:
-    Option<unsafe extern "C" fn(*mut c_void, c_int) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut c_void, c_int) -> *mut LaufeyValue>,
   pub value_double:
-    Option<unsafe extern "C" fn(*mut c_void, f64) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut c_void, f64) -> *mut LaufeyValue>,
   pub value_string:
-    Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut WefValue>,
-  pub value_list: Option<unsafe extern "C" fn(*mut c_void) -> *mut WefValue>,
-  pub value_dict: Option<unsafe extern "C" fn(*mut c_void) -> *mut WefValue>,
+    Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut LaufeyValue>,
+  pub value_list: Option<unsafe extern "C" fn(*mut c_void) -> *mut LaufeyValue>,
+  pub value_dict: Option<unsafe extern "C" fn(*mut c_void) -> *mut LaufeyValue>,
   pub value_binary: Option<
-    unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut WefValue,
+    unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut LaufeyValue,
   >,
   pub value_list_append:
-    Option<unsafe extern "C" fn(*mut WefValue, *mut WefValue) -> bool>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, *mut LaufeyValue) -> bool>,
   pub value_list_set:
-    Option<unsafe extern "C" fn(*mut WefValue, usize, *mut WefValue) -> bool>,
+    Option<unsafe extern "C" fn(*mut LaufeyValue, usize, *mut LaufeyValue) -> bool>,
   pub value_dict_set: Option<
-    unsafe extern "C" fn(*mut WefValue, *const c_char, *mut WefValue) -> bool,
+    unsafe extern "C" fn(*mut LaufeyValue, *const c_char, *mut LaufeyValue) -> bool,
   >,
-  pub value_free: Option<unsafe extern "C" fn(*mut WefValue)>,
+  pub value_free: Option<unsafe extern "C" fn(*mut LaufeyValue)>,
   pub set_js_call_handler:
-    Option<unsafe extern "C" fn(*mut c_void, WefJsCallFn, *mut c_void)>,
+    Option<unsafe extern "C" fn(*mut c_void, LaufeyJsCallFn, *mut c_void)>,
   pub js_call_respond: Option<
-    unsafe extern "C" fn(*mut c_void, u64, *mut WefValue, *mut WefValue),
+    unsafe extern "C" fn(*mut c_void, u64, *mut LaufeyValue, *mut LaufeyValue),
   >,
   pub invoke_js_callback:
-    Option<unsafe extern "C" fn(*mut c_void, u64, *mut WefValue)>,
+    Option<unsafe extern "C" fn(*mut c_void, u64, *mut LaufeyValue)>,
   pub release_js_callback: Option<unsafe extern "C" fn(*mut c_void, u64)>,
   pub get_window_handle:
     Option<unsafe extern "C" fn(*mut c_void, u32) -> *mut c_void>,
@@ -243,32 +243,32 @@ pub struct WefBackendApi {
   pub get_window_handle_type:
     Option<unsafe extern "C" fn(*mut c_void, u32) -> c_int>,
   pub set_keyboard_event_handler: Option<
-    unsafe extern "C" fn(*mut c_void, Option<WefKeyboardEventFn>, *mut c_void),
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyKeyboardEventFn>, *mut c_void),
   >,
   pub set_mouse_click_handler: Option<
-    unsafe extern "C" fn(*mut c_void, Option<WefMouseClickFn>, *mut c_void),
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyMouseClickFn>, *mut c_void),
   >,
   pub set_mouse_move_handler: Option<
-    unsafe extern "C" fn(*mut c_void, Option<WefMouseMoveFn>, *mut c_void),
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyMouseMoveFn>, *mut c_void),
   >,
   pub set_wheel_handler:
-    Option<unsafe extern "C" fn(*mut c_void, Option<WefWheelFn>, *mut c_void)>,
+    Option<unsafe extern "C" fn(*mut c_void, Option<LaufeyWheelFn>, *mut c_void)>,
   pub set_cursor_enter_leave_handler: Option<
     unsafe extern "C" fn(
       *mut c_void,
-      Option<WefCursorEnterLeaveFn>,
+      Option<LaufeyCursorEnterLeaveFn>,
       *mut c_void,
     ),
   >,
   pub set_focused_handler: Option<
-    unsafe extern "C" fn(*mut c_void, Option<WefFocusedFn>, *mut c_void),
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyFocusedFn>, *mut c_void),
   >,
   pub set_resize_handler:
-    Option<unsafe extern "C" fn(*mut c_void, Option<WefResizeFn>, *mut c_void)>,
+    Option<unsafe extern "C" fn(*mut c_void, Option<LaufeyResizeFn>, *mut c_void)>,
   pub set_move_handler:
-    Option<unsafe extern "C" fn(*mut c_void, Option<WefMoveFn>, *mut c_void)>,
+    Option<unsafe extern "C" fn(*mut c_void, Option<LaufeyMoveFn>, *mut c_void)>,
   pub set_close_requested_handler: Option<
-    unsafe extern "C" fn(*mut c_void, Option<WefCloseRequestedFn>, *mut c_void),
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyCloseRequestedFn>, *mut c_void),
   >,
   pub poll_js_calls: Option<unsafe extern "C" fn(*mut c_void)>,
   pub set_js_call_notify: Option<
@@ -282,7 +282,7 @@ pub struct WefBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       u32,
-      *mut WefValue,
+      *mut LaufeyValue,
       Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char)>,
       *mut c_void,
     ),
@@ -293,7 +293,7 @@ pub struct WefBackendApi {
       u32,
       c_int,
       c_int,
-      *mut WefValue,
+      *mut LaufeyValue,
       Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char)>,
       *mut c_void,
     ),
@@ -318,8 +318,8 @@ pub struct WefBackendApi {
   pub set_dock_menu: Option<
     unsafe extern "C" fn(
       *mut c_void,
-      *mut WefValue,
-      Option<WefMenuClickFn>,
+      *mut LaufeyValue,
+      Option<LaufeyMenuClickFn>,
       *mut c_void,
     ),
   >,
@@ -327,7 +327,7 @@ pub struct WefBackendApi {
   pub set_dock_reopen_handler: Option<
     unsafe extern "C" fn(
       *mut c_void,
-      Option<dock::WefDockReopenFn>,
+      Option<dock::LaufeyDockReopenFn>,
       *mut c_void,
     ),
   >,
@@ -341,8 +341,8 @@ pub struct WefBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       u32,
-      *mut WefValue,
-      Option<WefMenuClickFn>,
+      *mut LaufeyValue,
+      Option<LaufeyMenuClickFn>,
       *mut c_void,
     ),
   >,
@@ -350,7 +350,7 @@ pub struct WefBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       u32,
-      Option<tray::WefTrayClickFn>,
+      Option<tray::LaufeyTrayClickFn>,
       *mut c_void,
     ),
   >,
@@ -358,13 +358,13 @@ pub struct WefBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       u32,
-      Option<tray::WefTrayClickFn>,
+      Option<tray::LaufeyTrayClickFn>,
       *mut c_void,
     ),
   >,
   pub set_tray_icon_dark:
     Option<unsafe extern "C" fn(*mut c_void, u32, *const c_void, usize)>,
-  // Mirrors wef.h: get_tray_icon_bounds sits between set_tray_icon_dark and
+  // Mirrors laufey.h: get_tray_icon_bounds sits between set_tray_icon_dark and
   // show_notification.
   pub get_tray_icon_bounds: Option<
     unsafe extern "C" fn(
@@ -379,8 +379,8 @@ pub struct WefBackendApi {
   pub show_notification: Option<
     unsafe extern "C" fn(
       *mut c_void,
-      *mut WefValue,
-      Option<notification::WefNotificationEventFn>,
+      *mut LaufeyValue,
+      Option<notification::LaufeyNotificationEventFn>,
       *mut c_void,
     ) -> u32,
   >,
@@ -389,7 +389,7 @@ pub struct WefBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       c_int,
-      Option<permission::WefPermissionCallbackFn>,
+      Option<permission::LaufeyPermissionCallbackFn>,
       *mut c_void,
     ),
   >,
@@ -397,20 +397,20 @@ pub struct WefBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       c_int,
-      Option<permission::WefPermissionCallbackFn>,
+      Option<permission::LaufeyPermissionCallbackFn>,
       *mut c_void,
     ),
   >,
 }
 
-unsafe impl Send for WefBackendApi {}
+unsafe impl Send for LaufeyBackendApi {}
 
-pub type RuntimeInitFn = unsafe extern "C" fn(*const WefBackendApi) -> c_int;
+pub type RuntimeInitFn = unsafe extern "C" fn(*const LaufeyBackendApi) -> c_int;
 pub type RuntimeStartFn = unsafe extern "C" fn() -> c_int;
 #[allow(dead_code)]
 pub type RuntimeShutdownFn = unsafe extern "C" fn();
 
-// --- SimpleValue: real WefValue backing type ---
+// --- SimpleValue: real LaufeyValue backing type ---
 
 enum SimpleValue {
   Null,
@@ -418,24 +418,24 @@ enum SimpleValue {
   Int(c_int),
   Double(f64),
   String(String),
-  List(Vec<*mut WefValue>),
-  Dict(Vec<(String, *mut WefValue)>),
+  List(Vec<*mut LaufeyValue>),
+  Dict(Vec<(String, *mut LaufeyValue)>),
   Binary(Vec<u8>),
 }
 
-fn sv_to_wef(val: SimpleValue) -> *mut WefValue {
-  Box::into_raw(Box::new(val)) as *mut WefValue
+fn sv_to_laufey(val: SimpleValue) -> *mut LaufeyValue {
+  Box::into_raw(Box::new(val)) as *mut LaufeyValue
 }
 
-unsafe fn wef_ref(ptr: *mut WefValue) -> &'static SimpleValue {
+unsafe fn laufey_ref(ptr: *mut LaufeyValue) -> &'static SimpleValue {
   &*(ptr as *const SimpleValue)
 }
 
-unsafe fn wef_mut(ptr: *mut WefValue) -> &'static mut SimpleValue {
+unsafe fn laufey_mut(ptr: *mut LaufeyValue) -> &'static mut SimpleValue {
   &mut *(ptr as *mut SimpleValue)
 }
 
-unsafe fn wef_free(ptr: *mut WefValue) {
+unsafe fn laufey_free(ptr: *mut LaufeyValue) {
   if ptr.is_null() {
     return;
   }
@@ -443,12 +443,12 @@ unsafe fn wef_free(ptr: *mut WefValue) {
   match *val {
     SimpleValue::List(items) => {
       for item in items {
-        wef_free(item);
+        laufey_free(item);
       }
     }
     SimpleValue::Dict(entries) => {
       for (_, v) in entries {
-        wef_free(v);
+        laufey_free(v);
       }
     }
     _ => {}
@@ -458,111 +458,111 @@ unsafe fn wef_free(ptr: *mut WefValue) {
 // --- Value functions ---
 
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_null(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_null(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return true;
   }
-  matches!(wef_ref(val), SimpleValue::Null)
+  matches!(laufey_ref(val), SimpleValue::Null)
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_bool(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_bool(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::Bool(_))
+  matches!(laufey_ref(val), SimpleValue::Bool(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_int(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_int(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::Int(_))
+  matches!(laufey_ref(val), SimpleValue::Int(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_double(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_double(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::Double(_))
+  matches!(laufey_ref(val), SimpleValue::Double(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_string(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_string(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::String(_))
+  matches!(laufey_ref(val), SimpleValue::String(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_list(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_list(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::List(_))
+  matches!(laufey_ref(val), SimpleValue::List(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_dict(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_dict(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::Dict(_))
+  matches!(laufey_ref(val), SimpleValue::Dict(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_binary(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_binary(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  matches!(wef_ref(val), SimpleValue::Binary(_))
+  matches!(laufey_ref(val), SimpleValue::Binary(_))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_is_callback(_val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_is_callback(_val: *mut LaufeyValue) -> bool {
   false // no callback support in winit backend
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_get_bool(val: *mut WefValue) -> bool {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_get_bool(val: *mut LaufeyValue) -> bool {
   if val.is_null() {
     return false;
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Bool(v) => *v,
     _ => false,
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_get_int(val: *mut WefValue) -> c_int {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_get_int(val: *mut LaufeyValue) -> c_int {
   if val.is_null() {
     return 0;
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Int(v) => *v,
     _ => 0,
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_get_double(val: *mut WefValue) -> f64 {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_get_double(val: *mut LaufeyValue) -> f64 {
   if val.is_null() {
     return 0.0;
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Double(v) => *v,
     _ => 0.0,
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_get_string(
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
   len: *mut usize,
 ) -> *mut c_char {
   if val.is_null() {
@@ -571,7 +571,7 @@ pub unsafe extern "C" fn value_get_string(
     }
     return std::ptr::null_mut();
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::String(s) => {
       if !len.is_null() {
         *len = s.len();
@@ -587,33 +587,33 @@ pub unsafe extern "C" fn value_get_string(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_free_string(s: *mut c_char) {
   if !s.is_null() {
     let _ = CString::from_raw(s);
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_list_size(val: *mut WefValue) -> usize {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_list_size(val: *mut LaufeyValue) -> usize {
   if val.is_null() {
     return 0;
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::List(items) => items.len(),
     _ => 0,
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_list_get(
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
   idx: usize,
-) -> *mut WefValue {
+) -> *mut LaufeyValue {
   if val.is_null() {
     return std::ptr::null_mut();
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::List(items) => {
       items.get(idx).copied().unwrap_or(std::ptr::null_mut())
     }
@@ -621,16 +621,16 @@ pub unsafe extern "C" fn value_list_get(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_dict_get(
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
   key: *const c_char,
-) -> *mut WefValue {
+) -> *mut LaufeyValue {
   if val.is_null() || key.is_null() {
     return std::ptr::null_mut();
   }
   let key_str = CStr::from_ptr(key).to_string_lossy();
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Dict(entries) => entries
       .iter()
       .find(|(k, _)| k == key_str.as_ref())
@@ -640,16 +640,16 @@ pub unsafe extern "C" fn value_dict_get(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_dict_has(
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
   key: *const c_char,
 ) -> bool {
   if val.is_null() || key.is_null() {
     return false;
   }
   let key_str = CStr::from_ptr(key).to_string_lossy();
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Dict(entries) => {
       entries.iter().any(|(k, _)| k == key_str.as_ref())
     }
@@ -657,20 +657,20 @@ pub unsafe extern "C" fn value_dict_has(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_dict_size(val: *mut WefValue) -> usize {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_dict_size(val: *mut LaufeyValue) -> usize {
   if val.is_null() {
     return 0;
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Dict(entries) => entries.len(),
     _ => 0,
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_dict_keys(
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
   count: *mut usize,
 ) -> *mut *mut c_char {
   if val.is_null() {
@@ -679,7 +679,7 @@ pub unsafe extern "C" fn value_dict_keys(
     }
     return std::ptr::null_mut();
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Dict(entries) => {
       let n = entries.len();
       if !count.is_null() {
@@ -704,7 +704,7 @@ pub unsafe extern "C" fn value_dict_keys(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_free_keys(keys: *mut *mut c_char, count: usize) {
   if keys.is_null() {
     return;
@@ -719,9 +719,9 @@ pub unsafe extern "C" fn value_free_keys(keys: *mut *mut c_char, count: usize) {
   std::alloc::dealloc(keys as *mut u8, layout);
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_get_binary(
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
   len: *mut usize,
 ) -> *const c_void {
   if val.is_null() {
@@ -730,7 +730,7 @@ pub unsafe extern "C" fn value_get_binary(
     }
     return std::ptr::null();
   }
-  match wef_ref(val) {
+  match laufey_ref(val) {
     SimpleValue::Binary(data) => {
       if !len.is_null() {
         *len = data.len();
@@ -746,84 +746,84 @@ pub unsafe extern "C" fn value_get_binary(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_get_callback_id(_val: *mut WefValue) -> u64 {
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_get_callback_id(_val: *mut LaufeyValue) -> u64 {
   0
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_null(_data: *mut c_void) -> *mut WefValue {
-  sv_to_wef(SimpleValue::Null)
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_null(_data: *mut c_void) -> *mut LaufeyValue {
+  sv_to_laufey(SimpleValue::Null)
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_bool(
   _data: *mut c_void,
   v: bool,
-) -> *mut WefValue {
-  sv_to_wef(SimpleValue::Bool(v))
+) -> *mut LaufeyValue {
+  sv_to_laufey(SimpleValue::Bool(v))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_int(
   _data: *mut c_void,
   v: c_int,
-) -> *mut WefValue {
-  sv_to_wef(SimpleValue::Int(v))
+) -> *mut LaufeyValue {
+  sv_to_laufey(SimpleValue::Int(v))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_double(
   _data: *mut c_void,
   v: f64,
-) -> *mut WefValue {
-  sv_to_wef(SimpleValue::Double(v))
+) -> *mut LaufeyValue {
+  sv_to_laufey(SimpleValue::Double(v))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_string(
   _data: *mut c_void,
   v: *const c_char,
-) -> *mut WefValue {
+) -> *mut LaufeyValue {
   if v.is_null() {
-    return sv_to_wef(SimpleValue::String(String::new()));
+    return sv_to_laufey(SimpleValue::String(String::new()));
   }
   let s = CStr::from_ptr(v).to_string_lossy().into_owned();
-  sv_to_wef(SimpleValue::String(s))
+  sv_to_laufey(SimpleValue::String(s))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_list(_data: *mut c_void) -> *mut WefValue {
-  sv_to_wef(SimpleValue::List(Vec::new()))
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_list(_data: *mut c_void) -> *mut LaufeyValue {
+  sv_to_laufey(SimpleValue::List(Vec::new()))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_dict(_data: *mut c_void) -> *mut WefValue {
-  sv_to_wef(SimpleValue::Dict(Vec::new()))
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_dict(_data: *mut c_void) -> *mut LaufeyValue {
+  sv_to_laufey(SimpleValue::Dict(Vec::new()))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_binary(
   _data: *mut c_void,
   d: *const c_void,
   len: usize,
-) -> *mut WefValue {
+) -> *mut LaufeyValue {
   if d.is_null() || len == 0 {
-    return sv_to_wef(SimpleValue::Binary(Vec::new()));
+    return sv_to_laufey(SimpleValue::Binary(Vec::new()));
   }
   let data = std::slice::from_raw_parts(d as *const u8, len).to_vec();
-  sv_to_wef(SimpleValue::Binary(data))
+  sv_to_laufey(SimpleValue::Binary(data))
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_list_append(
-  list: *mut WefValue,
-  val: *mut WefValue,
+  list: *mut LaufeyValue,
+  val: *mut LaufeyValue,
 ) -> bool {
   if list.is_null() || val.is_null() {
     return false;
   }
-  match wef_mut(list) {
+  match laufey_mut(list) {
     SimpleValue::List(items) => {
       items.push(val);
       true
@@ -832,18 +832,18 @@ pub unsafe extern "C" fn value_list_append(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_list_set(
-  list: *mut WefValue,
+  list: *mut LaufeyValue,
   idx: usize,
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
 ) -> bool {
   if list.is_null() || val.is_null() {
     return false;
   }
-  match wef_mut(list) {
+  match laufey_mut(list) {
     SimpleValue::List(items) if idx < items.len() => {
-      wef_free(items[idx]);
+      laufey_free(items[idx]);
       items[idx] = val;
       true
     }
@@ -851,22 +851,22 @@ pub unsafe extern "C" fn value_list_set(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn value_dict_set(
-  dict: *mut WefValue,
+  dict: *mut LaufeyValue,
   key: *const c_char,
-  val: *mut WefValue,
+  val: *mut LaufeyValue,
 ) -> bool {
   if dict.is_null() || key.is_null() || val.is_null() {
     return false;
   }
   let key_str = CStr::from_ptr(key).to_string_lossy().into_owned();
-  match wef_mut(dict) {
+  match laufey_mut(dict) {
     SimpleValue::Dict(entries) => {
       // Replace existing key if present
       for entry in entries.iter_mut() {
         if entry.0 == key_str {
-          wef_free(entry.1);
+          laufey_free(entry.1);
           entry.1 = val;
           return true;
         }
@@ -878,48 +878,48 @@ pub unsafe extern "C" fn value_dict_set(
   }
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
-pub unsafe extern "C" fn value_free(val: *mut WefValue) {
-  wef_free(val);
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
+pub unsafe extern "C" fn value_free(val: *mut LaufeyValue) {
+  laufey_free(val);
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn set_js_call_handler(
   _data: *mut c_void,
-  _handler: WefJsCallFn,
+  _handler: LaufeyJsCallFn,
   _user_data: *mut c_void,
 ) {
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn js_call_respond(
   _data: *mut c_void,
   _call_id: u64,
-  result: *mut WefValue,
-  error: *mut WefValue,
+  result: *mut LaufeyValue,
+  error: *mut LaufeyValue,
 ) {
-  wef_free(result);
-  wef_free(error);
+  laufey_free(result);
+  laufey_free(error);
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn invoke_js_callback(
   _data: *mut c_void,
   _cb_id: u64,
-  args: *mut WefValue,
+  args: *mut LaufeyValue,
 ) {
-  wef_free(args);
+  laufey_free(args);
 }
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn release_js_callback(_data: *mut c_void, _cb_id: u64) {}
 
-/// Fill the value/JS stub fields of a WefBackendApi. Backend-specific fields
+/// Fill the value/JS stub fields of a LaufeyBackendApi. Backend-specific fields
 /// (navigate, execute_js, quit, window management, handles) are left as None
 /// and must be set by the caller.
-pub fn create_api_base() -> WefBackendApi {
-  WefBackendApi {
-    version: WEF_API_VERSION,
+pub fn create_api_base() -> LaufeyBackendApi {
+  LaufeyBackendApi {
+    version: LAUFEY_API_VERSION,
     backend_data: std::ptr::null_mut(),
     create_window: None,
     close_window: None,
@@ -1043,7 +1043,7 @@ struct WindowHandleInfo {
 unsafe impl Send for WindowHandleInfo {}
 
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn backend_get_window_handle(
   _data: *mut c_void,
   window_id: u32,
@@ -1057,7 +1057,7 @@ pub unsafe extern "C" fn backend_get_window_handle(
 }
 
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn backend_get_display_handle(
   _data: *mut c_void,
   _window_id: u32,
@@ -1066,7 +1066,7 @@ pub unsafe extern "C" fn backend_get_display_handle(
 }
 
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn backend_get_window_handle_type(
   _data: *mut c_void,
   _window_id: u32,
@@ -1082,22 +1082,22 @@ pub fn store_window_handles(window_id: u32, window: &Window) {
       #[cfg(target_os = "macos")]
       RawWindowHandle::AppKit(handle) => {
         handle_ptr = handle.ns_view.as_ptr();
-        WINDOW_HANDLE_TYPE.store(WEF_WINDOW_HANDLE_APPKIT, Ordering::Release);
+        WINDOW_HANDLE_TYPE.store(LAUFEY_WINDOW_HANDLE_APPKIT, Ordering::Release);
       }
       #[cfg(target_os = "windows")]
       RawWindowHandle::Win32(handle) => {
         handle_ptr = handle.hwnd.get() as *mut c_void;
-        WINDOW_HANDLE_TYPE.store(WEF_WINDOW_HANDLE_WIN32, Ordering::Release);
+        WINDOW_HANDLE_TYPE.store(LAUFEY_WINDOW_HANDLE_WIN32, Ordering::Release);
       }
       #[cfg(target_os = "linux")]
       RawWindowHandle::Xlib(handle) => {
         handle_ptr = handle.window as *mut c_void;
-        WINDOW_HANDLE_TYPE.store(WEF_WINDOW_HANDLE_X11, Ordering::Release);
+        WINDOW_HANDLE_TYPE.store(LAUFEY_WINDOW_HANDLE_X11, Ordering::Release);
       }
       #[cfg(target_os = "linux")]
       RawWindowHandle::Wayland(handle) => {
         handle_ptr = handle.surface.as_ptr();
-        WINDOW_HANDLE_TYPE.store(WEF_WINDOW_HANDLE_WAYLAND, Ordering::Release);
+        WINDOW_HANDLE_TYPE.store(LAUFEY_WINDOW_HANDLE_WAYLAND, Ordering::Release);
       }
       _ => {}
     }
@@ -1135,7 +1135,7 @@ pub fn remove_window_handles(window_id: u32) {
 
 // --- Menu types ---
 
-pub type WefMenuClickFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char);
+pub type LaufeyMenuClickFn = unsafe extern "C" fn(*mut c_void, u32, *const c_char);
 
 pub enum ParsedMenuItem {
   Item {
@@ -1156,7 +1156,7 @@ pub enum ParsedMenuItem {
 
 pub struct PendingMenu {
   pub items: Vec<ParsedMenuItem>,
-  pub callback: Option<WefMenuClickFn>,
+  pub callback: Option<LaufeyMenuClickFn>,
   pub callback_data: usize,
 }
 
@@ -1164,12 +1164,12 @@ pub struct PendingContextMenu {
   pub x: i32,
   pub y: i32,
   pub items: Vec<ParsedMenuItem>,
-  pub callback: Option<WefMenuClickFn>,
+  pub callback: Option<LaufeyMenuClickFn>,
   pub callback_data: usize,
 }
 
-/// Helper to read a string from a WefValue dict entry.
-unsafe fn wef_dict_string(dict: *mut WefValue, key: &str) -> Option<String> {
+/// Helper to read a string from a LaufeyValue dict entry.
+unsafe fn laufey_dict_string(dict: *mut LaufeyValue, key: &str) -> Option<String> {
   let c_key = CString::new(key).ok()?;
   let val = value_dict_get(dict, c_key.as_ptr());
   if val.is_null() || !value_is_string(val) {
@@ -1185,11 +1185,11 @@ unsafe fn wef_dict_string(dict: *mut WefValue, key: &str) -> Option<String> {
   Some(s)
 }
 
-/// Parse a WefValue list into a vec of ParsedMenuItem.
+/// Parse a LaufeyValue list into a vec of ParsedMenuItem.
 /// # Safety
-/// Caller must pass valid pointers as defined by the WEF C API contract.
+/// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe fn parse_menu_template(
-  template: *mut WefValue,
+  template: *mut LaufeyValue,
 ) -> Vec<ParsedMenuItem> {
   let mut items = Vec::new();
   if template.is_null() || !value_is_list(template) {
@@ -1202,14 +1202,14 @@ pub unsafe fn parse_menu_template(
       continue;
     }
     // Check for separator
-    if let Some(ty) = wef_dict_string(entry, "type") {
+    if let Some(ty) = laufey_dict_string(entry, "type") {
       if ty == "separator" {
         items.push(ParsedMenuItem::Separator);
         continue;
       }
     }
     // Check for role
-    if let Some(role) = wef_dict_string(entry, "role") {
+    if let Some(role) = laufey_dict_string(entry, "role") {
       items.push(ParsedMenuItem::Role { role });
       continue;
     }
@@ -1217,7 +1217,7 @@ pub unsafe fn parse_menu_template(
     let c_submenu = CString::new("submenu").unwrap();
     let submenu_val = value_dict_get(entry, c_submenu.as_ptr());
     if !submenu_val.is_null() && value_is_list(submenu_val) {
-      let label = wef_dict_string(entry, "label").unwrap_or_default();
+      let label = laufey_dict_string(entry, "label").unwrap_or_default();
       let children = parse_menu_template(submenu_val);
       items.push(ParsedMenuItem::Submenu {
         label,
@@ -1226,9 +1226,9 @@ pub unsafe fn parse_menu_template(
       continue;
     }
     // Regular item
-    let label = wef_dict_string(entry, "label").unwrap_or_default();
-    let id = wef_dict_string(entry, "id").unwrap_or_else(|| label.clone());
-    let accelerator = wef_dict_string(entry, "accelerator");
+    let label = laufey_dict_string(entry, "label").unwrap_or_default();
+    let id = laufey_dict_string(entry, "id").unwrap_or_else(|| label.clone());
+    let accelerator = laufey_dict_string(entry, "accelerator");
     let c_enabled = CString::new("enabled").unwrap();
     let enabled_val = value_dict_get(entry, c_enabled.as_ptr());
     let enabled = if enabled_val.is_null() || !value_is_bool(enabled_val) {
@@ -1249,7 +1249,7 @@ pub unsafe fn parse_menu_template(
 // --- Menu callback storage ---
 
 struct MenuCallbackInfo {
-  callback: WefMenuClickFn,
+  callback: LaufeyMenuClickFn,
   callback_data: usize,
   window_id: u32,
 }
@@ -1266,7 +1266,7 @@ thread_local! {
 
 pub fn register_menu_callbacks(
   items: &[ParsedMenuItem],
-  callback: Option<WefMenuClickFn>,
+  callback: Option<LaufeyMenuClickFn>,
   callback_data: usize,
   window_id: u32,
 ) {
@@ -1471,7 +1471,7 @@ pub struct WindowState {
   pub pending_resizable: Mutex<Option<bool>>,
   pub pending_always_on_top: Mutex<Option<bool>>,
   pub pending_visible: Mutex<Option<bool>>,
-  /// Creation-time style flags (WEF_WINDOW_FLAG_*) for frameless /
+  /// Creation-time style flags (LAUFEY_WINDOW_FLAG_*) for frameless /
   /// non-activating panel windows; applied when the winit Window is built.
   pub pending_flags: Mutex<u32>,
   pub pending_app_menu: Mutex<Option<PendingMenu>>,
@@ -1511,15 +1511,15 @@ impl Default for WindowState {
 // --- Global event handler state (registered once, dispatches for all windows) ---
 
 pub struct EventHandlers {
-  pub keyboard_handler: Mutex<Option<(WefKeyboardEventFn, usize)>>,
-  pub mouse_click_handler: Mutex<Option<(WefMouseClickFn, usize)>>,
-  pub mouse_move_handler: Mutex<Option<(WefMouseMoveFn, usize)>>,
-  pub wheel_handler: Mutex<Option<(WefWheelFn, usize)>>,
-  pub cursor_enter_leave_handler: Mutex<Option<(WefCursorEnterLeaveFn, usize)>>,
-  pub focused_handler: Mutex<Option<(WefFocusedFn, usize)>>,
-  pub resize_handler: Mutex<Option<(WefResizeFn, usize)>>,
-  pub move_handler: Mutex<Option<(WefMoveFn, usize)>>,
-  pub close_requested_handler: Mutex<Option<(WefCloseRequestedFn, usize)>>,
+  pub keyboard_handler: Mutex<Option<(LaufeyKeyboardEventFn, usize)>>,
+  pub mouse_click_handler: Mutex<Option<(LaufeyMouseClickFn, usize)>>,
+  pub mouse_move_handler: Mutex<Option<(LaufeyMouseMoveFn, usize)>>,
+  pub wheel_handler: Mutex<Option<(LaufeyWheelFn, usize)>>,
+  pub cursor_enter_leave_handler: Mutex<Option<(LaufeyCursorEnterLeaveFn, usize)>>,
+  pub focused_handler: Mutex<Option<(LaufeyFocusedFn, usize)>>,
+  pub resize_handler: Mutex<Option<(LaufeyResizeFn, usize)>>,
+  pub move_handler: Mutex<Option<(LaufeyMoveFn, usize)>>,
+  pub close_requested_handler: Mutex<Option<(LaufeyCloseRequestedFn, usize)>>,
 }
 
 impl EventHandlers {
@@ -1974,7 +1974,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_keyboard_event_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefKeyboardEventFn>,
+      handler: Option<$crate::LaufeyKeyboardEventFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -1985,7 +1985,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_mouse_click_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefMouseClickFn>,
+      handler: Option<$crate::LaufeyMouseClickFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -1996,7 +1996,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_mouse_move_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefMouseMoveFn>,
+      handler: Option<$crate::LaufeyMouseMoveFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2007,7 +2007,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_wheel_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefWheelFn>,
+      handler: Option<$crate::LaufeyWheelFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2018,7 +2018,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_cursor_enter_leave_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefCursorEnterLeaveFn>,
+      handler: Option<$crate::LaufeyCursorEnterLeaveFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2033,7 +2033,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_focused_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefFocusedFn>,
+      handler: Option<$crate::LaufeyFocusedFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2044,7 +2044,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_resize_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefResizeFn>,
+      handler: Option<$crate::LaufeyResizeFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2055,7 +2055,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_move_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefMoveFn>,
+      handler: Option<$crate::LaufeyMoveFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2066,7 +2066,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_close_requested_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::WefCloseRequestedFn>,
+      handler: Option<$crate::LaufeyCloseRequestedFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
@@ -2153,8 +2153,8 @@ macro_rules! define_common_backend_fns {
     unsafe extern "C" fn backend_set_application_menu(
       _data: *mut ::std::ffi::c_void,
       window_id: u32,
-      template: *mut $crate::WefValue,
-      callback: Option<$crate::WefMenuClickFn>,
+      template: *mut $crate::LaufeyValue,
+      callback: Option<$crate::LaufeyMenuClickFn>,
       callback_data: *mut ::std::ffi::c_void,
     ) {
       let items = $crate::parse_menu_template(template);
@@ -2180,8 +2180,8 @@ macro_rules! define_common_backend_fns {
       window_id: u32,
       x: ::std::ffi::c_int,
       y: ::std::ffi::c_int,
-      template: *mut $crate::WefValue,
-      callback: Option<$crate::WefMenuClickFn>,
+      template: *mut $crate::LaufeyValue,
+      callback: Option<$crate::LaufeyMenuClickFn>,
       callback_data: *mut ::std::ffi::c_void,
     ) {
       let items = $crate::parse_menu_template(template);
@@ -2244,8 +2244,8 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_dock_menu(
       _data: *mut ::std::ffi::c_void,
-      template: *mut $crate::WefValue,
-      callback: Option<$crate::WefMenuClickFn>,
+      template: *mut $crate::LaufeyValue,
+      callback: Option<$crate::LaufeyMenuClickFn>,
       callback_data: *mut ::std::ffi::c_void,
     ) {
       let pm = if template.is_null() {
@@ -2285,7 +2285,7 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_set_dock_reopen_handler(
       _data: *mut ::std::ffi::c_void,
-      handler: Option<$crate::dock::WefDockReopenFn>,
+      handler: Option<$crate::dock::LaufeyDockReopenFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       let h = handler.map(|f| (f, user_data as usize));
@@ -2367,8 +2367,8 @@ macro_rules! define_common_backend_fns {
     unsafe extern "C" fn backend_set_tray_menu(
       _data: *mut ::std::ffi::c_void,
       tray_id: u32,
-      template: *mut $crate::WefValue,
-      callback: Option<$crate::WefMenuClickFn>,
+      template: *mut $crate::LaufeyValue,
+      callback: Option<$crate::LaufeyMenuClickFn>,
       callback_data: *mut ::std::ffi::c_void,
     ) {
       if template.is_null() {
@@ -2395,7 +2395,7 @@ macro_rules! define_common_backend_fns {
     unsafe extern "C" fn backend_set_tray_click_handler(
       _data: *mut ::std::ffi::c_void,
       tray_id: u32,
-      handler: Option<$crate::tray::WefTrayClickFn>,
+      handler: Option<$crate::tray::LaufeyTrayClickFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       $crate::tray::queue_op($crate::tray::TrayOp::SetClickHandler {
@@ -2415,7 +2415,7 @@ macro_rules! define_common_backend_fns {
     unsafe extern "C" fn backend_set_tray_double_click_handler(
       _data: *mut ::std::ffi::c_void,
       tray_id: u32,
-      handler: Option<$crate::tray::WefTrayClickFn>,
+      handler: Option<$crate::tray::LaufeyTrayClickFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       $crate::tray::queue_op($crate::tray::TrayOp::SetDoubleClickHandler {
@@ -2482,9 +2482,9 @@ macro_rules! define_common_backend_fns {
 
     unsafe extern "C" fn backend_show_notification(
       _data: *mut ::std::ffi::c_void,
-      options: *mut $crate::WefValue,
+      options: *mut $crate::LaufeyValue,
       on_event: ::std::option::Option<
-        $crate::notification::WefNotificationEventFn,
+        $crate::notification::LaufeyNotificationEventFn,
       >,
       user_data: *mut ::std::ffi::c_void,
     ) -> u32 {
@@ -2501,7 +2501,7 @@ macro_rules! define_common_backend_fns {
     unsafe extern "C" fn backend_query_permission(
       _data: *mut ::std::ffi::c_void,
       kind: ::std::ffi::c_int,
-      cb: ::std::option::Option<$crate::permission::WefPermissionCallbackFn>,
+      cb: ::std::option::Option<$crate::permission::LaufeyPermissionCallbackFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       $crate::permission::query_permission(kind, cb, user_data);
@@ -2510,7 +2510,7 @@ macro_rules! define_common_backend_fns {
     unsafe extern "C" fn backend_request_permission(
       _data: *mut ::std::ffi::c_void,
       kind: ::std::ffi::c_int,
-      cb: ::std::option::Option<$crate::permission::WefPermissionCallbackFn>,
+      cb: ::std::option::Option<$crate::permission::LaufeyPermissionCallbackFn>,
       user_data: *mut ::std::ffi::c_void,
     ) {
       $crate::permission::request_permission(kind, cb, user_data);
@@ -2782,11 +2782,11 @@ pub fn apply_pending_attrs(
     attrs = attrs.with_title(title.clone());
   }
   let flags = *ws.pending_flags.lock().unwrap();
-  if flags & WEF_WINDOW_FLAG_FRAMELESS != 0 {
+  if flags & LAUFEY_WINDOW_FLAG_FRAMELESS != 0 {
     // Drop the title bar and standard window chrome.
     attrs = attrs.with_decorations(false);
   }
-  if flags & WEF_WINDOW_FLAG_NO_ACTIVATE != 0 {
+  if flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE != 0 {
     // Don't activate / take focus when first shown.
     attrs = attrs.with_active(false);
   }
@@ -2800,7 +2800,7 @@ pub fn apply_pending_post_create(ws: &WindowState, window: &Window) {
   }
   // A non-activating panel floats above normal windows, like a tray popover
   // (matches the NSPanel / always-on-top behavior of the other backends).
-  if *ws.pending_flags.lock().unwrap() & WEF_WINDOW_FLAG_NO_ACTIVATE != 0 {
+  if *ws.pending_flags.lock().unwrap() & LAUFEY_WINDOW_FLAG_NO_ACTIVATE != 0 {
     window.set_window_level(WindowLevel::AlwaysOnTop);
   }
 }
@@ -2814,7 +2814,7 @@ pub fn show_native_dialog(
   default_value: &str,
 ) -> (bool, Option<String>) {
   match dialog_type {
-    WEF_DIALOG_ALERT => {
+    LAUFEY_DIALOG_ALERT => {
       rfd::MessageDialog::new()
         .set_title(title)
         .set_description(message)
@@ -2822,7 +2822,7 @@ pub fn show_native_dialog(
         .show();
       (true, None)
     }
-    WEF_DIALOG_CONFIRM => {
+    LAUFEY_DIALOG_CONFIRM => {
       let result = rfd::MessageDialog::new()
         .set_title(title)
         .set_description(message)
@@ -2830,7 +2830,7 @@ pub fn show_native_dialog(
         .show();
       (result == rfd::MessageDialogResult::Ok, None)
     }
-    WEF_DIALOG_PROMPT => show_prompt_dialog(title, message, default_value),
+    LAUFEY_DIALOG_PROMPT => show_prompt_dialog(title, message, default_value),
     _ => (false, None),
   }
 }
@@ -2929,37 +2929,37 @@ fn show_prompt_dialog(
 
 // --- Keyboard modifier flags ---
 
-pub const WEF_MOD_SHIFT: u32 = 1 << 0;
-pub const WEF_MOD_CONTROL: u32 = 1 << 1;
-pub const WEF_MOD_ALT: u32 = 1 << 2;
-pub const WEF_MOD_META: u32 = 1 << 3;
+pub const LAUFEY_MOD_SHIFT: u32 = 1 << 0;
+pub const LAUFEY_MOD_CONTROL: u32 = 1 << 1;
+pub const LAUFEY_MOD_ALT: u32 = 1 << 2;
+pub const LAUFEY_MOD_META: u32 = 1 << 3;
 
-pub const WEF_KEY_PRESSED: c_int = 0;
-pub const WEF_KEY_RELEASED: c_int = 1;
+pub const LAUFEY_KEY_PRESSED: c_int = 0;
+pub const LAUFEY_KEY_RELEASED: c_int = 1;
 
-pub const WEF_MOUSE_BUTTON_LEFT: c_int = 0;
-pub const WEF_MOUSE_BUTTON_RIGHT: c_int = 1;
-pub const WEF_MOUSE_BUTTON_MIDDLE: c_int = 2;
-pub const WEF_MOUSE_BUTTON_BACK: c_int = 3;
-pub const WEF_MOUSE_BUTTON_FORWARD: c_int = 4;
+pub const LAUFEY_MOUSE_BUTTON_LEFT: c_int = 0;
+pub const LAUFEY_MOUSE_BUTTON_RIGHT: c_int = 1;
+pub const LAUFEY_MOUSE_BUTTON_MIDDLE: c_int = 2;
+pub const LAUFEY_MOUSE_BUTTON_BACK: c_int = 3;
+pub const LAUFEY_MOUSE_BUTTON_FORWARD: c_int = 4;
 
-pub const WEF_MOUSE_PRESSED: c_int = 0;
-pub const WEF_MOUSE_RELEASED: c_int = 1;
+pub const LAUFEY_MOUSE_PRESSED: c_int = 0;
+pub const LAUFEY_MOUSE_RELEASED: c_int = 1;
 
-/// Convert winit modifier state to WEF modifier bitmask.
-pub fn modifiers_to_wef(mods: winit::keyboard::ModifiersState) -> u32 {
+/// Convert winit modifier state to LAUFEY modifier bitmask.
+pub fn modifiers_to_laufey(mods: winit::keyboard::ModifiersState) -> u32 {
   let mut flags = 0u32;
   if mods.shift_key() {
-    flags |= WEF_MOD_SHIFT;
+    flags |= LAUFEY_MOD_SHIFT;
   }
   if mods.control_key() {
-    flags |= WEF_MOD_CONTROL;
+    flags |= LAUFEY_MOD_CONTROL;
   }
   if mods.alt_key() {
-    flags |= WEF_MOD_ALT;
+    flags |= LAUFEY_MOD_ALT;
   }
   if mods.super_key() {
-    flags |= WEF_MOD_META;
+    flags |= LAUFEY_MOD_META;
   }
   flags
 }
@@ -2998,12 +2998,12 @@ pub fn dispatch_keyboard_event(
   let handler = handlers.keyboard_handler.lock().unwrap();
   if let Some((cb, user_data)) = *handler {
     let state = match key_event.state {
-      winit::event::ElementState::Pressed => WEF_KEY_PRESSED,
-      winit::event::ElementState::Released => WEF_KEY_RELEASED,
+      winit::event::ElementState::Pressed => LAUFEY_KEY_PRESSED,
+      winit::event::ElementState::Released => LAUFEY_KEY_RELEASED,
     };
     let key_str = winit_key_to_string(&key_event.logical_key);
     let code_str = winit_code_to_string(&key_event.physical_key);
-    let mods = modifiers_to_wef(modifiers);
+    let mods = modifiers_to_laufey(modifiers);
 
     let c_key = std::ffi::CString::new(key_str).unwrap_or_default();
     let c_code = std::ffi::CString::new(code_str).unwrap_or_default();
@@ -3022,14 +3022,14 @@ pub fn dispatch_keyboard_event(
   }
 }
 
-/// Convert a winit mouse button to a WEF mouse button constant.
-pub fn winit_button_to_wef(button: winit::event::MouseButton) -> c_int {
+/// Convert a winit mouse button to a LAUFEY mouse button constant.
+pub fn winit_button_to_laufey(button: winit::event::MouseButton) -> c_int {
   match button {
-    winit::event::MouseButton::Left => WEF_MOUSE_BUTTON_LEFT,
-    winit::event::MouseButton::Right => WEF_MOUSE_BUTTON_RIGHT,
-    winit::event::MouseButton::Middle => WEF_MOUSE_BUTTON_MIDDLE,
-    winit::event::MouseButton::Back => WEF_MOUSE_BUTTON_BACK,
-    winit::event::MouseButton::Forward => WEF_MOUSE_BUTTON_FORWARD,
+    winit::event::MouseButton::Left => LAUFEY_MOUSE_BUTTON_LEFT,
+    winit::event::MouseButton::Right => LAUFEY_MOUSE_BUTTON_RIGHT,
+    winit::event::MouseButton::Middle => LAUFEY_MOUSE_BUTTON_MIDDLE,
+    winit::event::MouseButton::Back => LAUFEY_MOUSE_BUTTON_BACK,
+    winit::event::MouseButton::Forward => LAUFEY_MOUSE_BUTTON_FORWARD,
     winit::event::MouseButton::Other(_) => -1,
   }
 }
@@ -3050,15 +3050,15 @@ pub fn dispatch_mouse_click_event(
   let handler = handlers.mouse_click_handler.lock().unwrap();
   if let Some((cb, user_data)) = *handler {
     let state = match button_state {
-      winit::event::ElementState::Pressed => WEF_MOUSE_PRESSED,
-      winit::event::ElementState::Released => WEF_MOUSE_RELEASED,
+      winit::event::ElementState::Pressed => LAUFEY_MOUSE_PRESSED,
+      winit::event::ElementState::Released => LAUFEY_MOUSE_RELEASED,
     };
-    let wef_button = winit_button_to_wef(button);
-    if wef_button < 0 {
+    let laufey_button = winit_button_to_laufey(button);
+    if laufey_button < 0 {
       return;
     }
     let (x, y) = *ws.cursor_position.lock().unwrap();
-    let mods = modifiers_to_wef(modifiers);
+    let mods = modifiers_to_laufey(modifiers);
 
     let click_count = if button_state == winit::event::ElementState::Pressed {
       let now = std::time::Instant::now();
@@ -3087,7 +3087,7 @@ pub fn dispatch_mouse_click_event(
         user_data as *mut c_void,
         window_id,
         state,
-        wef_button,
+        laufey_button,
         x,
         y,
         mods,
@@ -3106,7 +3106,7 @@ pub fn dispatch_mouse_move_event(
 ) {
   let handler = handlers.mouse_move_handler.lock().unwrap();
   if let Some((cb, user_data)) = *handler {
-    let mods = modifiers_to_wef(modifiers);
+    let mods = modifiers_to_laufey(modifiers);
     unsafe {
       cb(user_data as *mut c_void, window_id, x, y, mods);
     }
@@ -3124,14 +3124,14 @@ pub fn dispatch_wheel_event(
   if let Some((cb, user_data)) = *handler {
     let (delta_x, delta_y, delta_mode) = match delta {
       winit::event::MouseScrollDelta::LineDelta(dx, dy) => {
-        (dx as f64, dy as f64, WEF_WHEEL_DELTA_LINE)
+        (dx as f64, dy as f64, LAUFEY_WHEEL_DELTA_LINE)
       }
       winit::event::MouseScrollDelta::PixelDelta(d) => {
-        (d.x, d.y, WEF_WHEEL_DELTA_PIXEL)
+        (d.x, d.y, LAUFEY_WHEEL_DELTA_PIXEL)
       }
     };
     let (x, y) = *ws.cursor_position.lock().unwrap();
-    let mods = modifiers_to_wef(modifiers);
+    let mods = modifiers_to_laufey(modifiers);
     unsafe {
       cb(
         user_data as *mut c_void,
@@ -3157,7 +3157,7 @@ pub fn dispatch_cursor_enter_leave_event(
   let handler = handlers.cursor_enter_leave_handler.lock().unwrap();
   if let Some((cb, user_data)) = *handler {
     let (x, y) = *ws.cursor_position.lock().unwrap();
-    let mods = modifiers_to_wef(modifiers);
+    let mods = modifiers_to_laufey(modifiers);
     unsafe {
       cb(
         user_data as *mut c_void,
@@ -3231,7 +3231,7 @@ pub fn dispatch_close_requested_event(
 // --- Runtime loading ---
 
 pub fn find_runtime_library() -> Option<PathBuf> {
-  if let Ok(path) = env::var("WEF_RUNTIME_PATH") {
+  if let Ok(path) = env::var("LAUFEY_RUNTIME_PATH") {
     let p = PathBuf::from(path);
     if p.exists() {
       return Some(p);
@@ -3257,7 +3257,7 @@ pub fn find_runtime_library() -> Option<PathBuf> {
   None
 }
 
-pub fn load_and_start_runtime(api: WefBackendApi) {
+pub fn load_and_start_runtime(api: LaufeyBackendApi) {
   let runtime_path = find_runtime_library();
   match runtime_path {
     Some(path) => {
@@ -3271,19 +3271,19 @@ pub fn load_and_start_runtime(api: WefBackendApi) {
           }
         };
 
-        let init: Symbol<RuntimeInitFn> = match lib.get(b"wef_runtime_init\0") {
+        let init: Symbol<RuntimeInitFn> = match lib.get(b"laufey_runtime_init\0") {
           Ok(f) => f,
           Err(e) => {
-            eprintln!("Failed to find wef_runtime_init: {}", e);
+            eprintln!("Failed to find laufey_runtime_init: {}", e);
             return;
           }
         };
 
         let start: Symbol<RuntimeStartFn> =
-          match lib.get(b"wef_runtime_start\0") {
+          match lib.get(b"laufey_runtime_start\0") {
             Ok(f) => f,
             Err(e) => {
-              eprintln!("Failed to find wef_runtime_start: {}", e);
+              eprintln!("Failed to find laufey_runtime_start: {}", e);
               return;
             }
           };
@@ -3304,7 +3304,7 @@ pub fn load_and_start_runtime(api: WefBackendApi) {
       });
     }
     None => {
-      println!("No runtime library found. Set WEF_RUNTIME_PATH or place libruntime in current directory.");
+      println!("No runtime library found. Set LAUFEY_RUNTIME_PATH or place libruntime in current directory.");
       println!("Starting without runtime integration...");
     }
   }

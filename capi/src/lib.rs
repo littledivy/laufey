@@ -24,31 +24,31 @@ pub use keyboard::*;
 mod mouse;
 pub use mouse::*;
 
-/// Version of this wef crate. Used by downstream consumers (e.g. the Deno CLI)
+/// Version of this laufey crate. Used by downstream consumers (e.g. the Deno CLI)
 /// to locate matching prebuilt backend binaries in GitHub releases
-/// (`github.com/denoland/wef/releases/tag/v{VERSION}`).
+/// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const WEF_API_VERSION: u32 = 25;
+pub const LAUFEY_API_VERSION: u32 = 25;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
-/// Mirror the `WEF_WINDOW_FLAG_*` constants in `wef.h`.
-pub const WEF_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
-pub const WEF_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
-pub const WEF_WINDOW_FLAG_TRANSPARENT_TITLEBAR: u32 = 1 << 2;
+/// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
+pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
+pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
+pub const LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR: u32 = 1 << 2;
 
-pub const WEF_WINDOW_HANDLE_UNKNOWN: i32 = 0;
-pub const WEF_WINDOW_HANDLE_APPKIT: i32 = 1;
-pub const WEF_WINDOW_HANDLE_WIN32: i32 = 2;
-pub const WEF_WINDOW_HANDLE_X11: i32 = 3;
-pub const WEF_WINDOW_HANDLE_WAYLAND: i32 = 4;
-pub type WefValue = ffi::wef_value_t;
-pub type WefBackendApi = ffi::wef_backend_api_t;
+pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: i32 = 0;
+pub const LAUFEY_WINDOW_HANDLE_APPKIT: i32 = 1;
+pub const LAUFEY_WINDOW_HANDLE_WIN32: i32 = 2;
+pub const LAUFEY_WINDOW_HANDLE_X11: i32 = 3;
+pub const LAUFEY_WINDOW_HANDLE_WAYLAND: i32 = 4;
+pub type LaufeyValue = ffi::laufey_value_t;
+pub type LaufeyBackendApi = ffi::laufey_backend_api_t;
 
-unsafe impl Send for WefBackendApi {}
-unsafe impl Sync for WefBackendApi {}
+unsafe impl Send for LaufeyBackendApi {}
+unsafe impl Sync for LaufeyBackendApi {}
 
-static BACKEND_API: OnceLock<&'static WefBackendApi> = OnceLock::new();
+static BACKEND_API: OnceLock<&'static LaufeyBackendApi> = OnceLock::new();
 static SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
 static BINDINGS: OnceLock<
   Mutex<HashMap<u32, HashMap<String, BindingHandler>>>,
@@ -90,7 +90,7 @@ enum BindingHandler {
   ),
 }
 
-fn api() -> &'static WefBackendApi {
+fn api() -> &'static LaufeyBackendApi {
   BACKEND_API.get().expect("Backend API not initialized")
 }
 
@@ -103,17 +103,17 @@ fn js_call_notify() -> &'static Notify {
 }
 
 /// # Safety
-/// `api` must be either null or a valid pointer to a `WefBackendApi` with
+/// `api` must be either null or a valid pointer to a `LaufeyBackendApi` with
 /// static lifetime.
-pub unsafe fn init_api(api: *const WefBackendApi) -> c_int {
+pub unsafe fn init_api(api: *const LaufeyBackendApi) -> c_int {
   if api.is_null() {
     return -1;
   }
-  let api_ref: &'static WefBackendApi = unsafe { &*api };
-  if api_ref.version != WEF_API_VERSION {
+  let api_ref: &'static LaufeyBackendApi = unsafe { &*api };
+  if api_ref.version != LAUFEY_API_VERSION {
     eprintln!(
       "API version mismatch: expected {}, got {}",
-      WEF_API_VERSION, api_ref.version
+      LAUFEY_API_VERSION, api_ref.version
     );
     return -2;
   }
@@ -147,9 +147,9 @@ pub enum Value {
 
 impl Value {
   /// # Safety
-  /// `ptr` must be null or a valid pointer to a `WefValue` produced by the
+  /// `ptr` must be null or a valid pointer to a `LaufeyValue` produced by the
   /// backend API.
-  pub unsafe fn from_raw(ptr: *mut WefValue) -> Option<Self> {
+  pub unsafe fn from_raw(ptr: *mut LaufeyValue) -> Option<Self> {
     if ptr.is_null() {
       return None;
     }
@@ -239,7 +239,7 @@ impl Value {
     Some(Value::Null)
   }
 
-  pub fn to_raw(&self) -> *mut WefValue {
+  pub fn to_raw(&self) -> *mut LaufeyValue {
     let api = api();
     let bd = api.backend_data;
 
@@ -377,7 +377,7 @@ unsafe extern "C" fn js_call_handler(
   window_id: u32,
   call_id: u64,
   method_path: *const c_char,
-  args: *mut WefValue,
+  args: *mut LaufeyValue,
 ) {
   let method = if method_path.is_null() {
     String::new()
@@ -511,13 +511,13 @@ impl WindowOptions {
   fn to_flags(self) -> u32 {
     let mut flags = 0;
     if self.frameless {
-      flags |= WEF_WINDOW_FLAG_FRAMELESS;
+      flags |= LAUFEY_WINDOW_FLAG_FRAMELESS;
     }
     if self.no_activate {
-      flags |= WEF_WINDOW_FLAG_NO_ACTIVATE;
+      flags |= LAUFEY_WINDOW_FLAG_NO_ACTIVATE;
     }
     if self.transparent_titlebar {
-      flags |= WEF_WINDOW_FLAG_TRANSPARENT_TITLEBAR;
+      flags |= LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR;
     }
     flags
   }
@@ -720,8 +720,8 @@ impl Window {
       match callback {
         Some(cb_fn) => {
           unsafe extern "C" fn trampoline(
-            result: *mut WefValue,
-            error: *mut WefValue,
+            result: *mut LaufeyValue,
+            error: *mut LaufeyValue,
             user_data: *mut c_void,
           ) {
             let cb = Box::from_raw(
@@ -789,7 +789,7 @@ impl Window {
     if let Some(f) = api.get_window_handle_type {
       unsafe { f(api.backend_data, self.id) }
     } else {
-      WEF_WINDOW_HANDLE_UNKNOWN
+      LAUFEY_WINDOW_HANDLE_UNKNOWN
     }
   }
 
@@ -995,15 +995,15 @@ impl Window {
 
   /// Show an alert dialog. Blocks until dismissed.
   pub fn alert(&self, title: &str, message: &str) {
-    show_dialog_blocking(self.id, WEF_DIALOG_ALERT, title, message, "");
+    show_dialog_blocking(self.id, LAUFEY_DIALOG_ALERT, title, message, "");
   }
 
   /// Show a confirm dialog. Returns `true` if OK was pressed. Blocks
   /// until dismissed; while the modal is up the platform's event loop is
-  /// pumped so other WEF windows continue to render and respond.
+  /// pumped so other LAUFEY windows continue to render and respond.
   pub fn confirm(&self, title: &str, message: &str) -> bool {
     let (confirmed, _) =
-      show_dialog_blocking(self.id, WEF_DIALOG_CONFIRM, title, message, "");
+      show_dialog_blocking(self.id, LAUFEY_DIALOG_CONFIRM, title, message, "");
     confirmed
   }
 
@@ -1017,7 +1017,7 @@ impl Window {
   ) -> Option<String> {
     let (confirmed, input) = show_dialog_blocking(
       self.id,
-      WEF_DIALOG_PROMPT,
+      LAUFEY_DIALOG_PROMPT,
       title,
       message,
       default_value,
@@ -1048,7 +1048,7 @@ fn show_dialog_blocking(
   let c_message = CString::new(message).expect("Invalid message");
   let c_default = CString::new(default_value).expect("Invalid default value");
   let mut out_input: *mut c_char = std::ptr::null_mut();
-  let want_input = dialog_type == WEF_DIALOG_PROMPT;
+  let want_input = dialog_type == LAUFEY_DIALOG_PROMPT;
   // SAFETY: All pointers are valid for the duration of the call. The
   // backend may write a heap-allocated string into `out_input`; we hand it
   // back to the backend's deallocator below.
@@ -1256,9 +1256,9 @@ pub fn bounce_dock(kind: DockBounceType) {
   if let Some(f) = api.bounce_dock {
     let ty = match kind {
       DockBounceType::Informational => {
-        ffi::WEF_DOCK_BOUNCE_INFORMATIONAL as c_int
+        ffi::LAUFEY_DOCK_BOUNCE_INFORMATIONAL as c_int
       }
-      DockBounceType::Critical => ffi::WEF_DOCK_BOUNCE_CRITICAL as c_int,
+      DockBounceType::Critical => ffi::LAUFEY_DOCK_BOUNCE_CRITICAL as c_int,
     };
     unsafe { f(api.backend_data, ty) };
   }
@@ -1682,10 +1682,10 @@ impl Drop for TrayIcon {
   }
 }
 
-/// Set the global JS namespace name for bindings (default: `"Wef"`).
+/// Set the global JS namespace name for bindings (default: `"Laufey"`).
 /// Must be called before creating any windows.
 /// ```no_run
-/// just_wef::set_js_namespace("MyApp");
+/// laufey::set_js_namespace("MyApp");
 /// // JS code can now use: window.MyApp.greet("world")
 /// ```
 pub fn set_js_namespace(name: &str) {
@@ -1696,22 +1696,22 @@ pub fn set_js_namespace(name: &str) {
   }
 }
 
-pub const WEF_DIALOG_ALERT: i32 = 0;
-pub const WEF_DIALOG_CONFIRM: i32 = 1;
-pub const WEF_DIALOG_PROMPT: i32 = 2;
+pub const LAUFEY_DIALOG_ALERT: i32 = 0;
+pub const LAUFEY_DIALOG_CONFIRM: i32 = 1;
+pub const LAUFEY_DIALOG_PROMPT: i32 = 2;
 
 /// Show an alert dialog (app-wide, no parent window). Blocks until
 /// dismissed; the platform's modal run loop pumps OS events while the
-/// dialog is up so other WEF windows continue to render and respond.
+/// dialog is up so other LAUFEY windows continue to render and respond.
 pub fn alert(title: &str, message: &str) {
-  show_dialog_blocking(0, WEF_DIALOG_ALERT, title, message, "");
+  show_dialog_blocking(0, LAUFEY_DIALOG_ALERT, title, message, "");
 }
 
 /// Show a confirm dialog (app-wide). Returns `true` if OK was pressed.
 /// Blocking semantics as `alert`.
 pub fn confirm(title: &str, message: &str) -> bool {
   let (confirmed, _) =
-    show_dialog_blocking(0, WEF_DIALOG_CONFIRM, title, message, "");
+    show_dialog_blocking(0, LAUFEY_DIALOG_CONFIRM, title, message, "");
   confirmed
 }
 
@@ -1723,7 +1723,7 @@ pub fn prompt(
   default_value: &str,
 ) -> Option<String> {
   let (confirmed, input) =
-    show_dialog_blocking(0, WEF_DIALOG_PROMPT, title, message, default_value);
+    show_dialog_blocking(0, LAUFEY_DIALOG_PROMPT, title, message, default_value);
   if confirmed {
     input
   } else {
@@ -1733,10 +1733,10 @@ pub fn prompt(
 
 // --- Notifications ---
 
-pub const WEF_NOTIFICATION_SHOWN: i32 = 0;
-pub const WEF_NOTIFICATION_CLICKED: i32 = 1;
-pub const WEF_NOTIFICATION_CLOSED: i32 = 2;
-pub const WEF_NOTIFICATION_ACTION: i32 = 3;
+pub const LAUFEY_NOTIFICATION_SHOWN: i32 = 0;
+pub const LAUFEY_NOTIFICATION_CLICKED: i32 = 1;
+pub const LAUFEY_NOTIFICATION_CLOSED: i32 = 2;
+pub const LAUFEY_NOTIFICATION_ACTION: i32 = 3;
 
 /// What happened to a notification.
 #[derive(Debug, Clone)]
@@ -1952,10 +1952,10 @@ unsafe extern "C" fn notification_event_callback(
   action_id_or_null: *const c_char,
 ) {
   let event = match reason {
-    WEF_NOTIFICATION_SHOWN => NotificationEvent::Shown,
-    WEF_NOTIFICATION_CLICKED => NotificationEvent::Clicked,
-    WEF_NOTIFICATION_CLOSED => NotificationEvent::Closed,
-    WEF_NOTIFICATION_ACTION => {
+    LAUFEY_NOTIFICATION_SHOWN => NotificationEvent::Shown,
+    LAUFEY_NOTIFICATION_CLICKED => NotificationEvent::Clicked,
+    LAUFEY_NOTIFICATION_CLOSED => NotificationEvent::Closed,
+    LAUFEY_NOTIFICATION_ACTION => {
       let id = if action_id_or_null.is_null() {
         String::new()
       } else {
@@ -1969,7 +1969,7 @@ unsafe extern "C" fn notification_event_callback(
   };
   let is_terminal = matches!(event, NotificationEvent::Closed);
   // Clone the Arc out of the map so the handler runs without the lock
-  // held — handlers may legitimately call back into the wef API.
+  // held — handlers may legitimately call back into the laufey API.
   let handler = notification_handlers()
     .lock()
     .unwrap()
@@ -1988,19 +1988,19 @@ unsafe extern "C" fn notification_event_callback(
 
 // --- Permissions / runtime authorization ---
 
-pub const WEF_PERMISSION_INVALID: i32 = 0;
-pub const WEF_PERMISSION_NOTIFICATIONS: i32 = 1;
+pub const LAUFEY_PERMISSION_INVALID: i32 = 0;
+pub const LAUFEY_PERMISSION_NOTIFICATIONS: i32 = 1;
 
-pub const WEF_PERMISSION_STATUS_GRANTED: i32 = 0;
-pub const WEF_PERMISSION_STATUS_DENIED: i32 = 1;
-pub const WEF_PERMISSION_STATUS_PROMPT: i32 = 2;
-pub const WEF_PERMISSION_STATUS_UNSUPPORTED: i32 = 3;
+pub const LAUFEY_PERMISSION_STATUS_GRANTED: i32 = 0;
+pub const LAUFEY_PERMISSION_STATUS_DENIED: i32 = 1;
+pub const LAUFEY_PERMISSION_STATUS_PROMPT: i32 = 2;
+pub const LAUFEY_PERMISSION_STATUS_UNSUPPORTED: i32 = 3;
 
 /// Capability for which authorization can be requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum PermissionKind {
-  Notifications = WEF_PERMISSION_NOTIFICATIONS,
+  Notifications = LAUFEY_PERMISSION_NOTIFICATIONS,
 }
 
 /// Result of [`request_permission`] / [`query_permission`]. Mirrors the
@@ -2011,18 +2011,18 @@ pub enum PermissionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum PermissionStatus {
-  Granted = WEF_PERMISSION_STATUS_GRANTED,
-  Denied = WEF_PERMISSION_STATUS_DENIED,
-  Prompt = WEF_PERMISSION_STATUS_PROMPT,
-  Unsupported = WEF_PERMISSION_STATUS_UNSUPPORTED,
+  Granted = LAUFEY_PERMISSION_STATUS_GRANTED,
+  Denied = LAUFEY_PERMISSION_STATUS_DENIED,
+  Prompt = LAUFEY_PERMISSION_STATUS_PROMPT,
+  Unsupported = LAUFEY_PERMISSION_STATUS_UNSUPPORTED,
 }
 
 impl PermissionStatus {
   fn from_raw(v: c_int) -> Self {
     match v {
-      WEF_PERMISSION_STATUS_GRANTED => Self::Granted,
-      WEF_PERMISSION_STATUS_DENIED => Self::Denied,
-      WEF_PERMISSION_STATUS_PROMPT => Self::Prompt,
+      LAUFEY_PERMISSION_STATUS_GRANTED => Self::Granted,
+      LAUFEY_PERMISSION_STATUS_DENIED => Self::Denied,
+      LAUFEY_PERMISSION_STATUS_PROMPT => Self::Prompt,
       _ => Self::Unsupported,
     }
   }
@@ -2090,13 +2090,13 @@ where
   dispatch_permission(api().request_permission, kind, callback);
 }
 
-pub const WEF_KEY_PRESSED: i32 = 0;
-pub const WEF_KEY_RELEASED: i32 = 1;
+pub const LAUFEY_KEY_PRESSED: i32 = 0;
+pub const LAUFEY_KEY_RELEASED: i32 = 1;
 
-pub const WEF_MOD_SHIFT: u32 = 1 << 0;
-pub const WEF_MOD_CONTROL: u32 = 1 << 1;
-pub const WEF_MOD_ALT: u32 = 1 << 2;
-pub const WEF_MOD_META: u32 = 1 << 3;
+pub const LAUFEY_MOD_SHIFT: u32 = 1 << 0;
+pub const LAUFEY_MOD_CONTROL: u32 = 1 << 1;
+pub const LAUFEY_MOD_ALT: u32 = 1 << 2;
+pub const LAUFEY_MOD_META: u32 = 1 << 3;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KeyModifiers {
@@ -2109,10 +2109,10 @@ pub struct KeyModifiers {
 impl KeyModifiers {
   pub(crate) fn from_raw(flags: u32) -> Self {
     Self {
-      shift: flags & WEF_MOD_SHIFT != 0,
-      control: flags & WEF_MOD_CONTROL != 0,
-      alt: flags & WEF_MOD_ALT != 0,
-      meta: flags & WEF_MOD_META != 0,
+      shift: flags & LAUFEY_MOD_SHIFT != 0,
+      control: flags & LAUFEY_MOD_CONTROL != 0,
+      alt: flags & LAUFEY_MOD_ALT != 0,
+      meta: flags & LAUFEY_MOD_META != 0,
     }
   }
 }
@@ -2122,23 +2122,23 @@ macro_rules! main {
   ($main_fn:expr) => {
     #[no_mangle]
     /// # Safety
-    /// `api` must be either null or a valid pointer to a `WefBackendApi`
+    /// `api` must be either null or a valid pointer to a `LaufeyBackendApi`
     /// with static lifetime supplied by the host runtime.
-    pub unsafe extern "C" fn wef_runtime_init(
-      api: *const $crate::WefBackendApi,
+    pub unsafe extern "C" fn laufey_runtime_init(
+      api: *const $crate::LaufeyBackendApi,
     ) -> std::ffi::c_int {
       unsafe { $crate::init_api(api) }
     }
 
     #[no_mangle]
-    pub extern "C" fn wef_runtime_start() -> std::ffi::c_int {
+    pub extern "C" fn laufey_runtime_start() -> std::ffi::c_int {
       let main_fn: fn() = $main_fn;
       main_fn();
       0
     }
 
     #[no_mangle]
-    pub extern "C" fn wef_runtime_shutdown() {
+    pub extern "C" fn laufey_runtime_shutdown() {
       $crate::shutdown();
     }
   };
@@ -2158,22 +2158,22 @@ mod tests {
 
   #[test]
   fn key_modifiers_single_flags() {
-    assert!(KeyModifiers::from_raw(WEF_MOD_SHIFT).shift);
-    assert!(KeyModifiers::from_raw(WEF_MOD_CONTROL).control);
-    assert!(KeyModifiers::from_raw(WEF_MOD_ALT).alt);
-    assert!(KeyModifiers::from_raw(WEF_MOD_META).meta);
+    assert!(KeyModifiers::from_raw(LAUFEY_MOD_SHIFT).shift);
+    assert!(KeyModifiers::from_raw(LAUFEY_MOD_CONTROL).control);
+    assert!(KeyModifiers::from_raw(LAUFEY_MOD_ALT).alt);
+    assert!(KeyModifiers::from_raw(LAUFEY_MOD_META).meta);
   }
 
   #[test]
   fn key_modifiers_combinations() {
     // All four bits set.
     let all = KeyModifiers::from_raw(
-      WEF_MOD_SHIFT | WEF_MOD_CONTROL | WEF_MOD_ALT | WEF_MOD_META,
+      LAUFEY_MOD_SHIFT | LAUFEY_MOD_CONTROL | LAUFEY_MOD_ALT | LAUFEY_MOD_META,
     );
     assert!(all.shift && all.control && all.alt && all.meta);
 
     // Unknown high bits are ignored, known low bits still decode.
-    let mixed = KeyModifiers::from_raw(WEF_MOD_SHIFT | 0xF000_0000);
+    let mixed = KeyModifiers::from_raw(LAUFEY_MOD_SHIFT | 0xF000_0000);
     assert!(mixed.shift && !mixed.control && !mixed.alt && !mixed.meta);
   }
 
@@ -2182,26 +2182,26 @@ mod tests {
   #[test]
   fn permission_status_from_raw_known() {
     assert_eq!(
-      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_GRANTED),
+      PermissionStatus::from_raw(LAUFEY_PERMISSION_STATUS_GRANTED),
       PermissionStatus::Granted
     );
     assert_eq!(
-      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_DENIED),
+      PermissionStatus::from_raw(LAUFEY_PERMISSION_STATUS_DENIED),
       PermissionStatus::Denied
     );
     assert_eq!(
-      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_PROMPT),
+      PermissionStatus::from_raw(LAUFEY_PERMISSION_STATUS_PROMPT),
       PermissionStatus::Prompt
     );
     assert_eq!(
-      PermissionStatus::from_raw(WEF_PERMISSION_STATUS_UNSUPPORTED),
+      PermissionStatus::from_raw(LAUFEY_PERMISSION_STATUS_UNSUPPORTED),
       PermissionStatus::Unsupported
     );
   }
 
   #[test]
   fn permission_status_from_raw_unknown_is_unsupported() {
-    // Anything outside the WEF_PERMISSION_STATUS_* range must map to
+    // Anything outside the LAUFEY_PERMISSION_STATUS_* range must map to
     // Unsupported so a future backend can't silently mean "Granted" by
     // returning, say, 99.
     assert_eq!(
@@ -2377,10 +2377,10 @@ mod tests {
     // regression where a flag mask was renumbered (e.g. ALT and META
     // swapped) — every other-numbered subset would still pass.
     for bits in 0..16u32 {
-      let raw = (if bits & 1 != 0 { WEF_MOD_SHIFT } else { 0 })
-        | (if bits & 2 != 0 { WEF_MOD_CONTROL } else { 0 })
-        | (if bits & 4 != 0 { WEF_MOD_ALT } else { 0 })
-        | (if bits & 8 != 0 { WEF_MOD_META } else { 0 });
+      let raw = (if bits & 1 != 0 { LAUFEY_MOD_SHIFT } else { 0 })
+        | (if bits & 2 != 0 { LAUFEY_MOD_CONTROL } else { 0 })
+        | (if bits & 4 != 0 { LAUFEY_MOD_ALT } else { 0 })
+        | (if bits & 8 != 0 { LAUFEY_MOD_META } else { 0 });
       let m = KeyModifiers::from_raw(raw);
       assert_eq!(m.shift, bits & 1 != 0, "shift bit @ {bits:04b}");
       assert_eq!(m.control, bits & 2 != 0, "control bit @ {bits:04b}");
@@ -2529,7 +2529,7 @@ mod tests {
         ..Default::default()
       }
       .to_flags(),
-      WEF_WINDOW_FLAG_FRAMELESS
+      LAUFEY_WINDOW_FLAG_FRAMELESS
     );
     assert_eq!(
       WindowOptions {
@@ -2537,7 +2537,7 @@ mod tests {
         ..Default::default()
       }
       .to_flags(),
-      WEF_WINDOW_FLAG_NO_ACTIVATE
+      LAUFEY_WINDOW_FLAG_NO_ACTIVATE
     );
     assert_eq!(
       WindowOptions {
@@ -2545,7 +2545,7 @@ mod tests {
         ..Default::default()
       }
       .to_flags(),
-      WEF_WINDOW_FLAG_TRANSPARENT_TITLEBAR
+      LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR
     );
     assert_eq!(
       WindowOptions {
@@ -2554,7 +2554,7 @@ mod tests {
         ..Default::default()
       }
       .to_flags(),
-      WEF_WINDOW_FLAG_FRAMELESS | WEF_WINDOW_FLAG_NO_ACTIVATE
+      LAUFEY_WINDOW_FLAG_FRAMELESS | LAUFEY_WINDOW_FLAG_NO_ACTIVATE
     );
   }
 
@@ -2581,7 +2581,7 @@ mod tests {
     // about.
     assert_eq!(
       PermissionKind::Notifications as i32,
-      WEF_PERMISSION_NOTIFICATIONS
+      LAUFEY_PERMISSION_NOTIFICATIONS
     );
   }
 }

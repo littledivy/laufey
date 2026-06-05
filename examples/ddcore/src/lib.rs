@@ -2,7 +2,7 @@ use deno_core::op2;
 use deno_core::v8;
 use deno_core::GarbageCollected;
 use deno_core::OpState;
-use just_wef::Window;
+use laufey::Window;
 use serde::Serialize;
 use sysinfo::{ProcessesToUpdate, System};
 
@@ -39,7 +39,7 @@ unsafe impl GarbageCollected for BrowserWindow {
   }
 }
 
-fn wef_window() -> Window {
+fn laufey_window() -> Window {
   Window::from_id(WINDOW_ID.load(Ordering::SeqCst))
 }
 
@@ -55,7 +55,7 @@ impl BrowserWindow {
 
   #[fast]
   fn load(&self, #[string] url: &str) {
-    wef_window().navigate(url);
+    laufey_window().navigate(url);
   }
 
   #[fast]
@@ -66,28 +66,28 @@ impl BrowserWindow {
     } else {
       std::env::current_dir().unwrap().join(path)
     };
-    wef_window().navigate(&format!("file://{}", abs.display()));
+    laufey_window().navigate(&format!("file://{}", abs.display()));
   }
 
   #[fast]
   fn set_title(&self, #[string] title: &str) {
-    wef_window().set_title(title);
+    laufey_window().set_title(title);
   }
 
   #[fast]
   fn set_size(&self, #[smi] width: i32, #[smi] height: i32) {
-    wef_window().set_size(width, height);
+    laufey_window().set_size(width, height);
   }
 
   #[fast]
   fn execute_js(&self, #[string] script: &str) {
-    wef_window()
-      .execute_js::<fn(Result<just_wef::Value, just_wef::Value>)>(script, None);
+    laufey_window()
+      .execute_js::<fn(Result<laufey::Value, laufey::Value>)>(script, None);
   }
 
   #[fast]
   fn quit(&self) {
-    just_wef::quit();
+    laufey::quit();
   }
 
   fn bind(
@@ -95,13 +95,13 @@ impl BrowserWindow {
     #[string] name: &str,
     #[scoped] callback: v8::Global<v8::Function>,
   ) {
-    register_wef_binding(name, callback);
+    register_laufey_binding(name, callback);
   }
 }
 
-fn register_wef_binding(name: &str, callback: v8::Global<v8::Function>) {
+fn register_laufey_binding(name: &str, callback: v8::Global<v8::Function>) {
   let cb = SendGlobal(callback);
-  wef_window().add_binding(name, move |call| {
+  laufey_window().add_binding(name, move |call| {
     // SAFETY: poll_js_calls() dispatches to the runtime thread,
     // so this closure runs on the same thread that owns the v8 isolate.
     let result = unsafe {
@@ -124,9 +124,9 @@ fn register_wef_binding(name: &str, callback: v8::Global<v8::Function>) {
     };
 
     match result {
-      Some(json) => call.resolve(just_wef::Value::String(json)),
+      Some(json) => call.resolve(laufey::Value::String(json)),
       None => {
-        call.reject(just_wef::Value::String("Handler call failed".to_string()))
+        call.reject(laufey::Value::String("Handler call failed".to_string()))
       }
     }
   });
@@ -258,7 +258,7 @@ deno_core::extension!(
   },
 );
 
-just_wef::main!(|| {
+laufey::main!(|| {
   let rt = tokio::runtime::Runtime::new().unwrap();
   rt.block_on(async {
     let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
@@ -276,6 +276,6 @@ just_wef::main!(|| {
       .await
       .ok();
 
-    just_wef::run().await;
+    laufey::run().await;
   });
 });

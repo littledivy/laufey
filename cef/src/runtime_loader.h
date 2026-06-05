@@ -1,7 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#ifndef WEF_RUNTIME_LOADER_H_
-#define WEF_RUNTIME_LOADER_H_
+#ifndef LAUFEY_RUNTIME_LOADER_H_
+#define LAUFEY_RUNTIME_LOADER_H_
 
 #include <string>
 #include <thread>
@@ -13,13 +13,13 @@
 
 #include "include/cef_browser.h"
 #include "include/cef_values.h"
-#include <wef.h>
+#include <laufey.h>
 
-// wef_value and the value_* marshalling are shared across backends
-// (backend-common/include/wef_value.h). CEF stores values as wef::Value and
+// laufey_value and the value_* marshalling are shared across backends
+// (backend-common/include/laufey_value.h). CEF stores values as laufey::Value and
 // converts to/from CefValue only at the renderer<->browser IPC boundary
-// (CefValueToWef / WefToCefValue in runtime_loader.cc).
-#include "wef_value.h"
+// (CefValueToLaufey / LaufeyToCefValue in runtime_loader.cc).
+#include "laufey_value.h"
 
 class RuntimeLoader {
  public:
@@ -31,7 +31,7 @@ class RuntimeLoader {
 
   void Shutdown();
 
-  const wef_backend_api_t& GetBackendApi() const {
+  const laufey_backend_api_t& GetBackendApi() const {
     return backend_api_;
   }
 
@@ -42,7 +42,7 @@ class RuntimeLoader {
   void RegisterBrowser(uint32_t window_id, CefRefPtr<CefBrowser> browser) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
     browsers_[window_id] = browser;
-    browser_id_to_wef_id_[browser->GetIdentifier()] = window_id;
+    browser_id_to_laufey_id_[browser->GetIdentifier()] = window_id;
     browser_ready_cv_.notify_all();
   }
 
@@ -58,7 +58,7 @@ class RuntimeLoader {
     std::lock_guard<std::mutex> lock(windows_mutex_);
     auto it = browsers_.find(window_id);
     if (it != browsers_.end()) {
-      browser_id_to_wef_id_.erase(it->second->GetIdentifier());
+      browser_id_to_laufey_id_.erase(it->second->GetIdentifier());
       browsers_.erase(it);
     }
   }
@@ -69,18 +69,18 @@ class RuntimeLoader {
     return it != browsers_.end() ? it->second : nullptr;
   }
 
-  uint32_t GetWefIdForBrowser(CefRefPtr<CefBrowser> browser) {
+  uint32_t GetLaufeyIdForBrowser(CefRefPtr<CefBrowser> browser) {
     if (!browser)
       return 0;
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    auto it = browser_id_to_wef_id_.find(browser->GetIdentifier());
-    return it != browser_id_to_wef_id_.end() ? it->second : 0;
+    auto it = browser_id_to_laufey_id_.find(browser->GetIdentifier());
+    return it != browser_id_to_laufey_id_.end() ? it->second : 0;
   }
 
-  uint32_t GetWefIdForBrowserId(int browser_id) {
+  uint32_t GetLaufeyIdForBrowserId(int browser_id) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    auto it = browser_id_to_wef_id_.find(browser_id);
-    return it != browser_id_to_wef_id_.end() ? it->second : 0;
+    auto it = browser_id_to_laufey_id_.find(browser_id);
+    return it != browser_id_to_laufey_id_.end() ? it->second : 0;
   }
 
   bool HasWindows() {
@@ -106,34 +106,34 @@ class RuntimeLoader {
 
   void RegisterNSWindow(void* nswindow, uint32_t window_id) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    nswindow_to_wef_id_[nswindow] = window_id;
+    nswindow_to_laufey_id_[nswindow] = window_id;
   }
 
   void UnregisterNSWindow(void* nswindow) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    nswindow_to_wef_id_.erase(nswindow);
+    nswindow_to_laufey_id_.erase(nswindow);
   }
 
-  uint32_t GetWefIdForNSWindow(void* nswindow) {
+  uint32_t GetLaufeyIdForNSWindow(void* nswindow) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    auto it = nswindow_to_wef_id_.find(nswindow);
-    return it != nswindow_to_wef_id_.end() ? it->second : 0;
+    auto it = nswindow_to_laufey_id_.find(nswindow);
+    return it != nswindow_to_laufey_id_.end() ? it->second : 0;
   }
 
   void RegisterNativeHandle(void* handle, uint32_t window_id) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    native_handle_to_wef_id_[handle] = window_id;
+    native_handle_to_laufey_id_[handle] = window_id;
   }
 
   void UnregisterNativeHandle(void* handle) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    native_handle_to_wef_id_.erase(handle);
+    native_handle_to_laufey_id_.erase(handle);
   }
 
-  uint32_t GetWefIdForNativeHandle(void* handle) {
+  uint32_t GetLaufeyIdForNativeHandle(void* handle) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
-    auto it = native_handle_to_wef_id_.find(handle);
-    return it != native_handle_to_wef_id_.end() ? it->second : 0;
+    auto it = native_handle_to_laufey_id_.find(handle);
+    return it != native_handle_to_laufey_id_.end() ? it->second : 0;
   }
 
   template <typename F>
@@ -157,13 +157,13 @@ class RuntimeLoader {
 
   void PollPendingJsCalls();
 
-  void SetJsCallHandler(wef_js_call_fn handler, void* user_data) {
+  void SetJsCallHandler(laufey_js_call_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(handler_mutex_);
     js_call_handler_ = handler;
     js_call_user_data_ = user_data;
   }
 
-  void SetKeyboardEventHandler(wef_keyboard_event_fn handler, void* user_data) {
+  void SetKeyboardEventHandler(laufey_keyboard_event_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(keyboard_mutex_);
     keyboard_handler_ = handler;
     keyboard_user_data_ = user_data;
@@ -179,7 +179,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetMouseClickHandler(wef_mouse_click_fn handler, void* user_data) {
+  void SetMouseClickHandler(laufey_mouse_click_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(mouse_mutex_);
     mouse_click_handler_ = handler;
     mouse_click_user_data_ = user_data;
@@ -195,7 +195,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetMouseMoveHandler(wef_mouse_move_fn handler, void* user_data) {
+  void SetMouseMoveHandler(laufey_mouse_move_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(mouse_move_mutex_);
     mouse_move_handler_ = handler;
     mouse_move_user_data_ = user_data;
@@ -209,7 +209,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetWheelHandler(wef_wheel_fn handler, void* user_data) {
+  void SetWheelHandler(laufey_wheel_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(wheel_mutex_);
     wheel_handler_ = handler;
     wheel_user_data_ = user_data;
@@ -225,7 +225,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetCursorEnterLeaveHandler(wef_cursor_enter_leave_fn handler,
+  void SetCursorEnterLeaveHandler(laufey_cursor_enter_leave_fn handler,
                                   void* user_data) {
     std::lock_guard<std::mutex> lock(cursor_enter_leave_mutex_);
     cursor_enter_leave_handler_ = handler;
@@ -241,7 +241,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetFocusedHandler(wef_focused_fn handler, void* user_data) {
+  void SetFocusedHandler(laufey_focused_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(focused_mutex_);
     focused_handler_ = handler;
     focused_user_data_ = user_data;
@@ -254,7 +254,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetResizeHandler(wef_resize_fn handler, void* user_data) {
+  void SetResizeHandler(laufey_resize_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(resize_mutex_);
     resize_handler_ = handler;
     resize_user_data_ = user_data;
@@ -267,7 +267,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetMoveHandler(wef_move_fn handler, void* user_data) {
+  void SetMoveHandler(laufey_move_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(move_mutex_);
     move_handler_ = handler;
     move_user_data_ = user_data;
@@ -280,7 +280,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetCloseRequestedHandler(wef_close_requested_fn handler,
+  void SetCloseRequestedHandler(laufey_close_requested_fn handler,
                                 void* user_data) {
     std::lock_guard<std::mutex> lock(close_requested_mutex_);
     close_requested_handler_ = handler;
@@ -300,7 +300,7 @@ class RuntimeLoader {
     js_call_notify_data_ = notify_data;
   }
 
-  uint64_t StoreEvalCallback(wef_js_result_fn callback, void* callback_data) {
+  uint64_t StoreEvalCallback(laufey_js_result_fn callback, void* callback_data) {
     std::lock_guard<std::mutex> lock(eval_mutex_);
     uint64_t id = next_eval_id_++;
     pending_evals_[id] = {callback, callback_data};
@@ -327,63 +327,63 @@ class RuntimeLoader {
   void InitializeBackendApi();
 
   void* library_handle_ = nullptr;
-  wef_runtime_init_fn init_fn_ = nullptr;
-  wef_runtime_start_fn start_fn_ = nullptr;
-  wef_runtime_shutdown_fn shutdown_fn_ = nullptr;
+  laufey_runtime_init_fn init_fn_ = nullptr;
+  laufey_runtime_start_fn start_fn_ = nullptr;
+  laufey_runtime_shutdown_fn shutdown_fn_ = nullptr;
 
   std::thread runtime_thread_;
   std::atomic<bool> running_{false};
 
   std::map<uint32_t, CefRefPtr<CefBrowser>> browsers_;
   std::map<int, uint32_t>
-      browser_id_to_wef_id_;  // CefBrowser::GetIdentifier() -> wef_id
+      browser_id_to_laufey_id_;  // CefBrowser::GetIdentifier() -> laufey_id
   std::map<uint64_t, uint32_t>
       call_to_window_;  // call_id -> window_id for JsCallRespond
-  std::map<void*, uint32_t> nswindow_to_wef_id_;
-  std::map<void*, uint32_t> native_handle_to_wef_id_;
+  std::map<void*, uint32_t> nswindow_to_laufey_id_;
+  std::map<void*, uint32_t> native_handle_to_laufey_id_;
   std::mutex windows_mutex_;
   std::condition_variable browser_ready_cv_;
   std::atomic<uint32_t> next_window_id_{1};
 
-  wef_backend_api_t backend_api_;
+  laufey_backend_api_t backend_api_;
 
-  wef_js_call_fn js_call_handler_ = nullptr;
+  laufey_js_call_fn js_call_handler_ = nullptr;
   void* js_call_user_data_ = nullptr;
   std::mutex handler_mutex_;
 
-  wef_keyboard_event_fn keyboard_handler_ = nullptr;
+  laufey_keyboard_event_fn keyboard_handler_ = nullptr;
   void* keyboard_user_data_ = nullptr;
   std::mutex keyboard_mutex_;
 
-  wef_mouse_click_fn mouse_click_handler_ = nullptr;
+  laufey_mouse_click_fn mouse_click_handler_ = nullptr;
   void* mouse_click_user_data_ = nullptr;
   std::mutex mouse_mutex_;
 
-  wef_mouse_move_fn mouse_move_handler_ = nullptr;
+  laufey_mouse_move_fn mouse_move_handler_ = nullptr;
   void* mouse_move_user_data_ = nullptr;
   std::mutex mouse_move_mutex_;
 
-  wef_wheel_fn wheel_handler_ = nullptr;
+  laufey_wheel_fn wheel_handler_ = nullptr;
   void* wheel_user_data_ = nullptr;
   std::mutex wheel_mutex_;
 
-  wef_cursor_enter_leave_fn cursor_enter_leave_handler_ = nullptr;
+  laufey_cursor_enter_leave_fn cursor_enter_leave_handler_ = nullptr;
   void* cursor_enter_leave_user_data_ = nullptr;
   std::mutex cursor_enter_leave_mutex_;
 
-  wef_focused_fn focused_handler_ = nullptr;
+  laufey_focused_fn focused_handler_ = nullptr;
   void* focused_user_data_ = nullptr;
   std::mutex focused_mutex_;
 
-  wef_resize_fn resize_handler_ = nullptr;
+  laufey_resize_fn resize_handler_ = nullptr;
   void* resize_user_data_ = nullptr;
   std::mutex resize_mutex_;
 
-  wef_move_fn move_handler_ = nullptr;
+  laufey_move_fn move_handler_ = nullptr;
   void* move_user_data_ = nullptr;
   std::mutex move_mutex_;
 
-  wef_close_requested_fn close_requested_handler_ = nullptr;
+  laufey_close_requested_fn close_requested_handler_ = nullptr;
   void* close_requested_user_data_ = nullptr;
   std::mutex close_requested_mutex_;
 
@@ -391,11 +391,11 @@ class RuntimeLoader {
   void* js_call_notify_data_ = nullptr;
   std::mutex notify_mutex_;
 
-  std::string js_namespace_ = "Wef";
+  std::string js_namespace_ = "Laufey";
   mutable std::mutex js_namespace_mutex_;
 
   struct PendingEval {
-    wef_js_result_fn callback;
+    laufey_js_result_fn callback;
     void* callback_data;
   };
   std::map<uint64_t, PendingEval> pending_evals_;
@@ -434,7 +434,7 @@ void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle);
 // Give the window a transparent, full-size-content-view title bar so the web
 // content draws under it and the traffic-light buttons overlay the page
 // (Electron `titleBarStyle: 'hidden'`). For
-// WEF_WINDOW_FLAG_TRANSPARENT_TITLEBAR.
+// LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR.
 void ConfigureNSWindowTransparentTitlebarForCefHandle(void* cef_handle);
 #endif
 

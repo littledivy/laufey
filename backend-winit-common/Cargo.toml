@@ -1,5 +1,5 @@
 [package]
-name = "wef-backend-winit-common"
+name = "laufey-backend-winit-common"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

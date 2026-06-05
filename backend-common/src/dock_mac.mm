@@ -3,11 +3,11 @@
 // App-scoped macOS dock primitives. All run on the main queue because
 // NSApp / NSDockTile interactions must happen on main.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <AppKit/AppKit.h>
 
-namespace wef_common {
+namespace laufey_common {
 
 void SetDockBadgeMac(const char* badge_or_null) {
   NSString* ns = (badge_or_null && *badge_or_null)
@@ -21,7 +21,7 @@ void SetDockBadgeMac(const char* badge_or_null) {
 }
 
 void BounceDockMac(int type) {
-  NSRequestUserAttentionType t = (type == WEF_DOCK_BOUNCE_CRITICAL)
+  NSRequestUserAttentionType t = (type == LAUFEY_DOCK_BOUNCE_CRITICAL)
                                      ? NSCriticalRequest
                                      : NSInformationalRequest;
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -42,7 +42,7 @@ void SetDockVisibleMac(bool visible) {
 
 namespace {
 NSMenu* g_dock_menu = nil;
-wef_dock_reopen_fn g_dock_reopen_fn = nullptr;
+laufey_dock_reopen_fn g_dock_reopen_fn = nullptr;
 void* g_dock_reopen_data = nullptr;
 }  // namespace
 
@@ -54,7 +54,7 @@ NSMenu* GetDockMenuMac() {
   return g_dock_menu;
 }
 
-void SetDockReopenHandlerMac(wef_dock_reopen_fn handler, void* user_data) {
+void SetDockReopenHandlerMac(laufey_dock_reopen_fn handler, void* user_data) {
   g_dock_reopen_fn = handler;
   g_dock_reopen_data = user_data;
 }
@@ -65,4 +65,4 @@ void FireDockReopenMac(bool has_visible_windows) {
   }
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

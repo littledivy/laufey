@@ -1,10 +1,10 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 //
 // MessageBoxW-based dialogs. MessageBoxW itself pumps the Win32 message
-// loop for the duration of the modal so other wef windows keep
+// loop for the duration of the modal so other laufey windows keep
 // responding.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <windows.h>
 
@@ -12,7 +12,7 @@
 #include <cstring>
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
@@ -39,17 +39,17 @@ int ShowDialogWin(int dialog_type, const std::string& title,
   std::wstring wTitle = Utf8ToWide(title);
   std::wstring wMessage = Utf8ToWide(message);
 
-  if (dialog_type == WEF_DIALOG_ALERT) {
+  if (dialog_type == LAUFEY_DIALOG_ALERT) {
     MessageBoxW(nullptr, wMessage.c_str(), wTitle.c_str(),
                 MB_OK | MB_ICONINFORMATION);
     return 1;
   }
-  if (dialog_type == WEF_DIALOG_CONFIRM) {
+  if (dialog_type == LAUFEY_DIALOG_CONFIRM) {
     int ret = MessageBoxW(nullptr, wMessage.c_str(), wTitle.c_str(),
                           MB_OKCANCEL | MB_ICONQUESTION);
     return (ret == IDOK) ? 1 : 0;
   }
-  if (dialog_type == WEF_DIALOG_PROMPT) {
+  if (dialog_type == LAUFEY_DIALOG_PROMPT) {
     // Windows has no built-in prompt dialog. Shell out to PowerShell's
     // Microsoft.VisualBasic.Interaction.InputBox — same approach as the
     // webview backend prior to this unification.
@@ -79,4 +79,4 @@ int ShowDialogWin(int dialog_type, const std::string& title,
   return 0;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

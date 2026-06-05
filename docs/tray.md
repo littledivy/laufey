@@ -7,7 +7,7 @@ Each icon has an image, a tooltip, a right-click menu, and click handlers.
 remain visible.
 
 ```rust
-use just_wef::{MenuItem, TrayIcon};
+use laufey::{MenuItem, TrayIcon};
 
 let tray = TrayIcon::new()
   .icon(include_bytes!("icon.png"))

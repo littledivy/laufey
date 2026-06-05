@@ -44,7 +44,7 @@ it at startup (see [architecture.md](architecture.md)).
 make fmt        # cargo fmt + deno fmt + clang-format
 make fmt-check
 make lint       # cargo clippy + deno lint
-cargo test -p just-wef --lib
+cargo test -p laufey --lib
 ```
 
 ## Output

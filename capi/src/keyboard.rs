@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::sync::{Mutex, OnceLock};
 
-use crate::{api, KeyModifiers, WEF_KEY_PRESSED};
+use crate::{api, KeyModifiers, LAUFEY_KEY_PRESSED};
 
 #[derive(Debug, Clone)]
 pub struct KeyboardEvent {
@@ -24,7 +24,7 @@ pub enum KeyState {
 
 impl KeyState {
   pub(crate) fn from_raw(raw: c_int) -> Self {
-    if raw == WEF_KEY_PRESSED {
+    if raw == LAUFEY_KEY_PRESSED {
       Self::Pressed
     } else {
       Self::Released
@@ -112,9 +112,9 @@ mod tests {
 
   #[test]
   fn key_state_from_raw_known_values() {
-    assert_eq!(KeyState::from_raw(WEF_KEY_PRESSED), KeyState::Pressed);
+    assert_eq!(KeyState::from_raw(LAUFEY_KEY_PRESSED), KeyState::Pressed);
     assert_eq!(
-      KeyState::from_raw(crate::WEF_KEY_RELEASED),
+      KeyState::from_raw(crate::LAUFEY_KEY_RELEASED),
       KeyState::Released
     );
   }

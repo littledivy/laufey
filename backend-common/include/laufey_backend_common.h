@@ -1,13 +1,13 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 //
 // Public header for backend-common. Each backend (CEF, webview) pre-parses
-// its backend-specific wef_value_t into the plain structs declared here,
+// its backend-specific laufey_value_t into the plain structs declared here,
 // then calls into the shared per-platform implementations.
 
-#ifndef WEF_BACKEND_COMMON_H_
-#define WEF_BACKEND_COMMON_H_
+#ifndef LAUFEY_BACKEND_COMMON_H_
+#define LAUFEY_BACKEND_COMMON_H_
 
-#include <wef.h>
+#include <laufey.h>
 
 #include <cstdint>
 #include <string>
@@ -19,7 +19,7 @@
 @class NSMenu;
 #endif
 
-namespace wef_common {
+namespace laufey_common {
 
 // ---------------------------------------------------------------------------
 // Notifications
@@ -44,12 +44,12 @@ struct NotificationOptions {
   std::vector<uint8_t> icon_png;
 };
 
-// Parses a wef_value_t dict into a plain NotificationOptions. Takes
+// Parses a laufey_value_t dict into a plain NotificationOptions. Takes
 // ownership of `options` (calls `api->value_free` before returning).
 // Returns a default-initialized NotificationOptions if `options` is null
 // or not a dict.
-NotificationOptions ParseNotificationOptions(wef_value_t* options,
-                                             const wef_backend_api_t* api);
+NotificationOptions ParseNotificationOptions(laufey_value_t* options,
+                                             const laufey_backend_api_t* api);
 
 #ifdef __APPLE__
 // UNUserNotificationCenter-backed (10.14+). Requires the process to run
@@ -57,7 +57,7 @@ NotificationOptions ParseNotificationOptions(wef_value_t* options,
 // fails and CLOSED is fired synthetically. Action buttons supported via
 // UNNotificationCategory.
 uint32_t ShowNotificationMac(const NotificationOptions& opts,
-                             wef_notification_event_fn on_event,
+                             laufey_notification_event_fn on_event,
                              void* user_data);
 void CloseNotificationMac(uint32_t notification_id);
 #endif
@@ -68,7 +68,7 @@ void CloseNotificationMac(uint32_t notification_id);
 // CloseNotificationLinux call). Click / action events are not surfaced
 // because notify-send has no IPC channel back.
 uint32_t ShowNotificationLinux(const NotificationOptions& opts,
-                               wef_notification_event_fn on_event,
+                               laufey_notification_event_fn on_event,
                                void* user_data);
 void CloseNotificationLinux(uint32_t notification_id);
 #endif
@@ -80,7 +80,7 @@ void CloseNotificationLinux(uint32_t notification_id);
 // buttons aren't supported by NIIF balloons — `opts.actions` is ignored
 // on Windows.
 uint32_t ShowNotificationWin(const NotificationOptions& opts,
-                             wef_notification_event_fn on_event,
+                             laufey_notification_event_fn on_event,
                              void* user_data);
 void CloseNotificationWin(uint32_t notification_id);
 
@@ -109,12 +109,12 @@ void DestroyTrayIconWin(uint32_t tray_id);
 void SetTrayIconWin(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayIconDarkWin(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayTooltipWin(uint32_t tray_id, const char* tooltip_or_null);
-void SetTrayMenuWin(uint32_t tray_id, wef_value_t* menu_template,
-                     const wef_backend_api_t* api,
-                     wef_menu_click_fn on_click, void* on_click_data);
-void SetTrayClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
+void SetTrayMenuWin(uint32_t tray_id, laufey_value_t* menu_template,
+                     const laufey_backend_api_t* api,
+                     laufey_menu_click_fn on_click, void* on_click_data);
+void SetTrayClickHandlerWin(uint32_t tray_id, laufey_tray_click_fn handler,
                               void* user_data);
-void SetTrayDoubleClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
+void SetTrayDoubleClickHandlerWin(uint32_t tray_id, laufey_tray_click_fn handler,
                                     void* user_data);
 // Writes the tray icon's screen rectangle (top-left origin, DIP) into the
 // out-params (any may be NULL) and returns true, or false if the id is
@@ -158,11 +158,11 @@ void ForgetTitlePrefixBadge(uint64_t window_key);
 // Dialogs (alert / confirm / prompt)
 // ---------------------------------------------------------------------------
 //
-// `dialog_type` is one of WEF_DIALOG_* from wef.h. All implementations
+// `dialog_type` is one of LAUFEY_DIALOG_* from laufey.h. All implementations
 // block until the user dismisses the dialog. The native modal pumps OS
-// events so other wef windows keep responding.
+// events so other laufey windows keep responding.
 //
-// Returns 1 if OK / confirmed, 0 otherwise. For WEF_DIALOG_PROMPT, on a
+// Returns 1 if OK / confirmed, 0 otherwise. For LAUFEY_DIALOG_PROMPT, on a
 // confirmed result `*out_input_value` is set to a strdup'd UTF-8 string
 // the caller must free with `free()`.
 
@@ -188,25 +188,25 @@ int ShowDialogLinux(int dialog_type, const std::string& title,
 // Permissions / runtime authorization
 // ---------------------------------------------------------------------------
 //
-// `kind` is one of WEF_PERMISSION_* from wef.h. Results are reported via
-// the callback (status one of WEF_PERMISSION_STATUS_*).
+// `kind` is one of LAUFEY_PERMISSION_* from laufey.h. Results are reported via
+// the callback (status one of LAUFEY_PERMISSION_STATUS_*).
 
 #ifdef __APPLE__
-// UNUserNotificationCenter-backed for WEF_PERMISSION_NOTIFICATIONS.
+// UNUserNotificationCenter-backed for LAUFEY_PERMISSION_NOTIFICATIONS.
 // Reports UNSUPPORTED if the process isn't running inside a bundled
 // .app, or if `kind` is anything other than notifications.
-void QueryPermissionMac(int kind, wef_permission_callback_fn cb,
+void QueryPermissionMac(int kind, laufey_permission_callback_fn cb,
                         void* user_data);
-void RequestPermissionMac(int kind, wef_permission_callback_fn cb,
+void RequestPermissionMac(int kind, laufey_permission_callback_fn cb,
                           void* user_data);
 #endif
 
 // Windows + Linux stub: notify-send (Linux) and Shell_NotifyIcon balloons
 // (Windows) have no permission model, so we report GRANTED synchronously
-// for WEF_PERMISSION_NOTIFICATIONS and UNSUPPORTED for anything else.
-void QueryPermissionStub(int kind, wef_permission_callback_fn cb,
+// for LAUFEY_PERMISSION_NOTIFICATIONS and UNSUPPORTED for anything else.
+void QueryPermissionStub(int kind, laufey_permission_callback_fn cb,
                          void* user_data);
-void RequestPermissionStub(int kind, wef_permission_callback_fn cb,
+void RequestPermissionStub(int kind, laufey_permission_callback_fn cb,
                            void* user_data);
 
 // ---------------------------------------------------------------------------
@@ -257,7 +257,7 @@ std::string NSEventKeyToCode(unsigned short key_code);
 // Sets the application dock badge. nullptr or "" clears it.
 void SetDockBadgeMac(const char* badge_or_null);
 
-// `type` is one of WEF_DOCK_BOUNCE_INFORMATIONAL / WEF_DOCK_BOUNCE_CRITICAL.
+// `type` is one of LAUFEY_DOCK_BOUNCE_INFORMATIONAL / LAUFEY_DOCK_BOUNCE_CRITICAL.
 void BounceDockMac(int type);
 
 // true → NSApplicationActivationPolicyRegular (dock + menu bar)
@@ -275,14 +275,14 @@ NSMenu* GetDockMenuMac();
 // Stores the dock-reopen handler set by Backend_SetDockReopenHandler_Mac /
 // WKWebViewBackend::SetDockReopenHandler. AppDelegate calls
 // FireDockReopenMac() from applicationShouldHandleReopen:hasVisibleWindows:.
-void SetDockReopenHandlerMac(wef_dock_reopen_fn handler, void* user_data);
+void SetDockReopenHandlerMac(laufey_dock_reopen_fn handler, void* user_data);
 void FireDockReopenMac(bool has_visible_windows);
 
 // ---------------------------------------------------------------------------
 // NSMenu builder (macOS)
 // ---------------------------------------------------------------------------
 //
-// Walks a wef_value_t menu template and produces an NSMenu. Click events
+// Walks a laufey_value_t menu template and produces an NSMenu. Click events
 // on non-role items invoke on_click(on_click_data, window_id, item_id).
 // Role items (copy/paste/cut/quit/minimize/...) wire to First
 // Responder selectors and don't reach on_click.
@@ -292,12 +292,12 @@ void FireDockReopenMac(bool has_visible_windows);
 // flows through .mm files without forcing AppKit on plain .cc.
 // (NSMenu is forward-declared at the top of this header.)
 #ifdef __OBJC__
-NSMenu* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
-                             wef_menu_click_fn on_click, void* on_click_data,
+NSMenu* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
+                             laufey_menu_click_fn on_click, void* on_click_data,
                              uint32_t window_id);
 #else
-void* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
-                           wef_menu_click_fn on_click, void* on_click_data,
+void* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
+                           laufey_menu_click_fn on_click, void* on_click_data,
                            uint32_t window_id);
 #endif
 
@@ -310,13 +310,13 @@ void DestroyTrayIconMac(uint32_t tray_id);
 void SetTrayIconMac(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayIconDarkMac(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayTooltipMac(uint32_t tray_id, const char* tooltip_or_null);
-void SetTrayMenuMac(uint32_t tray_id, wef_value_t* menu_template,
-                     const wef_backend_api_t* api,
-                     wef_menu_click_fn on_click, void* on_click_data);
-void SetTrayClickHandlerMac(uint32_t tray_id, wef_tray_click_fn handler,
+void SetTrayMenuMac(uint32_t tray_id, laufey_value_t* menu_template,
+                     const laufey_backend_api_t* api,
+                     laufey_menu_click_fn on_click, void* on_click_data);
+void SetTrayClickHandlerMac(uint32_t tray_id, laufey_tray_click_fn handler,
                              void* user_data);
 void SetTrayDoubleClickHandlerMac(uint32_t tray_id,
-                                   wef_tray_click_fn handler, void* user_data);
+                                   laufey_tray_click_fn handler, void* user_data);
 // Writes the tray icon's screen rectangle (top-left origin, points/DIP) into
 // the out-params (any may be NULL) and returns true. Returns false if the id
 // is unknown or the icon has no on-screen button yet.
@@ -332,7 +332,7 @@ std::string GdkKeyvalToKey(unsigned int keyval);
 std::string GdkKeycodeToCode(unsigned int evdev_keycode);
 
 // Build a GtkMenu (or GtkMenuBar when `is_menu_bar` is true) from a
-// wef_value_t menu template. Non-role items trigger
+// laufey_value_t menu template. Non-role items trigger
 // on_click(on_click_data, window_id, item_id). Role items map to
 // labels and forward the role as the item id. Returns NULL if `val`
 // is null or not a list.
@@ -341,14 +341,14 @@ std::string GdkKeycodeToCode(unsigned int evdev_keycode);
 // translation units (gtk.h must be included before this header for the
 // typed form).
 #ifdef __GTK_H__
-GtkWidget* BuildGtkMenuFromValue(wef_value_t* val,
-                                  const wef_backend_api_t* api,
+GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val,
+                                  const laufey_backend_api_t* api,
                                   uint32_t window_id,
-                                  wef_menu_click_fn on_click,
+                                  laufey_menu_click_fn on_click,
                                   void* on_click_data, bool is_menu_bar);
 #else
-void* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
-                            uint32_t window_id, wef_menu_click_fn on_click,
+void* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
+                            uint32_t window_id, laufey_menu_click_fn on_click,
                             void* on_click_data, bool is_menu_bar);
 #endif
 
@@ -358,7 +358,7 @@ void* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
 //
 // All functions must be called on the GTK main thread; backends with
 // off-main-thread callers should marshal first (CEF uses CefPostTask).
-// When libappindicator is not available (WEF_HAVE_APPINDICATOR not
+// When libappindicator is not available (LAUFEY_HAVE_APPINDICATOR not
 // defined), CreateTrayIconLinux returns 0 and all other calls no-op.
 //
 // AppIndicator has no left-click event — a click anywhere pops the
@@ -371,16 +371,16 @@ void DestroyTrayIconLinux(uint32_t tray_id);
 void SetTrayIconLinux(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayIconDarkLinux(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayTooltipLinux(uint32_t tray_id, const char* tooltip_or_null);
-void SetTrayMenuLinux(uint32_t tray_id, wef_value_t* menu_template,
-                       const wef_backend_api_t* api,
-                       wef_menu_click_fn on_click, void* on_click_data);
-void SetTrayClickHandlerLinux(uint32_t tray_id, wef_tray_click_fn handler,
+void SetTrayMenuLinux(uint32_t tray_id, laufey_value_t* menu_template,
+                       const laufey_backend_api_t* api,
+                       laufey_menu_click_fn on_click, void* on_click_data);
+void SetTrayClickHandlerLinux(uint32_t tray_id, laufey_tray_click_fn handler,
                                 void* user_data);
 void SetTrayDoubleClickHandlerLinux(uint32_t tray_id,
-                                      wef_tray_click_fn handler,
+                                      laufey_tray_click_fn handler,
                                       void* user_data);
 #endif
 
-}  // namespace wef_common
+}  // namespace laufey_common
 
-#endif  // WEF_BACKEND_COMMON_H_
+#endif  // LAUFEY_BACKEND_COMMON_H_

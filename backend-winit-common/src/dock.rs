@@ -21,16 +21,16 @@ use std::collections::HashMap;
 
 use winit::window::Window;
 
-use crate::{ParsedMenuItem, WefMenuClickFn};
+use crate::{ParsedMenuItem, LaufeyMenuClickFn};
 
-pub const WEF_DOCK_BOUNCE_INFORMATIONAL: c_int = 10;
-pub const WEF_DOCK_BOUNCE_CRITICAL: c_int = 0;
+pub const LAUFEY_DOCK_BOUNCE_INFORMATIONAL: c_int = 10;
+pub const LAUFEY_DOCK_BOUNCE_CRITICAL: c_int = 0;
 
-pub type WefDockReopenFn = unsafe extern "C" fn(*mut c_void, bool);
+pub type LaufeyDockReopenFn = unsafe extern "C" fn(*mut c_void, bool);
 
 pub struct PendingDockMenu {
   pub items: Vec<ParsedMenuItem>,
-  pub callback: Option<WefMenuClickFn>,
+  pub callback: Option<LaufeyMenuClickFn>,
   pub callback_data: usize,
 }
 
@@ -39,7 +39,7 @@ pub enum DockOp {
   Bounce(c_int),
   SetMenu(Option<PendingDockMenu>),
   SetVisible(bool),
-  SetReopenHandler(Option<(WefDockReopenFn, usize)>),
+  SetReopenHandler(Option<(LaufeyDockReopenFn, usize)>),
 }
 
 static DOCK_QUEUE: Mutex<VecDeque<DockOp>> = Mutex::new(VecDeque::new());
@@ -49,7 +49,7 @@ pub fn queue_op(op: DockOp) {
 }
 
 /// Drain pending dock ops and apply them. Must be called on the main thread
-/// (from the winit event loop). `focused` is the currently-focused WEF
+/// (from the winit event loop). `focused` is the currently-focused LAUFEY
 /// window, required for Windows/Linux bounce and title-prefix badge.
 pub fn drain_and_apply(focused: Option<(&Window, u32)>) {
   let ops: Vec<DockOp> = {
@@ -73,7 +73,7 @@ fn apply_bounce(kind: c_int, focused: Option<(&Window, u32)>) {
   let Some((window, _)) = focused else {
     return;
   };
-  let attention = if kind == WEF_DOCK_BOUNCE_CRITICAL {
+  let attention = if kind == LAUFEY_DOCK_BOUNCE_CRITICAL {
     winit::window::UserAttentionType::Critical
   } else {
     winit::window::UserAttentionType::Informational
@@ -174,9 +174,9 @@ mod mac_menu {
   static DOCK_MENU: Mutex<MainThreadOnly<Retained<NSMenu>>> =
     Mutex::new(MainThreadOnly(None));
   static DOCK_ITEM_IDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-  static DOCK_MENU_CALLBACK: Mutex<Option<(WefMenuClickFn, usize)>> =
+  static DOCK_MENU_CALLBACK: Mutex<Option<(LaufeyMenuClickFn, usize)>> =
     Mutex::new(None);
-  static DOCK_REOPEN: Mutex<Option<(WefDockReopenFn, usize)>> =
+  static DOCK_REOPEN: Mutex<Option<(LaufeyDockReopenFn, usize)>> =
     Mutex::new(None);
 
   /// Runtime-add `applicationDockMenu:` and
@@ -195,7 +195,7 @@ mod mac_menu {
       // SAFETY: same — reading inside Once.
       if unsafe { !INSTALLED } {
         eprintln!(
-          "wef: failed to install dock delegate methods on winit's \
+          "laufey: failed to install dock delegate methods on winit's \
            NSApplicationDelegate — dock menu and reopen callback will not \
            fire. This likely means winit changed its delegate class name."
         );
@@ -328,7 +328,7 @@ mod mac_menu {
           ns_item.setEnabled(*enabled);
           ns_item.setTag(tag);
           unsafe {
-            ns_item.setAction(Some(objc2::sel!(wefDockItemClicked:)));
+            ns_item.setAction(Some(objc2::sel!(laufeyDockItemClicked:)));
             ns_item.setTarget(Some(&menu_target(mtm)));
           }
           menu.addItem(&ns_item);
@@ -373,7 +373,7 @@ mod mac_menu {
     }
   }
 
-  pub fn set_reopen_handler(h: Option<(WefDockReopenFn, usize)>) {
+  pub fn set_reopen_handler(h: Option<(LaufeyDockReopenFn, usize)>) {
     install_delegate_methods();
     *DOCK_REOPEN.lock().unwrap() = h;
   }
@@ -386,12 +386,12 @@ mod mac_menu {
     // - DockMenuTarget does not implement Drop.
     #[unsafe(super(objc2::runtime::NSObject))]
     #[thread_kind = objc2::MainThreadOnly]
-    #[name = "WefDockMenuTarget"]
+    #[name = "LaufeyDockMenuTarget"]
     pub(super) struct DockMenuTarget;
 
     impl DockMenuTarget {
-      #[unsafe(method(wefDockItemClicked:))]
-      fn wef_dock_item_clicked(&self, sender: *mut NSMenuItem) {
+      #[unsafe(method(laufeyDockItemClicked:))]
+      fn laufey_dock_item_clicked(&self, sender: *mut NSMenuItem) {
         if sender.is_null() {
           return;
         }
@@ -444,11 +444,11 @@ fn apply_set_menu(_pm: Option<PendingDockMenu>) {
 // --- Reopen handler (macOS only) ---
 
 #[cfg(target_os = "macos")]
-fn apply_set_reopen_handler(h: Option<(WefDockReopenFn, usize)>) {
+fn apply_set_reopen_handler(h: Option<(LaufeyDockReopenFn, usize)>) {
   mac_menu::set_reopen_handler(h);
 }
 
 #[cfg(not(target_os = "macos"))]
-fn apply_set_reopen_handler(_h: Option<(WefDockReopenFn, usize)>) {
+fn apply_set_reopen_handler(_h: Option<(LaufeyDockReopenFn, usize)>) {
   // No reopen event on Windows or Linux.
 }

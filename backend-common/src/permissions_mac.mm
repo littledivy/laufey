@@ -1,32 +1,32 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 //
-// UNUserNotificationCenter authorization for WEF_PERMISSION_NOTIFICATIONS.
+// UNUserNotificationCenter authorization for LAUFEY_PERMISSION_NOTIFICATIONS.
 // UN requires the process to run inside a bundled .app with a
 // CFBundleIdentifier; without one `getNotificationSettings:` returns
 // garbage and `requestAuthorization:` fails immediately. We detect that
 // case and report UNSUPPORTED so the embedder can branch on it instead
 // of seeing a phantom DENIED.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
 int MapUNStatus(UNAuthorizationStatus s) {
   switch (s) {
     case UNAuthorizationStatusNotDetermined:
-      return WEF_PERMISSION_STATUS_PROMPT;
+      return LAUFEY_PERMISSION_STATUS_PROMPT;
     case UNAuthorizationStatusDenied:
-      return WEF_PERMISSION_STATUS_DENIED;
+      return LAUFEY_PERMISSION_STATUS_DENIED;
     case UNAuthorizationStatusAuthorized:
     case UNAuthorizationStatusProvisional:
-      return WEF_PERMISSION_STATUS_GRANTED;
+      return LAUFEY_PERMISSION_STATUS_GRANTED;
     default:
-      return WEF_PERMISSION_STATUS_UNSUPPORTED;
+      return LAUFEY_PERMISSION_STATUS_UNSUPPORTED;
   }
 }
 
@@ -40,7 +40,7 @@ bool MacProcessIsBundled() {
   return path && [path hasSuffix:@".app"];
 }
 
-void FirePermissionOnMain(wef_permission_callback_fn cb, void* ud,
+void FirePermissionOnMain(laufey_permission_callback_fn cb, void* ud,
                           int status) {
   if (!cb) return;
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -50,14 +50,14 @@ void FirePermissionOnMain(wef_permission_callback_fn cb, void* ud,
 
 }  // namespace
 
-void QueryPermissionMac(int kind, wef_permission_callback_fn cb,
+void QueryPermissionMac(int kind, laufey_permission_callback_fn cb,
                         void* user_data) {
-  if (kind != WEF_PERMISSION_NOTIFICATIONS) {
-    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+  if (kind != LAUFEY_PERMISSION_NOTIFICATIONS) {
+    FirePermissionOnMain(cb, user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
     return;
   }
   if (!MacProcessIsBundled()) {
-    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    FirePermissionOnMain(cb, user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
     return;
   }
   UNUserNotificationCenter* center =
@@ -69,14 +69,14 @@ void QueryPermissionMac(int kind, wef_permission_callback_fn cb,
   }];
 }
 
-void RequestPermissionMac(int kind, wef_permission_callback_fn cb,
+void RequestPermissionMac(int kind, laufey_permission_callback_fn cb,
                           void* user_data) {
-  if (kind != WEF_PERMISSION_NOTIFICATIONS) {
-    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+  if (kind != LAUFEY_PERMISSION_NOTIFICATIONS) {
+    FirePermissionOnMain(cb, user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
     return;
   }
   if (!MacProcessIsBundled()) {
-    FirePermissionOnMain(cb, user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+    FirePermissionOnMain(cb, user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
     return;
   }
   UNUserNotificationCenter* center =
@@ -103,7 +103,7 @@ void RequestPermissionMac(int kind, wef_permission_callback_fn cb,
                              // because the request was rejected).
                              status = (settings.authorizationStatus ==
                                        UNAuthorizationStatusNotDetermined)
-                                          ? WEF_PERMISSION_STATUS_DENIED
+                                          ? LAUFEY_PERMISSION_STATUS_DENIED
                                           : MapUNStatus(
                                                 settings.authorizationStatus);
                            }
@@ -112,4 +112,4 @@ void RequestPermissionMac(int kind, wef_permission_callback_fn cb,
                        }];
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

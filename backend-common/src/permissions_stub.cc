@@ -3,26 +3,26 @@
 // Stub permission implementation for Windows and Linux. Both platforms'
 // notification systems (Shell_NotifyIcon balloons / notify-send) have no
 // permission model, so we report GRANTED synchronously for
-// WEF_PERMISSION_NOTIFICATIONS and UNSUPPORTED for anything else.
+// LAUFEY_PERMISSION_NOTIFICATIONS and UNSUPPORTED for anything else.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
-namespace wef_common {
+namespace laufey_common {
 
-void QueryPermissionStub(int kind, wef_permission_callback_fn cb,
+void QueryPermissionStub(int kind, laufey_permission_callback_fn cb,
                          void* user_data) {
   if (!cb) return;
-  cb(user_data, kind == WEF_PERMISSION_NOTIFICATIONS
-                    ? WEF_PERMISSION_STATUS_GRANTED
-                    : WEF_PERMISSION_STATUS_UNSUPPORTED);
+  cb(user_data, kind == LAUFEY_PERMISSION_NOTIFICATIONS
+                    ? LAUFEY_PERMISSION_STATUS_GRANTED
+                    : LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
 }
 
-void RequestPermissionStub(int kind, wef_permission_callback_fn cb,
+void RequestPermissionStub(int kind, laufey_permission_callback_fn cb,
                            void* user_data) {
   if (!cb) return;
-  cb(user_data, kind == WEF_PERMISSION_NOTIFICATIONS
-                    ? WEF_PERMISSION_STATUS_GRANTED
-                    : WEF_PERMISSION_STATUS_UNSUPPORTED);
+  cb(user_data, kind == LAUFEY_PERMISSION_NOTIFICATIONS
+                    ? LAUFEY_PERMISSION_STATUS_GRANTED
+                    : LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

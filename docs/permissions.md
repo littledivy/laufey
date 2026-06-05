@@ -1,13 +1,13 @@
 # Permissions
 
-wef lets you query or request the operating system's authorization for a
+laufey lets you query or request the operating system's authorization for a
 capability. The only capability today is notifications. The status set mirrors
 the Web Permissions API: granted, denied, prompt, and unsupported.
 
 ```rust
-use just_wef::{PermissionKind, PermissionStatus};
+use laufey::{PermissionKind, PermissionStatus};
 
-just_wef::request_permission(PermissionKind::Notifications, |status| {
+laufey::request_permission(PermissionKind::Notifications, |status| {
   if status == PermissionStatus::Granted {
     // The capability is authorized.
   }
@@ -24,6 +24,6 @@ is not bundled — one with no `CFBundleIdentifier`, or a binary that does not
 live inside an `.app` — reports unsupported rather than denied, so that an
 embedder can distinguish "the user declined" from "this environment cannot be
 authorized at all." An application that packages its own `.app` sets its own
-bundle identifier and entitlements; wef hard-codes none of its own. Windows
+bundle identifier and entitlements; laufey hard-codes none of its own. Windows
 (`Shell_NotifyIcon`) and Linux (`notify-send`) have no permission model, so both
 calls report granted immediately.

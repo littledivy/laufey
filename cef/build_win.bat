@@ -6,7 +6,7 @@ if exist build rmdir /s /q build
 
 cmake -G Ninja -B build -S . ^
   -DCMAKE_BUILD_TYPE=Release ^
-  -DCEF_ROOT="C:/Users/dhairy/wef/vendor/cef/install"
+  -DCEF_ROOT="C:/Users/dhairy/laufey/vendor/cef/install"
 if errorlevel 1 (
     echo CMake configure failed
     exit /b 1

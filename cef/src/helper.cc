@@ -17,6 +17,6 @@ int main(int argc, char* argv[]) {
 
   CefMainArgs main_args(argc, argv);
 
-  CefRefPtr<WefRendererApp> app(new WefRendererApp());
+  CefRefPtr<LaufeyRendererApp> app(new LaufeyRendererApp());
   return CefExecuteProcess(main_args, app, nullptr);
 }

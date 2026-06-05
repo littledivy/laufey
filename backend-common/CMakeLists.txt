@@ -2,8 +2,8 @@
 #
 # backend-common: shared native-API implementations that the CEF and
 # webview backends both link against. Each backend pre-parses the
-# backend-specific wef_value_t into the plain structs declared in
-# wef_backend_common.h, then calls into the functions defined here.
+# backend-specific laufey_value_t into the plain structs declared in
+# laufey_backend_common.h, then calls into the functions defined here.
 #
 # Parallels backend-winit-common/, which serves the same role for the
 # winit-based backends (winit + servo).
@@ -18,9 +18,9 @@ if(APPLE AND DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 if(APPLE)
-  project(wef_backend_common VERSION 1.0.0 LANGUAGES C CXX OBJCXX)
+  project(laufey_backend_common VERSION 1.0.0 LANGUAGES C CXX OBJCXX)
 else()
-  project(wef_backend_common VERSION 1.0.0 LANGUAGES C CXX)
+  project(laufey_backend_common VERSION 1.0.0 LANGUAGES C CXX)
 endif()
 
 if(APPLE AND DEFINED _inherited_target)
@@ -31,15 +31,15 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(WEF_COMMON_SRCS
+set(LAUFEY_COMMON_SRCS
   src/parse_options.cc
   src/keymap_vk.cc
   src/title_badge.cc
-  src/wef_value.cc
+  src/laufey_value.cc
 )
 
 if(APPLE)
-  list(APPEND WEF_COMMON_SRCS
+  list(APPEND LAUFEY_COMMON_SRCS
     src/notifications_mac.mm
     src/dialog_mac.mm
     src/permissions_mac.mm
@@ -49,7 +49,7 @@ if(APPLE)
     src/tray_mac.mm
   )
 elseif(UNIX)
-  list(APPEND WEF_COMMON_SRCS
+  list(APPEND LAUFEY_COMMON_SRCS
     src/notifications_linux.cc
     src/dialog_linux.cc
     src/permissions_stub.cc
@@ -58,7 +58,7 @@ elseif(UNIX)
     src/tray_linux.cc
   )
 elseif(WIN32)
-  list(APPEND WEF_COMMON_SRCS
+  list(APPEND LAUFEY_COMMON_SRCS
     src/notifications_win.cc
     src/dialog_win.cc
     src/permissions_stub.cc
@@ -66,16 +66,16 @@ elseif(WIN32)
   )
 endif()
 
-add_library(wef_backend_common STATIC ${WEF_COMMON_SRCS})
+add_library(laufey_backend_common STATIC ${LAUFEY_COMMON_SRCS})
 
-target_include_directories(wef_backend_common PUBLIC
+target_include_directories(laufey_backend_common PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/../capi/include
 )
 
 if(WIN32)
   # WIC PNG decode + Shell_NotifyIcon
-  target_link_libraries(wef_backend_common PUBLIC
+  target_link_libraries(laufey_backend_common PUBLIC
     windowscodecs
     ole32
     shell32
@@ -86,38 +86,38 @@ elseif(APPLE)
   find_library(USERNOTIFICATIONS_FRAMEWORK UserNotifications REQUIRED)
   find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
   find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
-  target_link_libraries(wef_backend_common PUBLIC
+  target_link_libraries(laufey_backend_common PUBLIC
     ${USERNOTIFICATIONS_FRAMEWORK}
     ${FOUNDATION_FRAMEWORK}
     ${COCOA_FRAMEWORK}
   )
-  target_compile_options(wef_backend_common PRIVATE
+  target_compile_options(laufey_backend_common PRIVATE
     $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fobjc-arc>
   )
 elseif(UNIX)
   find_package(PkgConfig REQUIRED)
-  pkg_check_modules(WEF_COMMON_GTK REQUIRED gtk+-3.0)
-  pkg_check_modules(WEF_COMMON_APPINDICATOR appindicator3-0.1)
-  if(NOT WEF_COMMON_APPINDICATOR_FOUND)
-    pkg_check_modules(WEF_COMMON_APPINDICATOR ayatana-appindicator3-0.1)
+  pkg_check_modules(LAUFEY_COMMON_GTK REQUIRED gtk+-3.0)
+  pkg_check_modules(LAUFEY_COMMON_APPINDICATOR appindicator3-0.1)
+  if(NOT LAUFEY_COMMON_APPINDICATOR_FOUND)
+    pkg_check_modules(LAUFEY_COMMON_APPINDICATOR ayatana-appindicator3-0.1)
   endif()
-  target_include_directories(wef_backend_common PUBLIC
-    ${WEF_COMMON_GTK_INCLUDE_DIRS}
-    ${WEF_COMMON_APPINDICATOR_INCLUDE_DIRS}
+  target_include_directories(laufey_backend_common PUBLIC
+    ${LAUFEY_COMMON_GTK_INCLUDE_DIRS}
+    ${LAUFEY_COMMON_APPINDICATOR_INCLUDE_DIRS}
   )
-  target_link_libraries(wef_backend_common PUBLIC
-    ${WEF_COMMON_GTK_LIBRARIES}
-    ${WEF_COMMON_APPINDICATOR_LIBRARIES}
+  target_link_libraries(laufey_backend_common PUBLIC
+    ${LAUFEY_COMMON_GTK_LIBRARIES}
+    ${LAUFEY_COMMON_APPINDICATOR_LIBRARIES}
   )
-  target_compile_options(wef_backend_common PUBLIC
-    ${WEF_COMMON_GTK_CFLAGS_OTHER}
-    ${WEF_COMMON_APPINDICATOR_CFLAGS_OTHER}
+  target_compile_options(laufey_backend_common PUBLIC
+    ${LAUFEY_COMMON_GTK_CFLAGS_OTHER}
+    ${LAUFEY_COMMON_APPINDICATOR_CFLAGS_OTHER}
   )
-  if(WEF_COMMON_APPINDICATOR_FOUND)
-    target_compile_definitions(wef_backend_common PUBLIC WEF_HAVE_APPINDICATOR=1)
+  if(LAUFEY_COMMON_APPINDICATOR_FOUND)
+    target_compile_definitions(laufey_backend_common PUBLIC LAUFEY_HAVE_APPINDICATOR=1)
   endif()
 endif()
 
-set_target_properties(wef_backend_common PROPERTIES
+set_target_properties(laufey_backend_common PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )

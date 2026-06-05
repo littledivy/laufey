@@ -5,12 +5,12 @@
 // these from any thread. tray_id is allocated synchronously so the
 // caller gets a useful return value immediately.
 //
-// When libappindicator is not available (no WEF_HAVE_APPINDICATOR
+// When libappindicator is not available (no LAUFEY_HAVE_APPINDICATOR
 // define), CreateTrayIconLinux returns 0 and the other functions no-op.
 
 #include <gtk/gtk.h>
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <atomic>
 #include <cstdio>
@@ -20,22 +20,22 @@
 #include <string>
 #include <vector>
 
-#ifdef WEF_HAVE_APPINDICATOR
+#ifdef LAUFEY_HAVE_APPINDICATOR
 extern "C" {
 #include <libappindicator/app-indicator.h>
 }
 #endif
 
-namespace wef_common {
+namespace laufey_common {
 
-#ifdef WEF_HAVE_APPINDICATOR
+#ifdef LAUFEY_HAVE_APPINDICATOR
 
 namespace {
 
 struct LinuxTrayEntry {
   AppIndicator* indicator;
   GtkWidget* menu;
-  wef_menu_click_fn menu_click_fn;
+  laufey_menu_click_fn menu_click_fn;
   void* menu_click_data;
 };
 
@@ -71,7 +71,7 @@ uint32_t CreateTrayIconLinux() {
   uint32_t tray_id =
       g_next_tray_id_linux.fetch_add(1, std::memory_order_relaxed);
   OnGtkMain([tray_id] {
-    std::string idstr = "wef-tray-" + std::to_string(tray_id);
+    std::string idstr = "laufey-tray-" + std::to_string(tray_id);
     AppIndicator* ind = app_indicator_new(
         idstr.c_str(), "", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
     if (!ind) return;
@@ -111,7 +111,7 @@ void SetTrayIconLinux(uint32_t tray_id, const void* png_bytes, size_t len) {
   std::vector<uint8_t> bytes(static_cast<const uint8_t*>(png_bytes),
                               static_cast<const uint8_t*>(png_bytes) + len);
   OnGtkMain([tray_id, bytes = std::move(bytes)]() mutable {
-    std::string path = "/tmp/wef-tray-" + std::to_string(tray_id) + ".png";
+    std::string path = "/tmp/laufey-tray-" + std::to_string(tray_id) + ".png";
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return;
     fwrite(bytes.data(), 1, bytes.size(), f);
@@ -135,9 +135,9 @@ void SetTrayTooltipLinux(uint32_t /*tray_id*/,
   // The AppIndicator / StatusNotifier protocol has no tooltip concept.
 }
 
-void SetTrayMenuLinux(uint32_t tray_id, wef_value_t* menu_template,
-                       const wef_backend_api_t* api,
-                       wef_menu_click_fn on_click, void* on_click_data) {
+void SetTrayMenuLinux(uint32_t tray_id, laufey_value_t* menu_template,
+                       const laufey_backend_api_t* api,
+                       laufey_menu_click_fn on_click, void* on_click_data) {
   OnGtkMain([tray_id, menu_template, api, on_click, on_click_data] {
     // tray_id passed as window_id so the shared click dispatcher routes
     // back through on_click with the right tray identifier.
@@ -170,31 +170,31 @@ void SetTrayMenuLinux(uint32_t tray_id, wef_value_t* menu_template,
 }
 
 void SetTrayClickHandlerLinux(uint32_t /*tray_id*/,
-                                wef_tray_click_fn /*handler*/,
+                                laufey_tray_click_fn /*handler*/,
                                 void* /*user_data*/) {
   // AppIndicator has no left-click event; clicks always open the menu.
 }
 
 void SetTrayDoubleClickHandlerLinux(uint32_t /*tray_id*/,
-                                      wef_tray_click_fn /*handler*/,
+                                      laufey_tray_click_fn /*handler*/,
                                       void* /*user_data*/) {
   // Same: no double-click event from AppIndicator.
 }
 
-#else  // !WEF_HAVE_APPINDICATOR
+#else  // !LAUFEY_HAVE_APPINDICATOR
 
 uint32_t CreateTrayIconLinux() { return 0; }
 void DestroyTrayIconLinux(uint32_t) {}
 void SetTrayIconLinux(uint32_t, const void*, size_t) {}
 void SetTrayIconDarkLinux(uint32_t, const void*, size_t) {}
 void SetTrayTooltipLinux(uint32_t, const char*) {}
-void SetTrayMenuLinux(uint32_t, wef_value_t* tmpl, const wef_backend_api_t* api,
-                       wef_menu_click_fn, void*) {
+void SetTrayMenuLinux(uint32_t, laufey_value_t* tmpl, const laufey_backend_api_t* api,
+                       laufey_menu_click_fn, void*) {
   if (tmpl && api) api->value_free(tmpl);
 }
-void SetTrayClickHandlerLinux(uint32_t, wef_tray_click_fn, void*) {}
-void SetTrayDoubleClickHandlerLinux(uint32_t, wef_tray_click_fn, void*) {}
+void SetTrayClickHandlerLinux(uint32_t, laufey_tray_click_fn, void*) {}
+void SetTrayDoubleClickHandlerLinux(uint32_t, laufey_tray_click_fn, void*) {}
 
-#endif  // WEF_HAVE_APPINDICATOR
+#endif  // LAUFEY_HAVE_APPINDICATOR
 
-}  // namespace wef_common
+}  // namespace laufey_common

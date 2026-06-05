@@ -1,6 +1,6 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 //
-// GtkMenu / GtkMenuBar construction from a wef_value_t menu template.
+// GtkMenu / GtkMenuBar construction from a laufey_value_t menu template.
 // Each non-separator item carries its own click handler+data in a
 // per-item GtkMenuCallbackData attached via g_signal_connect_data so
 // the same builder serves application menus, context menus, dock-menu
@@ -8,16 +8,16 @@
 
 #include <gtk/gtk.h>
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
 struct GtkMenuCallbackData {
-  wef_menu_click_fn on_click;
+  laufey_menu_click_fn on_click;
   void* on_click_data;
   uint32_t window_id;
   std::string item_id;
@@ -34,9 +34,9 @@ void DestroyGtkMenuCallbackData(gpointer user_data, GClosure* /*closure*/) {
   delete static_cast<GtkMenuCallbackData*>(user_data);
 }
 
-std::string DictString(const wef_backend_api_t* api, wef_value_t* dict,
+std::string DictString(const laufey_backend_api_t* api, laufey_value_t* dict,
                        const char* key) {
-  wef_value_t* v = api->value_dict_get(dict, key);
+  laufey_value_t* v = api->value_dict_get(dict, key);
   if (!v || !api->value_is_string(v)) return std::string();
   size_t len = 0;
   char* s = api->value_get_string(v, &len);
@@ -48,9 +48,9 @@ std::string DictString(const wef_backend_api_t* api, wef_value_t* dict,
 
 }  // namespace
 
-GtkWidget* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
+GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
                                   uint32_t window_id,
-                                  wef_menu_click_fn on_click,
+                                  laufey_menu_click_fn on_click,
                                   void* on_click_data, bool is_menu_bar) {
   if (!val || !api->value_is_list(val)) return nullptr;
 
@@ -58,7 +58,7 @@ GtkWidget* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
   size_t count = api->value_list_size(val);
 
   for (size_t i = 0; i < count; ++i) {
-    wef_value_t* itemVal = api->value_list_get(val, i);
+    laufey_value_t* itemVal = api->value_list_get(val, i);
     if (!itemVal || !api->value_is_dict(itemVal)) continue;
 
     std::string typeStr = DictString(api, itemVal, "type");
@@ -101,7 +101,7 @@ GtkWidget* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
     std::string label = DictString(api, itemVal, "label");
     if (label.empty()) continue;
 
-    wef_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
+    laufey_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
     if (submenuVal && api->value_is_list(submenuVal)) {
       GtkWidget* parent = gtk_menu_item_new_with_label(label.c_str());
       GtkWidget* submenu = BuildGtkMenuFromValue(submenuVal, api, window_id,
@@ -121,7 +121,7 @@ GtkWidget* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
                           G_CALLBACK(OnGtkMenuItemActivate), cb_data,
                           DestroyGtkMenuCallbackData, (GConnectFlags)0);
 
-    wef_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
+    laufey_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
     if (enabledVal && api->value_is_bool(enabledVal) &&
         !api->value_get_bool(enabledVal)) {
       gtk_widget_set_sensitive(gtkItem, FALSE);
@@ -133,4 +133,4 @@ GtkWidget* BuildGtkMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
   return menu;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

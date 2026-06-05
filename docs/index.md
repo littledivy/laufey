@@ -1,16 +1,16 @@
-<img src="https://github.com/user-attachments/assets/c7d55981-ab29-4bea-a4c6-28feeb1b4520" alt="wef" width="120" style="display: block; margin-bottom: 1rem;">
+<img src="laufey.png" alt="laufey" width="220" style="display: block; margin-bottom: 1rem;">
 
-**wef** ("Web embedded framework") lets you build cross-platform desktop apps
+**laufey** is a web embedded framework: build cross-platform desktop apps
 with web technologies and your choice of browser engine.
 
 It is built around a small C ABI that separates the **browser engine** (the
 backend) from your **application logic** (the runtime). You write the runtime in
-Rust against one portable API; wef ships prebuilt backends — Chromium via
+Rust against one portable API; laufey ships prebuilt backends — Chromium via
 [CEF](backends.md), the system [WebView](backends.md), and an engine-free
 [Winit](backends.md) windowing backend — and your app runs on any of them.
 
 ```rust
-use just_wef::{Value, Window};
+use laufey::{Value, Window};
 
 fn main() {
     Window::new(800, 600)
@@ -26,13 +26,13 @@ fn main() {
         .load("index.html");
 }
 
-just_wef::main!(main);
+laufey::main!(main);
 ```
 
 ## Where to go next
 
 - [Architecture](architecture.md) — how backends and runtimes fit together.
-- [C ABI](c-abi.md) — the `wef.h` contract: entry points, the API table, and the
+- [C ABI](c-abi.md) — the `laufey.h` contract: entry points, the API table, and the
   value model. Read this if you're implementing a backend or a binding.
 - [Backends](backends.md) — CEF, WebView, and Winit, and how they differ.
 - The feature pages — [windows](window-management.md),

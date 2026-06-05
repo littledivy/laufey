@@ -1,7 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 //
 // Shell_NotifyIcon-backed tray / status-bar icon. Hidden message-only
-// window receives WM_WEF_TRAYICON callbacks and dispatches click /
+// window receives WM_LAUFEY_TRAYICON callbacks and dispatches click /
 // double-click / right-click-menu events. WIC handles PNG → HICON
 // decode. Light vs dark icons are resolved against the
 // AppsUseLightTheme registry value and re-applied on
@@ -10,7 +10,7 @@
 // All entry points are synchronous; callers that need to dispatch to
 // a UI thread (CEF's TID_UI) should marshal before calling.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -24,11 +24,11 @@
 #include <string>
 #include <vector>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
-#define WM_WEF_COMMON_TRAYICON (WM_APP + 65)
+#define WM_LAUFEY_COMMON_TRAYICON (WM_APP + 65)
 
 struct WinTrayEntry {
   UINT uid;
@@ -36,11 +36,11 @@ struct WinTrayEntry {
   HICON hicon_dark;
   HMENU hmenu;
   std::map<UINT, std::string> cmd_to_id;
-  wef_menu_click_fn menu_click_fn;
+  laufey_menu_click_fn menu_click_fn;
   void* menu_click_data;
-  wef_tray_click_fn click_fn;
+  laufey_tray_click_fn click_fn;
   void* click_data;
-  wef_tray_click_fn dblclick_fn;
+  laufey_tray_click_fn dblclick_fn;
   void* dblclick_data;
 };
 
@@ -106,12 +106,12 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     return 0;
   }
-  if (msg != WM_WEF_COMMON_TRAYICON) return DefWindowProc(hwnd, msg, wp, lp);
+  if (msg != WM_LAUFEY_COMMON_TRAYICON) return DefWindowProc(hwnd, msg, wp, lp);
 
   uint32_t tray_id = (uint32_t)wp;
   UINT event = LOWORD(lp);
   if (event == WM_LBUTTONDBLCLK) {
-    wef_tray_click_fn fn = nullptr;
+    laufey_tray_click_fn fn = nullptr;
     void* data = nullptr;
     {
       std::lock_guard<std::mutex> lock(TrayMutex());
@@ -125,7 +125,7 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   }
   if (event == WM_LBUTTONUP) {
-    wef_tray_click_fn fn = nullptr;
+    laufey_tray_click_fn fn = nullptr;
     void* data = nullptr;
     {
       std::lock_guard<std::mutex> lock(TrayMutex());
@@ -153,7 +153,7 @@ LRESULT CALLBACK TrayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                               TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
                               pt.x, pt.y, 0, hwnd, nullptr);
     if (!cmd) return 0;
-    wef_menu_click_fn fn = nullptr;
+    laufey_menu_click_fn fn = nullptr;
     void* data = nullptr;
     std::string item_id;
     {
@@ -177,7 +177,7 @@ HWND EnsureTrayMessageWindow() {
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = TrayWndProc;
   wc.hInstance = GetModuleHandleW(nullptr);
-  wc.lpszClassName = L"WefCommonTrayWindow";
+  wc.lpszClassName = L"LaufeyCommonTrayWindow";
   RegisterClassExW(&wc);
   g_tray_msg_hwnd =
       CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
@@ -263,17 +263,17 @@ std::wstring Utf8ToWide(const char* s) {
   return out;
 }
 
-HMENU BuildWinMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
+HMENU BuildWinMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
                              std::map<UINT, std::string>& cmd_to_id) {
   if (!val || !api->value_is_list(val)) return nullptr;
   HMENU menu = CreatePopupMenu();
   size_t count = api->value_list_size(val);
   for (size_t i = 0; i < count; ++i) {
-    wef_value_t* itemVal = api->value_list_get(val, i);
+    laufey_value_t* itemVal = api->value_list_get(val, i);
     if (!itemVal || !api->value_is_dict(itemVal)) continue;
 
     // Separator
-    wef_value_t* typeVal = api->value_dict_get(itemVal, "type");
+    laufey_value_t* typeVal = api->value_dict_get(itemVal, "type");
     if (typeVal && api->value_is_string(typeVal)) {
       size_t len = 0;
       char* typeStr = api->value_get_string(typeVal, &len);
@@ -285,7 +285,7 @@ HMENU BuildWinMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
       if (typeStr) api->value_free_string(typeStr);
     }
 
-    wef_value_t* labelVal = api->value_dict_get(itemVal, "label");
+    laufey_value_t* labelVal = api->value_dict_get(itemVal, "label");
     std::wstring wlabel;
     if (labelVal && api->value_is_string(labelVal)) {
       size_t len = 0;
@@ -298,14 +298,14 @@ HMENU BuildWinMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
       }
     }
 
-    wef_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
+    laufey_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
     if (submenuVal && api->value_is_list(submenuVal)) {
       HMENU sub = BuildWinMenuFromValue(submenuVal, api, cmd_to_id);
       AppendMenuW(menu, MF_POPUP | MF_STRING, (UINT_PTR)sub, wlabel.c_str());
       continue;
     }
 
-    wef_value_t* idVal = api->value_dict_get(itemVal, "id");
+    laufey_value_t* idVal = api->value_dict_get(itemVal, "id");
     std::string item_id;
     if (idVal && api->value_is_string(idVal)) {
       size_t len = 0;
@@ -318,7 +318,7 @@ HMENU BuildWinMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
 
     UINT cmd = g_next_cmd_id.fetch_add(1, std::memory_order_relaxed);
     UINT flags = MF_STRING;
-    wef_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
+    laufey_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
     if (enabledVal && api->value_is_bool(enabledVal) &&
         !api->value_get_bool(enabledVal)) {
       flags |= MF_GRAYED;
@@ -350,7 +350,7 @@ void FinalizeTrayIconWin(uint32_t tray_id) {
   nid.hWnd = hwnd;
   nid.uID = tray_id;
   nid.uFlags = NIF_MESSAGE;
-  nid.uCallbackMessage = WM_WEF_COMMON_TRAYICON;
+  nid.uCallbackMessage = WM_LAUFEY_COMMON_TRAYICON;
   Shell_NotifyIconW(NIM_ADD, &nid);
 }
 
@@ -430,9 +430,9 @@ void SetTrayTooltipWin(uint32_t tray_id, const char* tooltip_or_null) {
   Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
-void SetTrayMenuWin(uint32_t tray_id, wef_value_t* menu_template,
-                     const wef_backend_api_t* api,
-                     wef_menu_click_fn on_click, void* on_click_data) {
+void SetTrayMenuWin(uint32_t tray_id, laufey_value_t* menu_template,
+                     const laufey_backend_api_t* api,
+                     laufey_menu_click_fn on_click, void* on_click_data) {
   std::map<UINT, std::string> cmd_to_id;
   HMENU menu = menu_template
                     ? BuildWinMenuFromValue(menu_template, api, cmd_to_id)
@@ -451,7 +451,7 @@ void SetTrayMenuWin(uint32_t tray_id, wef_value_t* menu_template,
   it->second.menu_click_data = on_click_data;
 }
 
-void SetTrayClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
+void SetTrayClickHandlerWin(uint32_t tray_id, laufey_tray_click_fn handler,
                               void* user_data) {
   std::lock_guard<std::mutex> lock(TrayMutex());
   auto it = TrayMap().find(tray_id);
@@ -461,7 +461,7 @@ void SetTrayClickHandlerWin(uint32_t tray_id, wef_tray_click_fn handler,
 }
 
 void SetTrayDoubleClickHandlerWin(uint32_t tray_id,
-                                    wef_tray_click_fn handler,
+                                    laufey_tray_click_fn handler,
                                     void* user_data) {
   std::lock_guard<std::mutex> lock(TrayMutex());
   auto it = TrayMap().find(tray_id);
@@ -495,4 +495,4 @@ bool GetTrayIconBoundsWin(uint32_t tray_id, int* x, int* y, int* width,
   return true;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

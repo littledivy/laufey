@@ -2,13 +2,13 @@
 
 #include "render_process_handler.h"
 
-CefRefPtr<WefRenderProcessHandler> g_render_handler;
+CefRefPtr<LaufeyRenderProcessHandler> g_render_handler;
 
-WefPathObject::WefPathObject(std::vector<std::string> path,
+LaufeyPathObject::LaufeyPathObject(std::vector<std::string> path,
                              CefRefPtr<CefFrame> frame)
     : path_(std::move(path)), frame_(frame) {}
 
-bool WefPathObject::Get(const CefString& name,
+bool LaufeyPathObject::Get(const CefString& name,
                         const CefRefPtr<CefV8Value> object,
                         CefRefPtr<CefV8Value>& retval, CefString& exception) {
   std::string prop = name.ToString();
@@ -21,34 +21,34 @@ bool WefPathObject::Get(const CefString& name,
   std::vector<std::string> new_path = path_;
   new_path.push_back(prop);
 
-  CefRefPtr<WefPathObject> handler = new WefPathObject(new_path, frame_);
+  CefRefPtr<LaufeyPathObject> handler = new LaufeyPathObject(new_path, frame_);
 
   retval = CefV8Value::CreateFunction(prop, handler);
 
   return true;
 }
 
-bool WefPathObject::Set(const CefString& name,
+bool LaufeyPathObject::Set(const CefString& name,
                         const CefRefPtr<CefV8Value> object,
                         const CefRefPtr<CefV8Value> value,
                         CefString& exception) {
-  exception = "Cannot set properties on Wef object";
+  exception = "Cannot set properties on Laufey object";
   return true;
 }
 
-bool WefPathObject::Get(int index, const CefRefPtr<CefV8Value> object,
+bool LaufeyPathObject::Get(int index, const CefRefPtr<CefV8Value> object,
                         CefRefPtr<CefV8Value>& retval, CefString& exception) {
   return false;
 }
 
-bool WefPathObject::Set(int index, const CefRefPtr<CefV8Value> object,
+bool LaufeyPathObject::Set(int index, const CefRefPtr<CefV8Value> object,
                         const CefRefPtr<CefV8Value> value,
                         CefString& exception) {
-  exception = "Cannot set index properties on Wef object";
+  exception = "Cannot set index properties on Laufey object";
   return true;
 }
 
-bool WefPathObject::Execute(const CefString& name, CefRefPtr<CefV8Value> object,
+bool LaufeyPathObject::Execute(const CefString& name, CefRefPtr<CefV8Value> object,
                             const CefV8ValueList& arguments,
                             CefRefPtr<CefV8Value>& retval,
                             CefString& exception) {
@@ -101,7 +101,7 @@ bool WefPathObject::Execute(const CefString& name, CefRefPtr<CefV8Value> object,
     method_path += path_[i];
   }
 
-  CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("wef_call");
+  CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("laufey_call");
   CefRefPtr<CefListValue> msgArgs = msg->GetArgumentList();
   // IDs are 64-bit; carry as double (exact to 2^53) since CefValue has no
   // int64.
@@ -137,45 +137,45 @@ void PromiseResolver::Reject(const std::string& error) {
   context_->Exit();
 }
 
-WefRenderProcessHandler::WefRenderProcessHandler() {
+LaufeyRenderProcessHandler::LaufeyRenderProcessHandler() {
   g_render_handler = this;
 }
 
-void WefRenderProcessHandler::OnBrowserCreated(
+void LaufeyRenderProcessHandler::OnBrowserCreated(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefDictionaryValue> extra_info) {
-  if (extra_info && extra_info->HasKey("wef_js_namespace")) {
+  if (extra_info && extra_info->HasKey("laufey_js_namespace")) {
     browser_namespaces_[browser->GetIdentifier()] =
-        extra_info->GetString("wef_js_namespace").ToString();
+        extra_info->GetString("laufey_js_namespace").ToString();
   }
 }
 
-void WefRenderProcessHandler::OnContextCreated(
+void LaufeyRenderProcessHandler::OnContextCreated(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     CefRefPtr<CefV8Context> context) {
   CefRefPtr<CefV8Value> global = context->GetGlobal();
 
-  std::string ns = "Wef";
+  std::string ns = "Laufey";
   auto it = browser_namespaces_.find(browser->GetIdentifier());
   if (it != browser_namespaces_.end()) {
     ns = it->second;
   }
 
-  CefRefPtr<WefPathObject> handler = new WefPathObject({}, frame);
-  CefRefPtr<CefV8Value> wef = CefV8Value::CreateObject(nullptr, handler);
+  CefRefPtr<LaufeyPathObject> handler = new LaufeyPathObject({}, frame);
+  CefRefPtr<CefV8Value> laufey = CefV8Value::CreateObject(nullptr, handler);
 
-  global->SetValue(ns, wef, V8_PROPERTY_ATTRIBUTE_READONLY);
+  global->SetValue(ns, laufey, V8_PROPERTY_ATTRIBUTE_READONLY);
 }
 
-void WefRenderProcessHandler::OnContextReleased(
+void LaufeyRenderProcessHandler::OnContextReleased(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     CefRefPtr<CefV8Context> context) {}
 
-bool WefRenderProcessHandler::OnProcessMessageReceived(
+bool LaufeyRenderProcessHandler::OnProcessMessageReceived(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     CefProcessId source_process, CefRefPtr<CefProcessMessage> message) {
   const std::string& name = message->GetName().ToString();
 
-  if (name == "wef_response") {
+  if (name == "laufey_response") {
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t call_id = static_cast<uint64_t>(args->GetDouble(0));
     CefRefPtr<CefValue> result = args->GetValue(1);
@@ -200,7 +200,7 @@ bool WefRenderProcessHandler::OnProcessMessageReceived(
     return true;
   }
 
-  if (name == "wef_callback") {
+  if (name == "laufey_callback") {
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t callback_id = static_cast<uint64_t>(args->GetDouble(0));
     CefRefPtr<CefListValue> callbackArgs = args->GetList(1);
@@ -223,14 +223,14 @@ bool WefRenderProcessHandler::OnProcessMessageReceived(
     return true;
   }
 
-  if (name == "wef_eval") {
+  if (name == "laufey_eval") {
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t eval_id = static_cast<uint64_t>(args->GetDouble(0));
     std::string script = args->GetString(1).ToString();
 
     CefRefPtr<CefV8Context> context = frame->GetV8Context();
     CefRefPtr<CefProcessMessage> reply =
-        CefProcessMessage::Create("wef_eval_result");
+        CefProcessMessage::Create("laufey_eval_result");
     CefRefPtr<CefListValue> replyArgs = reply->GetArgumentList();
     replyArgs->SetDouble(0, static_cast<double>(eval_id));
 
@@ -259,7 +259,7 @@ bool WefRenderProcessHandler::OnProcessMessageReceived(
     return true;
   }
 
-  if (name == "wef_release_callback") {
+  if (name == "laufey_release_callback") {
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t callback_id = static_cast<uint64_t>(args->GetDouble(0));
 
@@ -270,23 +270,23 @@ bool WefRenderProcessHandler::OnProcessMessageReceived(
   return false;
 }
 
-void WefRenderProcessHandler::StorePendingCall(
+void LaufeyRenderProcessHandler::StorePendingCall(
     uint64_t call_id, CefRefPtr<PromiseResolver> resolver) {
   pending_calls_[call_id] = resolver;
 }
 
-uint64_t WefRenderProcessHandler::StoreCallback(
+uint64_t LaufeyRenderProcessHandler::StoreCallback(
     CefRefPtr<CefV8Value> func, CefRefPtr<CefV8Context> context) {
   uint64_t id = next_callback_id_++;
   stored_callbacks_[id] = {func, context};
   return id;
 }
 
-uint64_t WefRenderProcessHandler::GetNextCallId() {
+uint64_t LaufeyRenderProcessHandler::GetNextCallId() {
   return next_call_id_++;
 }
 
-CefRefPtr<CefValue> WefRenderProcessHandler::V8ValueToCefValue(
+CefRefPtr<CefValue> LaufeyRenderProcessHandler::V8ValueToCefValue(
     CefRefPtr<CefV8Value> v8val) {
   CefRefPtr<CefValue> value = CefValue::Create();
 
@@ -330,7 +330,7 @@ CefRefPtr<CefValue> WefRenderProcessHandler::V8ValueToCefValue(
   return value;
 }
 
-CefRefPtr<CefV8Value> WefRenderProcessHandler::CefValueToV8Value(
+CefRefPtr<CefV8Value> LaufeyRenderProcessHandler::CefValueToV8Value(
     CefRefPtr<CefValue> value, CefRefPtr<CefV8Context> context) {
   if (!value) {
     return CefV8Value::CreateNull();

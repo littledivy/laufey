@@ -41,33 +41,33 @@ static GIOChannel* g_io_channel = nullptr;
 static guint g_io_source_id = 0;
 static bool g_monitor_installed = false;
 
-// Cache: WM frame XID -> (wef_id, CEF content XID).
+// Cache: WM frame XID -> (laufey_id, CEF content XID).
 // With a reparenting WM, the top-level child of root is the WM frame,
-// not the CEF window. This cache maps frame XIDs to the wef IDs and
+// not the CEF window. This cache maps frame XIDs to the laufey IDs and
 // the actual content window for coordinate translation.
 struct CachedWindow {
-  uint32_t wef_id;
+  uint32_t laufey_id;
   Window content_xid;
 };
 static std::map<Window, CachedWindow> g_frame_cache;
 
-static uint32_t XI2ModsToWef(XIModifierState* mods) {
-  uint32_t wef = 0;
+static uint32_t XI2ModsToLaufey(XIModifierState* mods) {
+  uint32_t laufey = 0;
   if (mods->effective & ShiftMask)
-    wef |= WEF_MOD_SHIFT;
+    laufey |= LAUFEY_MOD_SHIFT;
   if (mods->effective & ControlMask)
-    wef |= WEF_MOD_CONTROL;
+    laufey |= LAUFEY_MOD_CONTROL;
   if (mods->effective & Mod1Mask)
-    wef |= WEF_MOD_ALT;
+    laufey |= LAUFEY_MOD_ALT;
   if (mods->effective & Mod4Mask)
-    wef |= WEF_MOD_META;
-  return wef;
+    laufey |= LAUFEY_MOD_META;
+  return laufey;
 }
 
-// Multi-click detection: same button within WEF_MULTI_CLICK_TIME_MS and
-// WEF_MULTI_CLICK_DISTANCE_PX of the previous click increments the count.
-static constexpr int WEF_MULTI_CLICK_TIME_MS = 500;
-static constexpr int WEF_MULTI_CLICK_DISTANCE_PX = 5;
+// Multi-click detection: same button within LAUFEY_MULTI_CLICK_TIME_MS and
+// LAUFEY_MULTI_CLICK_DISTANCE_PX of the previous click increments the count.
+static constexpr int LAUFEY_MULTI_CLICK_TIME_MS = 500;
+static constexpr int LAUFEY_MULTI_CLICK_DISTANCE_PX = 5;
 
 struct ClickTracker {
   Time last_time = 0;
@@ -78,7 +78,7 @@ struct ClickTracker {
 };
 static ClickTracker g_click_tracker;
 
-// Tracks which wef window the cursor is currently over and last cursor
+// Tracks which laufey window the cursor is currently over and last cursor
 // position within it. Populated from per-window Enter/Motion events.
 // RawButtonPress/Release events lack window context, so we route them to
 // this tracked window with these coordinates.
@@ -91,9 +91,9 @@ static int ComputeClickCount(Time time, int button, double x, double y) {
   double dx = x - g_click_tracker.last_x;
   double dy = y - g_click_tracker.last_y;
   bool close = (dx * dx + dy * dy) <=
-               (WEF_MULTI_CLICK_DISTANCE_PX * WEF_MULTI_CLICK_DISTANCE_PX);
+               (LAUFEY_MULTI_CLICK_DISTANCE_PX * LAUFEY_MULTI_CLICK_DISTANCE_PX);
   if (button == g_click_tracker.last_button &&
-      time - g_click_tracker.last_time <= (Time)WEF_MULTI_CLICK_TIME_MS &&
+      time - g_click_tracker.last_time <= (Time)LAUFEY_MULTI_CLICK_TIME_MS &&
       close) {
     g_click_tracker.count += 1;
   } else {
@@ -106,24 +106,24 @@ static int ComputeClickCount(Time time, int button, double x, double y) {
   return g_click_tracker.count;
 }
 
-static int XI2ButtonToWef(int detail) {
+static int XI2ButtonToLaufey(int detail) {
   switch (detail) {
     case 1:
-      return WEF_MOUSE_BUTTON_LEFT;
+      return LAUFEY_MOUSE_BUTTON_LEFT;
     case 2:
-      return WEF_MOUSE_BUTTON_MIDDLE;
+      return LAUFEY_MOUSE_BUTTON_MIDDLE;
     case 3:
-      return WEF_MOUSE_BUTTON_RIGHT;
+      return LAUFEY_MOUSE_BUTTON_RIGHT;
     case 8:
-      return WEF_MOUSE_BUTTON_BACK;
+      return LAUFEY_MOUSE_BUTTON_BACK;
     case 9:
-      return WEF_MOUSE_BUTTON_FORWARD;
+      return LAUFEY_MOUSE_BUTTON_FORWARD;
     default:
-      return WEF_MOUSE_BUTTON_LEFT;
+      return LAUFEY_MOUSE_BUTTON_LEFT;
   }
 }
 
-// Resolve an XI2 device event to a wef window ID and content-relative coords.
+// Resolve an XI2 device event to a laufey window ID and content-relative coords.
 // With per-window XI2 selection, dev->event is the window we selected on
 // (the CEF content window) and dev->event_x/y are already window-relative.
 static bool ResolveWindow(XIDeviceEvent* dev, uint32_t* out_wid, double* out_x,
@@ -132,14 +132,14 @@ static bool ResolveWindow(XIDeviceEvent* dev, uint32_t* out_wid, double* out_x,
     return false;
 
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetWefIdForNativeHandle((void*)(uintptr_t)dev->event);
+  uint32_t wid = loader->GetLaufeyIdForNativeHandle((void*)(uintptr_t)dev->event);
 
   if (wid == 0) {
     // Fall back to the frame-cache mapping in case selection landed on a
     // reparented ancestor.
     auto it = g_frame_cache.find(dev->event);
     if (it != g_frame_cache.end())
-      wid = it->second.wef_id;
+      wid = it->second.laufey_id;
   }
 
   if (wid == 0)
@@ -151,16 +151,16 @@ static bool ResolveWindow(XIDeviceEvent* dev, uint32_t* out_wid, double* out_x,
   return true;
 }
 
-// Resolve a window XID from an XI2 enter/focus event to a wef ID.
-static uint32_t ResolveWefId(Window xid) {
+// Resolve a window XID from an XI2 enter/focus event to a laufey ID.
+static uint32_t ResolveLaufeyId(Window xid) {
   if (!xid)
     return 0;
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetWefIdForNativeHandle((void*)(uintptr_t)xid);
+  uint32_t wid = loader->GetLaufeyIdForNativeHandle((void*)(uintptr_t)xid);
   if (wid == 0) {
     auto it = g_frame_cache.find(xid);
     if (it != g_frame_cache.end())
-      wid = it->second.wef_id;
+      wid = it->second.laufey_id;
   }
   return wid;
 }
@@ -172,8 +172,8 @@ static void ProcessXI2Event(XEvent* xev) {
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
   int evtype = xev->xcookie.evtype;
 
-  if (getenv("WEF_CLICK_DEBUG")) {
-    fprintf(stderr, "[wef-click] xi2 evtype=%d\n", evtype);
+  if (getenv("LAUFEY_CLICK_DEBUG")) {
+    fprintf(stderr, "[laufey-click] xi2 evtype=%d\n", evtype);
   }
 
   if (evtype == XI_Enter || evtype == XI_Leave) {
@@ -194,7 +194,7 @@ static void ProcessXI2Event(XEvent* xev) {
     double x, y;
 
     if (ResolveWindow(dev, &wid, &x, &y)) {
-      uint32_t modifiers = XI2ModsToWef(&dev->mods);
+      uint32_t modifiers = XI2ModsToLaufey(&dev->mods);
 
       switch (evtype) {
         case XI_ButtonPress: {
@@ -210,11 +210,11 @@ static void ProcessXI2Event(XEvent* xev) {
             else if (detail == 7)
               dx = 1.0;
             loader->DispatchWheelEvent(wid, dx, dy, x, y, modifiers,
-                                       WEF_WHEEL_DELTA_LINE);
+                                       LAUFEY_WHEEL_DELTA_LINE);
           } else {
-            int wef_button = XI2ButtonToWef(detail);
-            int click_count = ComputeClickCount(dev->time, wef_button, x, y);
-            loader->DispatchMouseClickEvent(wid, WEF_MOUSE_PRESSED, wef_button,
+            int laufey_button = XI2ButtonToLaufey(detail);
+            int click_count = ComputeClickCount(dev->time, laufey_button, x, y);
+            loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_PRESSED, laufey_button,
                                             x, y, modifiers, click_count);
             // CEF holds an XI2 grab during press/release on its own X
             // connection, so XI_ButtonRelease is never delivered to our
@@ -223,7 +223,7 @@ static void ProcessXI2Event(XEvent* xev) {
             // dispatch in deno still works. CEF's own press+release handling
             // (for its internal rendering / drag) is unaffected because it
             // runs on a separate X connection.
-            loader->DispatchMouseClickEvent(wid, WEF_MOUSE_RELEASED, wef_button,
+            loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_RELEASED, laufey_button,
                                             x, y, modifiers, click_count);
           }
           break;
@@ -232,8 +232,8 @@ static void ProcessXI2Event(XEvent* xev) {
           int detail = dev->detail;
           if (detail >= 4 && detail <= 7)
             break;
-          int wef_button = XI2ButtonToWef(detail);
-          loader->DispatchMouseClickEvent(wid, WEF_MOUSE_RELEASED, wef_button,
+          int laufey_button = XI2ButtonToLaufey(detail);
+          loader->DispatchMouseClickEvent(wid, LAUFEY_MOUSE_RELEASED, laufey_button,
                                           x, y, modifiers,
                                           g_click_tracker.count);
           break;
@@ -264,23 +264,23 @@ static void ProcessXI2Event(XEvent* xev) {
     // Route to the currently hovered window with last cursor coords.
     XIRawEvent* raw = static_cast<XIRawEvent*>(xev->xcookie.data);
     int detail = raw->detail;
-    if (getenv("WEF_CLICK_DEBUG")) {
+    if (getenv("LAUFEY_CLICK_DEBUG")) {
       fprintf(stderr,
-              "[wef-click] raw-release detail=%d hover_wid=%u count=%d\n",
+              "[laufey-click] raw-release detail=%d hover_wid=%u count=%d\n",
               detail, g_hover_wid, g_click_tracker.count);
     }
     if (detail < 4 || detail > 7) {
       if (g_hover_wid != 0) {
-        int wef_button = XI2ButtonToWef(detail);
+        int laufey_button = XI2ButtonToLaufey(detail);
         loader->DispatchMouseClickEvent(
-            g_hover_wid, WEF_MOUSE_RELEASED, wef_button, g_hover_x, g_hover_y,
+            g_hover_wid, LAUFEY_MOUSE_RELEASED, laufey_button, g_hover_x, g_hover_y,
             g_hover_modifiers, g_click_tracker.count);
       }
     }
   } else if (evtype == XI_FocusIn || evtype == XI_FocusOut) {
     XIEnterEvent* enter = static_cast<XIEnterEvent*>(xev->xcookie.data);
     Window target = enter->child ? enter->child : enter->event;
-    uint32_t wid = ResolveWefId(target);
+    uint32_t wid = ResolveLaufeyId(target);
     if (wid > 0) {
       loader->DispatchFocusedEvent(wid, evtype == XI_FocusIn ? 1 : 0);
     }
@@ -297,7 +297,7 @@ static void ProcessStructureEvent(XEvent* xev) {
   XConfigureEvent* config = &xev->xconfigure;
 
   uint32_t wid =
-      loader->GetWefIdForNativeHandle((void*)(uintptr_t)config->window);
+      loader->GetLaufeyIdForNativeHandle((void*)(uintptr_t)config->window);
   if (wid > 0) {
     loader->DispatchResizeEvent(wid, config->width, config->height);
     loader->DispatchMoveEvent(wid, config->x, config->y);
@@ -514,7 +514,7 @@ void MonitorLinuxWindowEvents(unsigned long xid) {
   // Walk up the window tree to find the WM frame (direct child of root).
   // With a reparenting WM, the CEF window is reparented inside the frame.
   // XI2 events on root report the frame as `child`, so we cache the
-  // frame → (wef_id, content_xid) mapping for fast lookup.
+  // frame → (laufey_id, content_xid) mapping for fast lookup.
   Window root_ret, parent;
   Window* children;
   unsigned int nchildren;
@@ -527,7 +527,7 @@ void MonitorLinuxWindowEvents(unsigned long xid) {
     if (parent == root_ret || parent == 0) {
       // current is the top-level frame (or the window itself if no WM).
       if (current != xid) {
-        uint32_t wid = RuntimeLoader::GetInstance()->GetWefIdForNativeHandle(
+        uint32_t wid = RuntimeLoader::GetInstance()->GetLaufeyIdForNativeHandle(
             (void*)(uintptr_t)xid);
         if (wid > 0) {
           g_frame_cache[current] = {wid, xid};
@@ -588,9 +588,9 @@ static bool is_cli_worker_command(int argc, char* argv[]) {
 
 // Combined app that handles both browser and renderer processes (single-exe
 // model)
-class WefCombinedApp : public CefApp, public CefBrowserProcessHandler {
+class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
  public:
-  WefCombinedApp() : renderer_app_(new WefRendererApp()) {}
+  LaufeyCombinedApp() : renderer_app_(new LaufeyRendererApp()) {}
 
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
@@ -608,9 +608,9 @@ class WefCombinedApp : public CefApp, public CefBrowserProcessHandler {
     CEF_REQUIRE_UI_THREAD();
 
     // Keep the handler alive for the lifetime of the app.
-    // Backend_CreateWindow uses WefHandler::GetInstance() from the runtime
+    // Backend_CreateWindow uses LaufeyHandler::GetInstance() from the runtime
     // thread, so the handler must outlive this function scope.
-    static CefRefPtr<WefHandler> handler(new WefHandler());
+    static CefRefPtr<LaufeyHandler> handler(new LaufeyHandler());
 
     if (!g_runtime_path.empty()) {
       if (!RuntimeLoader::GetInstance()->Load(g_runtime_path)) {
@@ -627,28 +627,28 @@ class WefCombinedApp : public CefApp, public CefBrowserProcessHandler {
                               []() { RuntimeLoader::GetInstance()->Start(); }));
     } else {
       // No runtime: create a default window for demo
-      uint32_t wef_id = RuntimeLoader::GetInstance()->AllocateWindowId();
-      g_pending_wef_ids.push(wef_id);
+      uint32_t laufey_id = RuntimeLoader::GetInstance()->AllocateWindowId();
+      g_pending_laufey_ids.push(laufey_id);
       CefBrowserSettings browser_settings;
       CefRefPtr<CefBrowserView> browser_view =
           CefBrowserView::CreateBrowserView(handler, "https://example.com",
                                             browser_settings, nullptr, nullptr,
                                             nullptr);
       CefWindow::CreateTopLevelWindow(
-          new WefWindowDelegate(browser_view, wef_id));
+          new LaufeyWindowDelegate(browser_view, laufey_id));
     }
   }
 
  private:
-  CefRefPtr<WefRendererApp> renderer_app_;
-  IMPLEMENT_REFCOUNTING(WefCombinedApp);
+  CefRefPtr<LaufeyRendererApp> renderer_app_;
+  IMPLEMENT_REFCOUNTING(LaufeyCombinedApp);
 };
 
 int main(int argc, char* argv[]) {
   CefMainArgs main_args(argc, argv);
 
   // Single-exe model: check if we are a subprocess first
-  CefRefPtr<WefCombinedApp> app(new WefCombinedApp());
+  CefRefPtr<LaufeyCombinedApp> app(new LaufeyCombinedApp());
   int exit_code = CefExecuteProcess(main_args, app, nullptr);
   if (exit_code >= 0) {
     return exit_code;
@@ -664,7 +664,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (g_runtime_path.empty()) {
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       g_runtime_path = envPath;
     }
@@ -679,10 +679,10 @@ int main(int argc, char* argv[]) {
   settings.no_sandbox = true;
 
   // Set cache path
-  std::string cache_path = "/tmp/wef_cef_" + std::to_string(getpid());
+  std::string cache_path = "/tmp/laufey_cef_" + std::to_string(getpid());
   CefString(&settings.root_cache_path) = cache_path;
 
-  if (const char* port_env = getenv("WEF_REMOTE_DEBUGGING_PORT")) {
+  if (const char* port_env = getenv("LAUFEY_REMOTE_DEBUGGING_PORT")) {
     int port = atoi(port_env);
     if (port > 0 && port < 65536) {
       settings.remote_debugging_port = port;

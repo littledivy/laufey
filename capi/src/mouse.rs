@@ -7,18 +7,18 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::{api, KeyModifiers};
 
-pub const WEF_MOUSE_BUTTON_LEFT: i32 = 0;
-pub const WEF_MOUSE_BUTTON_RIGHT: i32 = 1;
-pub const WEF_MOUSE_BUTTON_MIDDLE: i32 = 2;
-pub const WEF_MOUSE_BUTTON_BACK: i32 = 3;
-pub const WEF_MOUSE_BUTTON_FORWARD: i32 = 4;
+pub const LAUFEY_MOUSE_BUTTON_LEFT: i32 = 0;
+pub const LAUFEY_MOUSE_BUTTON_RIGHT: i32 = 1;
+pub const LAUFEY_MOUSE_BUTTON_MIDDLE: i32 = 2;
+pub const LAUFEY_MOUSE_BUTTON_BACK: i32 = 3;
+pub const LAUFEY_MOUSE_BUTTON_FORWARD: i32 = 4;
 
-pub const WEF_MOUSE_PRESSED: i32 = 0;
-pub const WEF_MOUSE_RELEASED: i32 = 1;
+pub const LAUFEY_MOUSE_PRESSED: i32 = 0;
+pub const LAUFEY_MOUSE_RELEASED: i32 = 1;
 
-pub const WEF_WHEEL_DELTA_PIXEL: i32 = 0;
-pub const WEF_WHEEL_DELTA_LINE: i32 = 1;
-pub const WEF_WHEEL_DELTA_PAGE: i32 = 2;
+pub const LAUFEY_WHEEL_DELTA_PIXEL: i32 = 0;
+pub const LAUFEY_WHEEL_DELTA_LINE: i32 = 1;
+pub const LAUFEY_WHEEL_DELTA_PAGE: i32 = 2;
 
 // --- Mouse click ---
 
@@ -55,7 +55,7 @@ pub enum MouseButtonState {
 
 impl MouseButtonState {
   pub(crate) fn from_raw(raw: c_int) -> Self {
-    if raw == WEF_MOUSE_PRESSED {
+    if raw == LAUFEY_MOUSE_PRESSED {
       Self::Pressed
     } else {
       Self::Released
@@ -76,11 +76,11 @@ pub enum MouseButton {
 impl MouseButton {
   fn from_raw(button: i32) -> Self {
     match button {
-      WEF_MOUSE_BUTTON_LEFT => MouseButton::Left,
-      WEF_MOUSE_BUTTON_RIGHT => MouseButton::Right,
-      WEF_MOUSE_BUTTON_MIDDLE => MouseButton::Middle,
-      WEF_MOUSE_BUTTON_BACK => MouseButton::Back,
-      WEF_MOUSE_BUTTON_FORWARD => MouseButton::Forward,
+      LAUFEY_MOUSE_BUTTON_LEFT => MouseButton::Left,
+      LAUFEY_MOUSE_BUTTON_RIGHT => MouseButton::Right,
+      LAUFEY_MOUSE_BUTTON_MIDDLE => MouseButton::Middle,
+      LAUFEY_MOUSE_BUTTON_BACK => MouseButton::Back,
+      LAUFEY_MOUSE_BUTTON_FORWARD => MouseButton::Forward,
       other => MouseButton::Other(other),
     }
   }
@@ -244,8 +244,8 @@ pub enum WheelDeltaMode {
 impl WheelDeltaMode {
   pub(crate) fn from_raw(raw: i32) -> Self {
     match raw {
-      WEF_WHEEL_DELTA_LINE => Self::Line,
-      WEF_WHEEL_DELTA_PAGE => Self::Page,
+      LAUFEY_WHEEL_DELTA_LINE => Self::Line,
+      LAUFEY_WHEEL_DELTA_PAGE => Self::Page,
       _ => Self::Pixel,
     }
   }
@@ -490,23 +490,23 @@ mod tests {
   #[test]
   fn mouse_button_known() {
     assert_eq!(
-      MouseButton::from_raw(WEF_MOUSE_BUTTON_LEFT),
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_LEFT),
       MouseButton::Left
     );
     assert_eq!(
-      MouseButton::from_raw(WEF_MOUSE_BUTTON_RIGHT),
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_RIGHT),
       MouseButton::Right
     );
     assert_eq!(
-      MouseButton::from_raw(WEF_MOUSE_BUTTON_MIDDLE),
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_MIDDLE),
       MouseButton::Middle
     );
     assert_eq!(
-      MouseButton::from_raw(WEF_MOUSE_BUTTON_BACK),
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_BACK),
       MouseButton::Back
     );
     assert_eq!(
-      MouseButton::from_raw(WEF_MOUSE_BUTTON_FORWARD),
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_FORWARD),
       MouseButton::Forward
     );
   }
@@ -576,18 +576,18 @@ mod tests {
   #[test]
   fn mouse_button_state_known_values() {
     assert_eq!(
-      MouseButtonState::from_raw(WEF_MOUSE_PRESSED),
+      MouseButtonState::from_raw(LAUFEY_MOUSE_PRESSED),
       MouseButtonState::Pressed
     );
     assert_eq!(
-      MouseButtonState::from_raw(WEF_MOUSE_RELEASED),
+      MouseButtonState::from_raw(LAUFEY_MOUSE_RELEASED),
       MouseButtonState::Released
     );
   }
 
   #[test]
   fn mouse_button_state_unknown_defaults_to_released() {
-    // The trampoline collapses anything that isn't WEF_MOUSE_PRESSED
+    // The trampoline collapses anything that isn't LAUFEY_MOUSE_PRESSED
     // to Released. Pinning this so a future "Cancelled" state can't
     // accidentally come through as Pressed.
     assert_eq!(MouseButtonState::from_raw(99), MouseButtonState::Released);
@@ -599,15 +599,15 @@ mod tests {
   #[test]
   fn wheel_delta_mode_known_values() {
     assert_eq!(
-      WheelDeltaMode::from_raw(WEF_WHEEL_DELTA_PIXEL),
+      WheelDeltaMode::from_raw(LAUFEY_WHEEL_DELTA_PIXEL),
       WheelDeltaMode::Pixel
     );
     assert_eq!(
-      WheelDeltaMode::from_raw(WEF_WHEEL_DELTA_LINE),
+      WheelDeltaMode::from_raw(LAUFEY_WHEEL_DELTA_LINE),
       WheelDeltaMode::Line
     );
     assert_eq!(
-      WheelDeltaMode::from_raw(WEF_WHEEL_DELTA_PAGE),
+      WheelDeltaMode::from_raw(LAUFEY_WHEEL_DELTA_PAGE),
       WheelDeltaMode::Page
     );
   }

@@ -1,7 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#ifndef WEF_RUNTIME_LOADER_H_
-#define WEF_RUNTIME_LOADER_H_
+#ifndef LAUFEY_RUNTIME_LOADER_H_
+#define LAUFEY_RUNTIME_LOADER_H_
 
 #include <string>
 #include <thread>
@@ -10,7 +10,7 @@
 #include <queue>
 #include <map>
 
-#include "wef.h"
+#include "laufey.h"
 #include "webview_value.h"
 
 #ifdef _WIN32
@@ -21,7 +21,7 @@
 #undef CreateWindowEx
 #endif
 
-class WefBackend;
+class LaufeyBackend;
 
 class RuntimeLoader {
  public:
@@ -33,13 +33,13 @@ class RuntimeLoader {
 
   void Shutdown();
 
-  void SetBackend(WefBackend* backend) {
+  void SetBackend(LaufeyBackend* backend) {
     backend_ = backend;
   }
-  WefBackend* GetBackend() {
+  LaufeyBackend* GetBackend() {
     return backend_;
   }
-  const wef_backend_api_t& GetBackendApi() const {
+  const laufey_backend_api_t& GetBackendApi() const {
     return backend_api_;
   }
 
@@ -64,20 +64,20 @@ class RuntimeLoader {
   }
 
   void OnJsCall(uint32_t window_id, uint64_t call_id,
-                const std::string& method_path, wef::ValuePtr args);
+                const std::string& method_path, laufey::ValuePtr args);
 
   void PollPendingJsCalls();
 
-  void JsCallRespond(uint32_t window_id, uint64_t call_id, wef::ValuePtr result,
-                     wef::ValuePtr error);
+  void JsCallRespond(uint32_t window_id, uint64_t call_id, laufey::ValuePtr result,
+                     laufey::ValuePtr error);
 
-  void SetJsCallHandler(wef_js_call_fn handler, void* user_data) {
+  void SetJsCallHandler(laufey_js_call_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(handler_mutex_);
     js_call_handler_ = handler;
     js_call_user_data_ = user_data;
   }
 
-  void SetKeyboardEventHandler(wef_keyboard_event_fn handler, void* user_data) {
+  void SetKeyboardEventHandler(laufey_keyboard_event_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(keyboard_mutex_);
     keyboard_handler_ = handler;
     keyboard_user_data_ = user_data;
@@ -93,7 +93,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetMouseClickHandler(wef_mouse_click_fn handler, void* user_data) {
+  void SetMouseClickHandler(laufey_mouse_click_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(mouse_mutex_);
     mouse_click_handler_ = handler;
     mouse_click_user_data_ = user_data;
@@ -109,7 +109,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetMouseMoveHandler(wef_mouse_move_fn handler, void* user_data) {
+  void SetMouseMoveHandler(laufey_mouse_move_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(mouse_move_mutex_);
     mouse_move_handler_ = handler;
     mouse_move_user_data_ = user_data;
@@ -123,7 +123,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetWheelHandler(wef_wheel_fn handler, void* user_data) {
+  void SetWheelHandler(laufey_wheel_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(wheel_mutex_);
     wheel_handler_ = handler;
     wheel_user_data_ = user_data;
@@ -139,7 +139,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetCursorEnterLeaveHandler(wef_cursor_enter_leave_fn handler,
+  void SetCursorEnterLeaveHandler(laufey_cursor_enter_leave_fn handler,
                                   void* user_data) {
     std::lock_guard<std::mutex> lock(cursor_enter_leave_mutex_);
     cursor_enter_leave_handler_ = handler;
@@ -155,7 +155,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetFocusedHandler(wef_focused_fn handler, void* user_data) {
+  void SetFocusedHandler(laufey_focused_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(focused_mutex_);
     focused_handler_ = handler;
     focused_user_data_ = user_data;
@@ -168,7 +168,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetResizeHandler(wef_resize_fn handler, void* user_data) {
+  void SetResizeHandler(laufey_resize_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(resize_mutex_);
     resize_handler_ = handler;
     resize_user_data_ = user_data;
@@ -181,7 +181,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetMoveHandler(wef_move_fn handler, void* user_data) {
+  void SetMoveHandler(laufey_move_fn handler, void* user_data) {
     std::lock_guard<std::mutex> lock(move_mutex_);
     move_handler_ = handler;
     move_user_data_ = user_data;
@@ -194,7 +194,7 @@ class RuntimeLoader {
     }
   }
 
-  void SetCloseRequestedHandler(wef_close_requested_fn handler,
+  void SetCloseRequestedHandler(laufey_close_requested_fn handler,
                                 void* user_data) {
     std::lock_guard<std::mutex> lock(close_requested_mutex_);
     close_requested_handler_ = handler;
@@ -231,53 +231,53 @@ class RuntimeLoader {
   void InitializeBackendApi();
 
   void* library_handle_ = nullptr;
-  wef_runtime_init_fn init_fn_ = nullptr;
-  wef_runtime_start_fn start_fn_ = nullptr;
-  wef_runtime_shutdown_fn shutdown_fn_ = nullptr;
+  laufey_runtime_init_fn init_fn_ = nullptr;
+  laufey_runtime_start_fn start_fn_ = nullptr;
+  laufey_runtime_shutdown_fn shutdown_fn_ = nullptr;
 
   std::thread runtime_thread_;
   std::atomic<bool> running_{false};
 
-  WefBackend* backend_ = nullptr;
-  wef_backend_api_t backend_api_;
+  LaufeyBackend* backend_ = nullptr;
+  laufey_backend_api_t backend_api_;
 
-  wef_js_call_fn js_call_handler_ = nullptr;
+  laufey_js_call_fn js_call_handler_ = nullptr;
   void* js_call_user_data_ = nullptr;
   std::mutex handler_mutex_;
 
-  wef_keyboard_event_fn keyboard_handler_ = nullptr;
+  laufey_keyboard_event_fn keyboard_handler_ = nullptr;
   void* keyboard_user_data_ = nullptr;
   std::mutex keyboard_mutex_;
 
-  wef_mouse_click_fn mouse_click_handler_ = nullptr;
+  laufey_mouse_click_fn mouse_click_handler_ = nullptr;
   void* mouse_click_user_data_ = nullptr;
   std::mutex mouse_mutex_;
 
-  wef_mouse_move_fn mouse_move_handler_ = nullptr;
+  laufey_mouse_move_fn mouse_move_handler_ = nullptr;
   void* mouse_move_user_data_ = nullptr;
   std::mutex mouse_move_mutex_;
 
-  wef_wheel_fn wheel_handler_ = nullptr;
+  laufey_wheel_fn wheel_handler_ = nullptr;
   void* wheel_user_data_ = nullptr;
   std::mutex wheel_mutex_;
 
-  wef_cursor_enter_leave_fn cursor_enter_leave_handler_ = nullptr;
+  laufey_cursor_enter_leave_fn cursor_enter_leave_handler_ = nullptr;
   void* cursor_enter_leave_user_data_ = nullptr;
   std::mutex cursor_enter_leave_mutex_;
 
-  wef_focused_fn focused_handler_ = nullptr;
+  laufey_focused_fn focused_handler_ = nullptr;
   void* focused_user_data_ = nullptr;
   std::mutex focused_mutex_;
 
-  wef_resize_fn resize_handler_ = nullptr;
+  laufey_resize_fn resize_handler_ = nullptr;
   void* resize_user_data_ = nullptr;
   std::mutex resize_mutex_;
 
-  wef_move_fn move_handler_ = nullptr;
+  laufey_move_fn move_handler_ = nullptr;
   void* move_user_data_ = nullptr;
   std::mutex move_mutex_;
 
-  wef_close_requested_fn close_requested_handler_ = nullptr;
+  laufey_close_requested_fn close_requested_handler_ = nullptr;
   void* close_requested_user_data_ = nullptr;
   std::mutex close_requested_mutex_;
 
@@ -289,14 +289,14 @@ class RuntimeLoader {
   void* js_call_notify_data_ = nullptr;
   std::mutex notify_mutex_;
 
-  std::string js_namespace_ = "Wef";
+  std::string js_namespace_ = "Laufey";
   mutable std::mutex js_namespace_mutex_;
 
   struct PendingJsCall {
     uint32_t window_id;
     uint64_t call_id;
     std::string method_path;
-    wef::ValuePtr args;
+    laufey::ValuePtr args;
   };
   std::queue<PendingJsCall> pending_js_calls_;
   std::mutex pending_mutex_;
@@ -304,13 +304,13 @@ class RuntimeLoader {
   static RuntimeLoader* instance_;
 };
 
-class WefBackend {
+class LaufeyBackend {
  public:
-  virtual ~WefBackend() = default;
+  virtual ~LaufeyBackend() = default;
 
   // Window lifecycle
   virtual void CreateWindow(uint32_t window_id, int width, int height) = 0;
-  // Create with creation-time style flags (WEF_WINDOW_FLAG_*). Default
+  // Create with creation-time style flags (LAUFEY_WINDOW_FLAG_*). Default
   // ignores the flags and creates a plain window; platform backends override
   // to honor frameless / non-activating-panel flags.
   virtual void CreateWindowEx(uint32_t window_id, int width, int height,
@@ -323,7 +323,7 @@ class WefBackend {
   virtual void Navigate(uint32_t window_id, const std::string& url) = 0;
   virtual void SetTitle(uint32_t window_id, const std::string& title) = 0;
   virtual void ExecuteJs(uint32_t window_id, const std::string& script,
-                         wef_js_result_fn callback, void* callback_data) = 0;
+                         laufey_js_result_fn callback, void* callback_data) = 0;
   virtual void SetWindowSize(uint32_t window_id, int width, int height) = 0;
   virtual void GetWindowSize(uint32_t window_id, int* width, int* height) = 0;
   virtual void SetWindowPosition(uint32_t window_id, int x, int y) = 0;
@@ -344,21 +344,21 @@ class WefBackend {
 
   // JS interop (broadcast to all windows for callback operations)
   virtual void InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
-                                wef::ValuePtr args) = 0;
+                                laufey::ValuePtr args) = 0;
   virtual void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) = 0;
   virtual void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                               wef::ValuePtr result, wef::ValuePtr error) = 0;
+                               laufey::ValuePtr result, laufey::ValuePtr error) = 0;
 
   virtual void SetApplicationMenu(uint32_t window_id,
-                                  wef_value_t* menu_template,
-                                  const wef_backend_api_t* api,
-                                  wef_menu_click_fn on_click,
+                                  laufey_value_t* menu_template,
+                                  const laufey_backend_api_t* api,
+                                  laufey_menu_click_fn on_click,
                                   void* on_click_data) = 0;
 
   virtual void ShowContextMenu(uint32_t window_id, int x, int y,
-                               wef_value_t* menu_template,
-                               const wef_backend_api_t* api,
-                               wef_menu_click_fn on_click,
+                               laufey_value_t* menu_template,
+                               const laufey_backend_api_t* api,
+                               laufey_menu_click_fn on_click,
                                void* on_click_data) = 0;
 
   virtual void OpenDevTools(uint32_t window_id) = 0;
@@ -366,7 +366,7 @@ class WefBackend {
   // Show a modal dialog and BLOCK until the user dismisses it. Backends
   // run the platform's native modal loop (`runModal` / `MessageBoxW` /
   // `gtk_dialog_run`), which itself pumps OS events while the dialog is
-  // up so other WEF windows continue to render and respond.
+  // up so other LAUFEY windows continue to render and respond.
   // Returns 1 if OK was pressed, 0 otherwise. For prompts, on a confirmed
   // result `*out_input_value` is set to a `strdup`'d UTF-8 string the
   // caller frees via `BackendStringFree`. NULL otherwise.
@@ -381,12 +381,12 @@ class WefBackend {
   // in WKWebViewBackend; Windows/Linux override Bounce only.
   virtual void SetDockBadge(const char* /*badge_or_null*/) {}
   virtual void BounceDock(int /*type*/) {}
-  virtual void SetDockMenu(wef_value_t* /*menu_template*/,
-                           const wef_backend_api_t* /*api*/,
-                           wef_menu_click_fn /*on_click*/,
+  virtual void SetDockMenu(laufey_value_t* /*menu_template*/,
+                           const laufey_backend_api_t* /*api*/,
+                           laufey_menu_click_fn /*on_click*/,
                            void* /*on_click_data*/) {}
   virtual void SetDockVisible(bool /*visible*/) {}
-  virtual void SetDockReopenHandler(wef_dock_reopen_fn /*handler*/,
+  virtual void SetDockReopenHandler(laufey_dock_reopen_fn /*handler*/,
                                     void* /*user_data*/) {}
 
   // --- Tray / status-bar icon ---
@@ -398,15 +398,15 @@ class WefBackend {
                            size_t /*len*/) {}
   virtual void SetTrayTooltip(uint32_t /*tray_id*/,
                               const char* /*tooltip_or_null*/) {}
-  virtual void SetTrayMenu(uint32_t /*tray_id*/, wef_value_t* /*menu_template*/,
-                           const wef_backend_api_t* /*api*/,
-                           wef_menu_click_fn /*on_click*/,
+  virtual void SetTrayMenu(uint32_t /*tray_id*/, laufey_value_t* /*menu_template*/,
+                           const laufey_backend_api_t* /*api*/,
+                           laufey_menu_click_fn /*on_click*/,
                            void* /*on_click_data*/) {}
   virtual void SetTrayClickHandler(uint32_t /*tray_id*/,
-                                   wef_tray_click_fn /*handler*/,
+                                   laufey_tray_click_fn /*handler*/,
                                    void* /*user_data*/) {}
   virtual void SetTrayDoubleClickHandler(uint32_t /*tray_id*/,
-                                         wef_tray_click_fn /*handler*/,
+                                         laufey_tray_click_fn /*handler*/,
                                          void* /*user_data*/) {}
   virtual void SetTrayIconDark(uint32_t /*tray_id*/, const void* /*png_bytes*/,
                                size_t /*len*/) {}
@@ -418,9 +418,9 @@ class WefBackend {
 
   // --- Notifications ---
   // Default: not supported. Subclasses override per-platform.
-  virtual uint32_t ShowNotification(wef_value_t* options,
-                                    const wef_backend_api_t* /*api*/,
-                                    wef_notification_event_fn /*on_event*/,
+  virtual uint32_t ShowNotification(laufey_value_t* options,
+                                    const laufey_backend_api_t* /*api*/,
+                                    laufey_notification_event_fn /*on_event*/,
                                     void* /*user_data*/) {
     // Subclass owns the options pointer if it accepts the call. Default
     // path frees so we don't leak.
@@ -432,20 +432,20 @@ class WefBackend {
   // --- Permissions / runtime authorization ---
   // Default: synchronously report UNSUPPORTED. macOS subclass overrides
   // to drive UNUserNotificationCenter. Windows/Linux subclasses report
-  // GRANTED for WEF_PERMISSION_NOTIFICATIONS (the balloon / libnotify
+  // GRANTED for LAUFEY_PERMISSION_NOTIFICATIONS (the balloon / libnotify
   // APIs they use have no permission model).
-  virtual void QueryPermission(int /*kind*/, wef_permission_callback_fn cb,
+  virtual void QueryPermission(int /*kind*/, laufey_permission_callback_fn cb,
                                void* user_data) {
     if (cb)
-      cb(user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+      cb(user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
   }
-  virtual void RequestPermission(int /*kind*/, wef_permission_callback_fn cb,
+  virtual void RequestPermission(int /*kind*/, laufey_permission_callback_fn cb,
                                  void* user_data) {
     if (cb)
-      cb(user_data, WEF_PERMISSION_STATUS_UNSUPPORTED);
+      cb(user_data, LAUFEY_PERMISSION_STATUS_UNSUPPORTED);
   }
 };
 
-WefBackend* CreateWefBackend();
+LaufeyBackend* CreateLaufeyBackend();
 
-#endif  // WEF_RUNTIME_LOADER_H_
+#endif  // LAUFEY_RUNTIME_LOADER_H_

@@ -4,7 +4,7 @@
 // (CEF normalizes keyboard events to Windows VK codes) and by the
 // webview Windows backend.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <cctype>
 #include <string>
@@ -13,7 +13,7 @@
 #include <windows.h>
 #endif
 
-namespace wef_common {
+namespace laufey_common {
 
 // Windows VK constants — defined inline so this file compiles on
 // non-Windows platforms (CEF Mac / Linux use the same mapping because
@@ -176,4 +176,4 @@ std::string VkToCode(int vk, bool is_extended, uint32_t scancode) {
   return "Unidentified";
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

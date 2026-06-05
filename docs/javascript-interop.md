@@ -6,7 +6,7 @@ it receives a promise, and your Rust handler resolves or rejects it. Your code
 can also evaluate a script in a window and read back its result.
 
 ```rust
-use just_wef::{Value, Window};
+use laufey::{Value, Window};
 
 let win = Window::new(800, 600)
   .bind("greet", |call| {
@@ -25,14 +25,14 @@ win.execute_js("document.title", Some(|result, _error| println!("{result:?}")));
 
 ```js
 // In the page:
-const message = await Wef.greet("Ada"); // "Hello, Ada!"
+const message = await Laufey.greet("Ada"); // "Hello, Ada!"
 ```
 
 Arguments and results cross the boundary as a `Value`, which models the JSON
 types — null, boolean, integer, double, string, list, and dictionary — along
 with binary blobs. When the page passes a JavaScript function as an argument, it
 arrives as a callback value that you can invoke later and must release when you
-are finished with it. The namespace object is named `Wef` by default; call
-`just_wef::set_js_namespace` before creating any windows to change it. All
+are finished with it. The namespace object is named `Laufey` by default; call
+`laufey::set_js_namespace` before creating any windows to change it. All
 handlers run on the user-interface thread. None of this is available on the
 Winit backend, which has no JavaScript engine.

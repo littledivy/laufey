@@ -22,7 +22,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (runtimePath.empty()) {
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       runtimePath = envPath;
     }
@@ -31,8 +31,8 @@ int main(int argc, char* argv[]) {
   if (runtimePath.empty()) {
     const char* searchPaths[] = {
         "./libruntime.so", "./target/debug/libhello.so",
-        "./target/release/libhello.so", "/usr/lib/wef/libruntime.so",
-        "/usr/local/lib/wef/libruntime.so"};
+        "./target/release/libhello.so", "/usr/lib/laufey/libruntime.so",
+        "/usr/local/lib/laufey/libruntime.so"};
     for (const char* path : searchPaths) {
       if (access(path, F_OK) == 0) {
         runtimePath = path;
@@ -42,13 +42,13 @@ int main(int argc, char* argv[]) {
   }
 
   if (runtimePath.empty()) {
-    std::cerr << "No runtime library found. Set WEF_RUNTIME_PATH or use "
+    std::cerr << "No runtime library found. Set LAUFEY_RUNTIME_PATH or use "
                  "--runtime <path>"
               << std::endl;
     return 1;
   }
 
-  WefBackend* backend = CreateWefBackend();
+  LaufeyBackend* backend = CreateLaufeyBackend();
 
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
   loader->SetBackend(backend);

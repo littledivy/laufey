@@ -6,25 +6,25 @@
 // resolved against [NSApp effectiveAppearance], and a distributed
 // notification observer re-applies them on theme changes.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <AppKit/AppKit.h>
 
 #include <atomic>
 #include <map>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
 struct TrayEntry {
   NSStatusItem* item;
   NSMenu* menu;
-  wef_menu_click_fn menu_click_fn;
+  laufey_menu_click_fn menu_click_fn;
   void* menu_click_data;
-  wef_tray_click_fn click_fn;
+  laufey_tray_click_fn click_fn;
   void* click_data;
-  wef_tray_click_fn dblclick_fn;
+  laufey_tray_click_fn dblclick_fn;
   void* dblclick_data;
   NSImage* light_image;
   NSImage* dark_image;
@@ -38,19 +38,19 @@ std::map<uint32_t, TrayEntry>& TrayMap() {
 std::atomic<uint32_t> g_next_tray_id{1};
 
 }  // namespace
-}  // namespace wef_common
+}  // namespace laufey_common
 
-@interface WefCommonTrayTarget : NSObject
+@interface LaufeyCommonTrayTarget : NSObject
 + (instancetype)shared;
 - (void)trayClicked:(id)sender;
 @end
 
-@implementation WefCommonTrayTarget
+@implementation LaufeyCommonTrayTarget
 + (instancetype)shared {
-  static WefCommonTrayTarget* instance = nil;
+  static LaufeyCommonTrayTarget* instance = nil;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    instance = [[WefCommonTrayTarget alloc] init];
+    instance = [[LaufeyCommonTrayTarget alloc] init];
   });
   return instance;
 }
@@ -60,7 +60,7 @@ std::atomic<uint32_t> g_next_tray_id{1};
   NSNumber* tagObj = [[button cell] representedObject];
   if (!tagObj) return;
   uint32_t tray_id = (uint32_t)[tagObj unsignedIntValue];
-  auto& map = wef_common::TrayMap();
+  auto& map = laufey_common::TrayMap();
   auto it = map.find(tray_id);
   if (it == map.end()) return;
   NSEvent* event = [NSApp currentEvent];
@@ -78,7 +78,7 @@ std::atomic<uint32_t> g_next_tray_id{1};
 }
 @end
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
@@ -143,7 +143,7 @@ uint32_t CreateTrayIconMac() {
     NSStatusBarButton* button = [item button];
     if (button) {
       [[button cell] setRepresentedObject:@(tray_id)];
-      [button setTarget:[WefCommonTrayTarget shared]];
+      [button setTarget:[LaufeyCommonTrayTarget shared]];
       [button setAction:@selector(trayClicked:)];
       [button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
     }
@@ -208,9 +208,9 @@ void SetTrayTooltipMac(uint32_t tray_id, const char* tooltip_or_null) {
   });
 }
 
-void SetTrayMenuMac(uint32_t tray_id, wef_value_t* menu_template,
-                     const wef_backend_api_t* api,
-                     wef_menu_click_fn on_click, void* on_click_data) {
+void SetTrayMenuMac(uint32_t tray_id, laufey_value_t* menu_template,
+                     const laufey_backend_api_t* api,
+                     laufey_menu_click_fn on_click, void* on_click_data) {
   if (!menu_template) {
     dispatch_async(dispatch_get_main_queue(), ^{
       auto& map = TrayMap();
@@ -238,7 +238,7 @@ void SetTrayMenuMac(uint32_t tray_id, wef_value_t* menu_template,
   });
 }
 
-void SetTrayClickHandlerMac(uint32_t tray_id, wef_tray_click_fn handler,
+void SetTrayClickHandlerMac(uint32_t tray_id, laufey_tray_click_fn handler,
                              void* user_data) {
   dispatch_async(dispatch_get_main_queue(), ^{
     auto& map = TrayMap();
@@ -250,7 +250,7 @@ void SetTrayClickHandlerMac(uint32_t tray_id, wef_tray_click_fn handler,
 }
 
 void SetTrayDoubleClickHandlerMac(uint32_t tray_id,
-                                   wef_tray_click_fn handler,
+                                   laufey_tray_click_fn handler,
                                    void* user_data) {
   dispatch_async(dispatch_get_main_queue(), ^{
     auto& map = TrayMap();
@@ -297,4 +297,4 @@ bool GetTrayIconBoundsMac(uint32_t tray_id, int* x, int* y, int* width,
   return true;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

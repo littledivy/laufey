@@ -7,7 +7,7 @@
 // action events are not surfaced because notify-send has no callback
 // channel back to us.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -15,13 +15,13 @@
 #include <mutex>
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
 struct LinuxNotifEntry {
   std::string tag;
-  wef_notification_event_fn on_event;
+  laufey_notification_event_fn on_event;
   void* user_data;
 };
 
@@ -53,7 +53,7 @@ std::string ShellEscape(const std::string& s) {
 }  // namespace
 
 uint32_t ShowNotificationLinux(const NotificationOptions& opts,
-                               wef_notification_event_fn on_event,
+                               laufey_notification_event_fn on_event,
                                void* user_data) {
   uint32_t nid = g_next_notif_id.fetch_add(1, std::memory_order_relaxed);
 
@@ -81,12 +81,12 @@ uint32_t ShowNotificationLinux(const NotificationOptions& opts,
     NotifMap()[nid] = {opts.tag, on_event, user_data};
   }
   if (on_event)
-    on_event(user_data, nid, WEF_NOTIFICATION_SHOWN, nullptr);
+    on_event(user_data, nid, LAUFEY_NOTIFICATION_SHOWN, nullptr);
   return nid;
 }
 
 void CloseNotificationLinux(uint32_t notification_id) {
-  wef_notification_event_fn fn = nullptr;
+  laufey_notification_event_fn fn = nullptr;
   void* ud = nullptr;
   {
     std::lock_guard<std::mutex> lock(NotifMutex());
@@ -101,7 +101,7 @@ void CloseNotificationLinux(uint32_t notification_id) {
   // close it via notify-send. Fire the CLOSED callback so the runtime can
   // clean up its handler bookkeeping.
   if (fn)
-    fn(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
+    fn(ud, notification_id, LAUFEY_NOTIFICATION_CLOSED, nullptr);
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

@@ -9,7 +9,7 @@
 // or unauthorized, `addNotificationRequest` fails and we emit a synthetic
 // CLOSED event so callers see the lifecycle close out.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
@@ -29,7 +29,7 @@ struct UnNotifEntry {
   // need the identifier to look up entries from delegate callbacks (which
   // only know the request).
   std::string identifier;
-  wef_notification_event_fn on_event;
+  laufey_notification_event_fn on_event;
   void* user_data;
   std::vector<std::string> action_ids;
 };
@@ -58,18 +58,18 @@ std::map<std::string, UNNotificationCategory*>& UnCategories() {
 std::atomic<uint32_t> g_next_notif_id_mac{1};
 
 }  // namespace
-}  // namespace wef_common
+}  // namespace laufey_common
 
-@interface WefUnDelegate : NSObject <UNUserNotificationCenterDelegate>
+@interface LaufeyUnDelegate : NSObject <UNUserNotificationCenterDelegate>
 + (instancetype)shared;
 @end
 
-@implementation WefUnDelegate
+@implementation LaufeyUnDelegate
 + (instancetype)shared {
-  static WefUnDelegate* instance = nil;
+  static LaufeyUnDelegate* instance = nil;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    instance = [[WefUnDelegate alloc] init];
+    instance = [[LaufeyUnDelegate alloc] init];
   });
   return instance;
 }
@@ -87,14 +87,14 @@ std::atomic<uint32_t> g_next_notif_id_mac{1};
   NSString* ident = notification.request.identifier;
   dispatch_async(dispatch_get_main_queue(), ^{
     std::string key = [ident UTF8String];
-    auto& im = wef_common::UnIdentToNid();
+    auto& im = laufey_common::UnIdentToNid();
     auto it = im.find(key);
     if (it == im.end()) return;
-    auto& nm = wef_common::UnNotifMap();
+    auto& nm = laufey_common::UnNotifMap();
     auto nit = nm.find(it->second);
     if (nit != nm.end() && nit->second.on_event) {
       nit->second.on_event(nit->second.user_data, it->second,
-                           WEF_NOTIFICATION_SHOWN, nullptr);
+                           LAUFEY_NOTIFICATION_SHOWN, nullptr);
     }
   });
   completionHandler(UNNotificationPresentationOptionBanner |
@@ -110,33 +110,33 @@ std::atomic<uint32_t> g_next_notif_id_mac{1};
   NSString* actId = response.actionIdentifier;
   dispatch_async(dispatch_get_main_queue(), ^{
     std::string key = [ident UTF8String];
-    auto& im = wef_common::UnIdentToNid();
+    auto& im = laufey_common::UnIdentToNid();
     auto it = im.find(key);
     if (it == im.end()) return;
-    auto& nm = wef_common::UnNotifMap();
+    auto& nm = laufey_common::UnNotifMap();
     auto nit = nm.find(it->second);
     if (nit == nm.end() || !nit->second.on_event) return;
     if ([actId isEqualToString:UNNotificationDefaultActionIdentifier]) {
       // The user clicked the notification body (not an action button).
       nit->second.on_event(nit->second.user_data, it->second,
-                           WEF_NOTIFICATION_CLICKED, nullptr);
+                           LAUFEY_NOTIFICATION_CLICKED, nullptr);
     } else if ([actId
                    isEqualToString:UNNotificationDismissActionIdentifier]) {
       // User explicitly dismissed (Close button on the banner). Requires
       // the category to opt in via UNNotificationCategoryOptionCustomDismissAction.
       nit->second.on_event(nit->second.user_data, it->second,
-                           WEF_NOTIFICATION_CLOSED, nullptr);
+                           LAUFEY_NOTIFICATION_CLOSED, nullptr);
     } else {
       std::string aid = [actId UTF8String];
       nit->second.on_event(nit->second.user_data, it->second,
-                           WEF_NOTIFICATION_ACTION, aid.c_str());
+                           LAUFEY_NOTIFICATION_ACTION, aid.c_str());
     }
   });
   completionHandler();
 }
 @end
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
@@ -144,7 +144,7 @@ void EnsureUnDelegate() {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     [UNUserNotificationCenter currentNotificationCenter].delegate =
-        [WefUnDelegate shared];
+        [LaufeyUnDelegate shared];
   });
 }
 
@@ -165,7 +165,7 @@ NSString* RegisterCategoryIfNeeded(
   auto it = cats.find(key);
   if (it != cats.end()) return it->second.identifier;
   NSString* catId =
-      [NSString stringWithFormat:@"wef.cat.%lu", (unsigned long)cats.size()];
+      [NSString stringWithFormat:@"laufey.cat.%lu", (unsigned long)cats.size()];
   NSMutableArray<UNNotificationAction*>* arr = [NSMutableArray array];
   for (auto& a : actions) {
     UNNotificationAction* act = [UNNotificationAction
@@ -190,7 +190,7 @@ NSString* RegisterCategoryIfNeeded(
 }  // namespace
 
 uint32_t ShowNotificationMac(const NotificationOptions& opts,
-                             wef_notification_event_fn on_event,
+                             laufey_notification_event_fn on_event,
                              void* user_data) {
   std::vector<std::pair<std::string, std::string>> actions;
   actions.reserve(opts.actions.size());
@@ -205,7 +205,7 @@ uint32_t ShowNotificationMac(const NotificationOptions& opts,
   // — matches the Web Notifications "tag" semantics. Without a tag we
   // synthesize a unique id from our nid.
   std::string identifier =
-      opts.tag.empty() ? std::string("wef.notif.") + std::to_string(nid)
+      opts.tag.empty() ? std::string("laufey.notif.") + std::to_string(nid)
                        : opts.tag;
 
   NSString* nsTitle = [NSString stringWithUTF8String:opts.title.c_str()];
@@ -262,17 +262,17 @@ uint32_t ShowNotificationMac(const NotificationOptions& opts,
                // authorizationStatus != authorized. There's no spec
                // event for "never showed", so we collapse it into
                // CLOSED — the JS Notification spec also fires
-               // "error" + "close" in that order, but the wef ABI
+               // "error" + "close" in that order, but the laufey ABI
                // only has CLOSED in this list.
                dispatch_async(dispatch_get_main_queue(), ^{
                  auto& nm = UnNotifMap();
                  auto nit = nm.find(nid);
                  if (nit == nm.end()) return;
-                 wef_notification_event_fn cb = nit->second.on_event;
+                 laufey_notification_event_fn cb = nit->second.on_event;
                  void* ud = nit->second.user_data;
                  UnIdentToNid().erase(nit->second.identifier);
                  nm.erase(nit);
-                 if (cb) cb(ud, nid, WEF_NOTIFICATION_CLOSED, nullptr);
+                 if (cb) cb(ud, nid, LAUFEY_NOTIFICATION_CLOSED, nullptr);
                });
              }];
   });
@@ -286,7 +286,7 @@ void CloseNotificationMac(uint32_t notification_id) {
     auto it = nm.find(notification_id);
     if (it == nm.end()) return;
     std::string ident = it->second.identifier;
-    wef_notification_event_fn cb = it->second.on_event;
+    laufey_notification_event_fn cb = it->second.on_event;
     void* ud = it->second.user_data;
     NSString* nsIdent = [NSString stringWithUTF8String:ident.c_str()];
     UNUserNotificationCenter* center =
@@ -295,8 +295,8 @@ void CloseNotificationMac(uint32_t notification_id) {
     [center removePendingNotificationRequestsWithIdentifiers:@[ nsIdent ]];
     UnIdentToNid().erase(ident);
     nm.erase(it);
-    if (cb) cb(ud, notification_id, WEF_NOTIFICATION_CLOSED, nullptr);
+    if (cb) cb(ud, notification_id, LAUFEY_NOTIFICATION_CLOSED, nullptr);
   });
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

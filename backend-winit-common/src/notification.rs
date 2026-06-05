@@ -21,19 +21,19 @@ use std::sync::Mutex;
 
 use crate::{
   value_dict_get, value_get_bool, value_get_string, value_is_bool,
-  value_is_dict, value_is_string, WefValue,
+  value_is_dict, value_is_string, LaufeyValue,
 };
 
-pub const WEF_NOTIFICATION_SHOWN: c_int = 0;
-pub const WEF_NOTIFICATION_CLICKED: c_int = 1;
-pub const WEF_NOTIFICATION_CLOSED: c_int = 2;
-pub const WEF_NOTIFICATION_ACTION: c_int = 3;
+pub const LAUFEY_NOTIFICATION_SHOWN: c_int = 0;
+pub const LAUFEY_NOTIFICATION_CLICKED: c_int = 1;
+pub const LAUFEY_NOTIFICATION_CLOSED: c_int = 2;
+pub const LAUFEY_NOTIFICATION_ACTION: c_int = 3;
 
-pub type WefNotificationEventFn =
+pub type LaufeyNotificationEventFn =
   unsafe extern "C" fn(*mut c_void, u32, c_int, *const c_char);
 
 struct NotifEntry {
-  on_event: Option<WefNotificationEventFn>,
+  on_event: Option<LaufeyNotificationEventFn>,
   user_data: usize,
 }
 
@@ -49,7 +49,7 @@ fn map() -> std::sync::MutexGuard<'static, Option<HashMap<u32, NotifEntry>>> {
 }
 
 fn fire_event(
-  on_event: Option<WefNotificationEventFn>,
+  on_event: Option<LaufeyNotificationEventFn>,
   user_data: usize,
   id: u32,
   reason: c_int,
@@ -58,7 +58,7 @@ fn fire_event(
   unsafe { cb(user_data as *mut c_void, id, reason, std::ptr::null()) };
 }
 
-unsafe fn read_string(dict: *mut WefValue, key: &str) -> Option<String> {
+unsafe fn read_string(dict: *mut LaufeyValue, key: &str) -> Option<String> {
   let c_key = CString::new(key).ok()?;
   let v = value_dict_get(dict, c_key.as_ptr());
   if v.is_null() || !value_is_string(v) {
@@ -74,7 +74,7 @@ unsafe fn read_string(dict: *mut WefValue, key: &str) -> Option<String> {
   Some(s)
 }
 
-unsafe fn read_bool(dict: *mut WefValue, key: &str) -> Option<bool> {
+unsafe fn read_bool(dict: *mut LaufeyValue, key: &str) -> Option<bool> {
   let c_key = CString::new(key).ok()?;
   let v = value_dict_get(dict, c_key.as_ptr());
   if v.is_null() || !value_is_bool(v) {
@@ -86,11 +86,11 @@ unsafe fn read_bool(dict: *mut WefValue, key: &str) -> Option<bool> {
 /// Implementation of the `show_notification` ABI entry point.
 ///
 /// # Safety
-/// `options` must be a valid `WefValue*` produced by the runtime; this
+/// `options` must be a valid `LaufeyValue*` produced by the runtime; this
 /// function takes ownership and frees it via [`crate::value_free`].
 pub unsafe fn show_notification(
-  options: *mut WefValue,
-  on_event: Option<WefNotificationEventFn>,
+  options: *mut LaufeyValue,
+  on_event: Option<LaufeyNotificationEventFn>,
   user_data: *mut c_void,
 ) -> u32 {
   if options.is_null() || !value_is_dict(options) {
@@ -128,7 +128,7 @@ pub unsafe fn show_notification(
   }
 
   if let Err(e) = notif.show() {
-    eprintln!("wef: failed to show notification: {}", e);
+    eprintln!("laufey: failed to show notification: {}", e);
     return 0;
   }
 
@@ -139,7 +139,7 @@ pub unsafe fn show_notification(
   map().as_mut().unwrap().insert(id, entry);
 
   // Fire SHOWN synchronously after the OS accepts the notification.
-  fire_event(on_event, user_data as usize, id, WEF_NOTIFICATION_SHOWN);
+  fire_event(on_event, user_data as usize, id, LAUFEY_NOTIFICATION_SHOWN);
   id
 }
 
@@ -159,6 +159,6 @@ pub fn close_notification(notification_id: u32) {
     entry.on_event,
     entry.user_data,
     notification_id,
-    WEF_NOTIFICATION_CLOSED,
+    LAUFEY_NOTIFICATION_CLOSED,
   );
 }

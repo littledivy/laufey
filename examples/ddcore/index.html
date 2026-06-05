@@ -220,7 +220,7 @@
     </style>
   </head>
   <body>
-    <h1>System Dashboard <span>wef + deno_core</span></h1>
+    <h1>System Dashboard <span>laufey + deno_core</span></h1>
 
     <dl>
       <dt>Hostname</dt>
@@ -278,7 +278,7 @@
       </table>
     </div>
 
-    <div class="footer">Powered by WEF</div>
+    <div class="footer">Powered by LAUFEY</div>
 
     <script>
       function formatUptime(s) {
@@ -406,14 +406,14 @@
       );
 
       // Pull data from the runtime via bindings.
-      Wef.getSystemInfo().then(function (r) {
+      Laufey.getSystemInfo().then(function (r) {
         updateSystemInfo(JSON.parse(r));
       });
 
       setInterval(async function () {
-        var stats = JSON.parse(await Wef.getStats());
+        var stats = JSON.parse(await Laufey.getStats());
         updateLiveStats(stats);
-        var procs = JSON.parse(await Wef.getProcesses());
+        var procs = JSON.parse(await Laufey.getProcesses());
         updateProcesses(procs);
       }, 1000);
     </script>

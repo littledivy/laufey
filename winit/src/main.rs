@@ -5,9 +5,9 @@ use std::error::Error;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use wef_backend_winit_common::{
+use laufey_backend_winit_common::{
   define_common_backend_fns, fill_common_api, winit, BackendAccess,
-  CommonEvent, CommonState, WefBackendApi, WefJsResultFn,
+  CommonEvent, CommonState, LaufeyBackendApi, LaufeyJsResultFn,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -68,7 +68,7 @@ unsafe extern "C" fn backend_execute_js(
   _data: *mut c_void,
   _window_id: u32,
   _script: *const std::ffi::c_char,
-  _callback: Option<WefJsResultFn>,
+  _callback: Option<LaufeyJsResultFn>,
   _callback_data: *mut c_void,
 ) {
   // no-op — no web engine
@@ -76,8 +76,8 @@ unsafe extern "C" fn backend_execute_js(
 
 // --- API construction ---
 
-fn create_backend_api() -> WefBackendApi {
-  let mut api = wef_backend_winit_common::create_api_base();
+fn create_backend_api() -> LaufeyBackendApi {
+  let mut api = laufey_backend_winit_common::create_api_base();
   fill_common_api!(api);
   api.navigate = Some(backend_navigate);
   api.execute_js = Some(backend_execute_js);
@@ -100,23 +100,23 @@ struct App {
   // Map from our window_id to winit WindowId + Window
   windows: HashMap<u32, WindowInfo>,
   // Reverse map from winit WindowId to our window_id
-  winit_to_wef: HashMap<winit::window::WindowId, u32>,
-  // Most recently focused WEF window (for app-scoped dock ops on Windows/Linux).
-  focused_wef_id: Option<u32>,
+  winit_to_laufey: HashMap<winit::window::WindowId, u32>,
+  // Most recently focused LAUFEY window (for app-scoped dock ops on Windows/Linux).
+  focused_laufey_id: Option<u32>,
 }
 
 impl App {
   fn new() -> Self {
     Self {
       windows: HashMap::new(),
-      winit_to_wef: HashMap::new(),
-      focused_wef_id: None,
+      winit_to_laufey: HashMap::new(),
+      focused_laufey_id: None,
     }
   }
 
   fn focused_window(&self) -> Option<(&Window, u32)> {
     let id = self
-      .focused_wef_id
+      .focused_laufey_id
       .or_else(|| self.windows.keys().next().copied())?;
     self.windows.get(&id).map(|info| (&info.window, id))
   }
@@ -130,7 +130,7 @@ impl App {
     let attrs = state
       .common
       .with_window(window_id, |ws| {
-        wef_backend_winit_common::apply_pending_attrs(
+        laufey_backend_winit_common::apply_pending_attrs(
           ws,
           Window::default_attributes(),
         )
@@ -142,12 +142,12 @@ impl App {
       .expect("Failed to create winit Window");
 
     state.common.with_window(window_id, |ws| {
-      wef_backend_winit_common::apply_pending_post_create(ws, &window);
+      laufey_backend_winit_common::apply_pending_post_create(ws, &window);
     });
-    wef_backend_winit_common::store_window_handles(window_id, &window);
+    laufey_backend_winit_common::store_window_handles(window_id, &window);
 
     let winit_id = window.id();
-    self.winit_to_wef.insert(winit_id, window_id);
+    self.winit_to_laufey.insert(winit_id, window_id);
     self.windows.insert(
       window_id,
       WindowInfo {
@@ -159,16 +159,16 @@ impl App {
 
   fn close_window(&mut self, window_id: u32) {
     if let Some(info) = self.windows.remove(&window_id) {
-      self.winit_to_wef.remove(&info.window.id());
-      wef_backend_winit_common::remove_window_handles(window_id);
+      self.winit_to_laufey.remove(&info.window.id());
+      laufey_backend_winit_common::remove_window_handles(window_id);
       if let Some(state) = BackendState::get() {
         state.common.remove_window(window_id);
       }
     }
   }
 
-  fn wef_id(&self, winit_id: winit::window::WindowId) -> Option<u32> {
-    self.winit_to_wef.get(&winit_id).copied()
+  fn laufey_id(&self, winit_id: winit::window::WindowId) -> Option<u32> {
+    self.winit_to_laufey.get(&winit_id).copied()
   }
 }
 
@@ -200,12 +200,12 @@ impl ApplicationHandler<UserEvent> for App {
           unsafe { task(*data as *mut c_void) };
         }
         CommonEvent::DockTask => {
-          wef_backend_winit_common::dock::drain_and_apply(
+          laufey_backend_winit_common::dock::drain_and_apply(
             self.focused_window(),
           );
         }
         CommonEvent::TrayTask => {
-          wef_backend_winit_common::tray::drain_and_apply();
+          laufey_backend_winit_common::tray::drain_and_apply();
         }
         other => {
           let wid = match other {
@@ -222,7 +222,7 @@ impl ApplicationHandler<UserEvent> for App {
             _ => return,
           };
           if let Some(info) = self.windows.get(&wid) {
-            wef_backend_winit_common::handle_common_event::<BackendState>(
+            laufey_backend_winit_common::handle_common_event::<BackendState>(
               common,
               wid,
               &info.window,
@@ -234,14 +234,14 @@ impl ApplicationHandler<UserEvent> for App {
   }
 
   fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-    wef_backend_winit_common::poll_menu_events();
+    laufey_backend_winit_common::poll_menu_events();
     // The tray lives on the primary monitor (menu bar / taskbar); its scale
     // factor converts tray-icon's physical rect into the logical window space.
     let scale_factor = event_loop
       .primary_monitor()
       .map(|m| m.scale_factor())
       .unwrap_or(1.0);
-    wef_backend_winit_common::tray::poll_tray_events(scale_factor);
+    laufey_backend_winit_common::tray::poll_tray_events(scale_factor);
   }
 
   fn window_event(
@@ -250,7 +250,7 @@ impl ApplicationHandler<UserEvent> for App {
     winit_window_id: winit::window::WindowId,
     event: WindowEvent,
   ) {
-    let wef_id = match self.wef_id(winit_window_id) {
+    let laufey_id = match self.laufey_id(winit_window_id) {
       Some(id) => id,
       None => return,
     };
@@ -260,41 +260,41 @@ impl ApplicationHandler<UserEvent> for App {
       None => return,
     };
 
-    let modifiers = match self.windows.get_mut(&wef_id) {
+    let modifiers = match self.windows.get_mut(&laufey_id) {
       Some(info) => &mut info.modifiers,
       None => return,
     };
 
     match event {
       WindowEvent::CloseRequested => {
-        wef_backend_winit_common::dispatch_close_requested_event(
+        laufey_backend_winit_common::dispatch_close_requested_event(
           &state.common.handlers,
-          wef_id,
+          laufey_id,
         );
-        self.close_window(wef_id);
+        self.close_window(laufey_id);
         if self.windows.is_empty() {
           event_loop.exit();
         }
       }
       WindowEvent::Resized(PhysicalSize { width, height }) => {
-        state.common.with_window(wef_id, |ws| {
+        state.common.with_window(laufey_id, |ws| {
           *ws.pending_size.lock().unwrap() =
             Some((width as i32, height as i32));
         });
-        wef_backend_winit_common::dispatch_resize_event(
+        laufey_backend_winit_common::dispatch_resize_event(
           &state.common.handlers,
-          wef_id,
+          laufey_id,
           width as i32,
           height as i32,
         );
       }
       WindowEvent::Moved(PhysicalPosition { x, y }) => {
-        state.common.with_window(wef_id, |ws| {
+        state.common.with_window(laufey_id, |ws| {
           *ws.pending_position.lock().unwrap() = Some((x, y));
         });
-        wef_backend_winit_common::dispatch_move_event(
+        laufey_backend_winit_common::dispatch_move_event(
           &state.common.handlers,
-          wef_id,
+          laufey_id,
           x,
           y,
         );
@@ -306,20 +306,20 @@ impl ApplicationHandler<UserEvent> for App {
         event: ref key_event,
         ..
       } => {
-        wef_backend_winit_common::dispatch_keyboard_event(
+        laufey_backend_winit_common::dispatch_keyboard_event(
           &state.common.handlers,
-          wef_id,
+          laufey_id,
           key_event,
           *modifiers,
         );
       }
       WindowEvent::CursorMoved { position, .. } => {
-        state.common.with_window(wef_id, |ws| {
+        state.common.with_window(laufey_id, |ws| {
           *ws.cursor_position.lock().unwrap() = (position.x, position.y);
         });
-        wef_backend_winit_common::dispatch_mouse_move_event(
+        laufey_backend_winit_common::dispatch_mouse_move_event(
           &state.common.handlers,
-          wef_id,
+          laufey_id,
           position.x,
           position.y,
           *modifiers,
@@ -330,11 +330,11 @@ impl ApplicationHandler<UserEvent> for App {
         button,
         ..
       } => {
-        state.common.with_window(wef_id, |ws| {
-          wef_backend_winit_common::dispatch_mouse_click_event(
+        state.common.with_window(laufey_id, |ws| {
+          laufey_backend_winit_common::dispatch_mouse_click_event(
             &state.common.handlers,
             ws,
-            wef_id,
+            laufey_id,
             button_state,
             button,
             *modifiers,
@@ -342,33 +342,33 @@ impl ApplicationHandler<UserEvent> for App {
         });
       }
       WindowEvent::MouseWheel { delta, .. } => {
-        state.common.with_window(wef_id, |ws| {
-          wef_backend_winit_common::dispatch_wheel_event(
+        state.common.with_window(laufey_id, |ws| {
+          laufey_backend_winit_common::dispatch_wheel_event(
             &state.common.handlers,
             ws,
-            wef_id,
+            laufey_id,
             delta,
             *modifiers,
           );
         });
       }
       WindowEvent::CursorEntered { .. } => {
-        state.common.with_window(wef_id, |ws| {
-          wef_backend_winit_common::dispatch_cursor_enter_leave_event(
+        state.common.with_window(laufey_id, |ws| {
+          laufey_backend_winit_common::dispatch_cursor_enter_leave_event(
             &state.common.handlers,
             ws,
-            wef_id,
+            laufey_id,
             true,
             *modifiers,
           );
         });
       }
       WindowEvent::CursorLeft { .. } => {
-        state.common.with_window(wef_id, |ws| {
-          wef_backend_winit_common::dispatch_cursor_enter_leave_event(
+        state.common.with_window(laufey_id, |ws| {
+          laufey_backend_winit_common::dispatch_cursor_enter_leave_event(
             &state.common.handlers,
             ws,
-            wef_id,
+            laufey_id,
             false,
             *modifiers,
           );
@@ -376,13 +376,13 @@ impl ApplicationHandler<UserEvent> for App {
       }
       WindowEvent::Focused(focused) => {
         if focused {
-          self.focused_wef_id = Some(wef_id);
-        } else if self.focused_wef_id == Some(wef_id) {
-          self.focused_wef_id = None;
+          self.focused_laufey_id = Some(laufey_id);
+        } else if self.focused_laufey_id == Some(laufey_id) {
+          self.focused_laufey_id = None;
         }
-        wef_backend_winit_common::dispatch_focused_event(
+        laufey_backend_winit_common::dispatch_focused_event(
           &state.common.handlers,
-          wef_id,
+          laufey_id,
           focused,
         );
       }
@@ -424,7 +424,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   });
   BACKEND_STATE.store(Box::into_raw(backend_state), Ordering::Release);
 
-  wef_backend_winit_common::load_and_start_runtime(create_backend_api());
+  laufey_backend_winit_common::load_and_start_runtime(create_backend_api());
 
   let mut app = App::new();
   Ok(event_loop.run_app(&mut app)?)

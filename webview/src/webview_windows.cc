@@ -1,8 +1,8 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
 #include "runtime_loader.h"
-#include "wef_backend_common.h"
-#include "wef_json.h"
+#include "laufey_backend_common.h"
+#include "laufey_json.h"
 #include "init_script.h"
 #include <win32_menu.h>
 
@@ -14,7 +14,7 @@
 #include <wrl.h>
 
 // windows.h defines CreateWindow as a macro which conflicts with
-// WefBackend::CreateWindow
+// LaufeyBackend::CreateWindow
 #undef CreateWindow
 
 #pragma comment(lib, "shell32.lib")
@@ -33,30 +33,30 @@ using namespace Microsoft::WRL;
 namespace keyboard {
 
 // VK → W3C key/code mapping lives in backend-common
-// (wef_common::VkToKey / VkToCode). These thin wrappers extract
+// (laufey_common::VkToKey / VkToCode). These thin wrappers extract
 // the Windows-only state (GetKeyState / lParam scancode) and forward.
 inline std::string VirtualKeyToKey(WPARAM vk, LPARAM /*lParam*/) {
   bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
   bool caps = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-  return wef_common::VkToKey(static_cast<int>(vk), 0, shift, caps);
+  return laufey_common::VkToKey(static_cast<int>(vk), 0, shift, caps);
 }
 
 inline std::string VirtualKeyToCode(WPARAM vk, LPARAM lParam) {
   bool is_extended = (lParam & (1 << 24)) != 0;
   uint32_t scancode = static_cast<uint32_t>((lParam >> 16) & 0xFF);
-  return wef_common::VkToCode(static_cast<int>(vk), is_extended, scancode);
+  return laufey_common::VkToCode(static_cast<int>(vk), is_extended, scancode);
 }
 
-inline uint32_t GetWefModifiers() {
+inline uint32_t GetLaufeyModifiers() {
   uint32_t modifiers = 0;
   if (GetKeyState(VK_SHIFT) & 0x8000)
-    modifiers |= WEF_MOD_SHIFT;
+    modifiers |= LAUFEY_MOD_SHIFT;
   if (GetKeyState(VK_CONTROL) & 0x8000)
-    modifiers |= WEF_MOD_CONTROL;
+    modifiers |= LAUFEY_MOD_CONTROL;
   if (GetKeyState(VK_MENU) & 0x8000)
-    modifiers |= WEF_MOD_ALT;
+    modifiers |= LAUFEY_MOD_ALT;
   if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000)
-    modifiers |= WEF_MOD_META;
+    modifiers |= LAUFEY_MOD_META;
   return modifiers;
 }
 
@@ -84,16 +84,16 @@ static std::string WideToUtf8(const std::wstring& wstr) {
   return result;
 }
 
-// HWND → wef_id mapping
-static std::map<HWND, uint32_t> g_hwnd_to_wef_id;
+// HWND → laufey_id mapping
+static std::map<HWND, uint32_t> g_hwnd_to_laufey_id;
 static std::mutex g_hwnd_mutex;
 
-static uint32_t WefIdForHwnd(HWND hwnd) {
+static uint32_t LaufeyIdForHwnd(HWND hwnd) {
   if (!hwnd)
     return 0;
   std::lock_guard<std::mutex> lock(g_hwnd_mutex);
-  auto it = g_hwnd_to_wef_id.find(hwnd);
-  return it != g_hwnd_to_wef_id.end() ? it->second : 0;
+  auto it = g_hwnd_to_laufey_id.find(hwnd);
+  return it != g_hwnd_to_laufey_id.end() ? it->second : 0;
 }
 
 // Per-window state
@@ -122,7 +122,7 @@ struct UiTaskData {
 class WebView2Backend;
 static WebView2Backend* g_win_backend = nullptr;
 
-class WebView2Backend : public WefBackend {
+class WebView2Backend : public LaufeyBackend {
  public:
   WebView2Backend();
   ~WebView2Backend() override;
@@ -135,7 +135,7 @@ class WebView2Backend : public WefBackend {
   void Navigate(uint32_t window_id, const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
-                 wef_js_result_fn callback, void* callback_data) override;
+                 laufey_js_result_fn callback, void* callback_data) override;
   void Quit() override;
   void SetWindowSize(uint32_t window_id, int width, int height) override;
   void GetWindowSize(uint32_t window_id, int* width, int* height) override;
@@ -152,21 +152,21 @@ class WebView2Backend : public WefBackend {
   void PostUiTask(void (*task)(void*), void* data) override;
 
   void InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
-                        wef::ValuePtr args) override;
+                        laufey::ValuePtr args) override;
   void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) override;
   void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                       wef::ValuePtr result, wef::ValuePtr error) override;
+                       laufey::ValuePtr result, laufey::ValuePtr error) override;
 
   void Run() override;
 
-  void SetApplicationMenu(uint32_t window_id, wef_value_t* menu_template,
-                          const wef_backend_api_t* api,
-                          wef_menu_click_fn on_click,
+  void SetApplicationMenu(uint32_t window_id, laufey_value_t* menu_template,
+                          const laufey_backend_api_t* api,
+                          laufey_menu_click_fn on_click,
                           void* on_click_data) override;
 
   void ShowContextMenu(uint32_t window_id, int x, int y,
-                       wef_value_t* menu_template, const wef_backend_api_t* api,
-                       wef_menu_click_fn on_click,
+                       laufey_value_t* menu_template, const laufey_backend_api_t* api,
+                       laufey_menu_click_fn on_click,
                        void* on_click_data) override;
 
   void OpenDevTools(uint32_t window_id) override;
@@ -183,31 +183,31 @@ class WebView2Backend : public WefBackend {
   void SetTrayIcon(uint32_t tray_id, const void* png_bytes,
                    size_t len) override;
   void SetTrayTooltip(uint32_t tray_id, const char* tooltip_or_null) override;
-  void SetTrayMenu(uint32_t tray_id, wef_value_t* menu_template,
-                   const wef_backend_api_t* api, wef_menu_click_fn on_click,
+  void SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+                   const laufey_backend_api_t* api, laufey_menu_click_fn on_click,
                    void* on_click_data) override;
-  void SetTrayClickHandler(uint32_t tray_id, wef_tray_click_fn handler,
+  void SetTrayClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
                            void* user_data) override;
-  void SetTrayDoubleClickHandler(uint32_t tray_id, wef_tray_click_fn handler,
+  void SetTrayDoubleClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
                                  void* user_data) override;
   void SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                        size_t len) override;
   bool GetTrayIconBounds(uint32_t tray_id, int* x, int* y, int* width,
                          int* height) override;
 
-  uint32_t ShowNotification(wef_value_t* options, const wef_backend_api_t* api,
-                            wef_notification_event_fn on_event,
+  uint32_t ShowNotification(laufey_value_t* options, const laufey_backend_api_t* api,
+                            laufey_notification_event_fn on_event,
                             void* user_data) override;
   void CloseNotification(uint32_t notification_id) override;
 
   // Shell_NotifyIcon balloons have no permission model — always granted.
-  void QueryPermission(int kind, wef_permission_callback_fn cb,
+  void QueryPermission(int kind, laufey_permission_callback_fn cb,
                        void* user_data) override {
-    wef_common::QueryPermissionStub(kind, cb, user_data);
+    laufey_common::QueryPermissionStub(kind, cb, user_data);
   }
-  void RequestPermission(int kind, wef_permission_callback_fn cb,
+  void RequestPermission(int kind, laufey_permission_callback_fn cb,
                          void* user_data) override {
-    wef_common::RequestPermissionStub(kind, cb, user_data);
+    laufey_common::RequestPermissionStub(kind, cb, user_data);
   }
 
   void HandleJsMessage(uint32_t window_id, const std::wstring& json);
@@ -225,7 +225,7 @@ class WebView2Backend : public WefBackend {
 
 LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                              LPARAM lParam) {
-  uint32_t wid = WefIdForHwnd(hwnd);
+  uint32_t wid = LaufeyIdForHwnd(hwnd);
 
   switch (msg) {
     case WM_SIZE: {
@@ -272,31 +272,31 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
         break;
       int state = (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN ||
                    msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN)
-                      ? WEF_MOUSE_PRESSED
-                      : WEF_MOUSE_RELEASED;
+                      ? LAUFEY_MOUSE_PRESSED
+                      : LAUFEY_MOUSE_RELEASED;
       int button;
       switch (msg) {
         case WM_LBUTTONDOWN:
         case WM_LBUTTONUP:
-          button = WEF_MOUSE_BUTTON_LEFT;
+          button = LAUFEY_MOUSE_BUTTON_LEFT;
           break;
         case WM_RBUTTONDOWN:
         case WM_RBUTTONUP:
-          button = WEF_MOUSE_BUTTON_RIGHT;
+          button = LAUFEY_MOUSE_BUTTON_RIGHT;
           break;
         case WM_MBUTTONDOWN:
         case WM_MBUTTONUP:
-          button = WEF_MOUSE_BUTTON_MIDDLE;
+          button = LAUFEY_MOUSE_BUTTON_MIDDLE;
           break;
         default:
           button = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1)
-                       ? WEF_MOUSE_BUTTON_BACK
-                       : WEF_MOUSE_BUTTON_FORWARD;
+                       ? LAUFEY_MOUSE_BUTTON_BACK
+                       : LAUFEY_MOUSE_BUTTON_FORWARD;
           break;
       }
       double x = static_cast<double>(GET_X_LPARAM(lParam));
       double y = static_cast<double>(GET_Y_LPARAM(lParam));
-      uint32_t modifiers = keyboard::GetWefModifiers();
+      uint32_t modifiers = keyboard::GetLaufeyModifiers();
       RuntimeLoader::GetInstance()->DispatchMouseClickEvent(wid, state, button,
                                                             x, y, modifiers, 1);
       break;
@@ -307,10 +307,10 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
         break;
       std::string key = keyboard::VirtualKeyToKey(wParam, lParam);
       std::string code = keyboard::VirtualKeyToCode(wParam, lParam);
-      uint32_t modifiers = keyboard::GetWefModifiers();
+      uint32_t modifiers = keyboard::GetLaufeyModifiers();
       bool repeat = (lParam & (1 << 30)) != 0;
       RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
-          wid, WEF_KEY_PRESSED, key.c_str(), code.c_str(), modifiers, repeat);
+          wid, LAUFEY_KEY_PRESSED, key.c_str(), code.c_str(), modifiers, repeat);
       break;
     }
     case WM_KEYUP:
@@ -319,9 +319,9 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
         break;
       std::string key = keyboard::VirtualKeyToKey(wParam, lParam);
       std::string code = keyboard::VirtualKeyToCode(wParam, lParam);
-      uint32_t modifiers = keyboard::GetWefModifiers();
+      uint32_t modifiers = keyboard::GetLaufeyModifiers();
       RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
-          wid, WEF_KEY_RELEASED, key.c_str(), code.c_str(), modifiers, false);
+          wid, LAUFEY_KEY_RELEASED, key.c_str(), code.c_str(), modifiers, false);
       break;
     }
     case WM_CLOSE:
@@ -332,8 +332,8 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       {
         std::lock_guard<std::mutex> lock(g_hwnd_mutex);
         // Remove this window from map
-        g_hwnd_to_wef_id.erase(hwnd);
-        if (g_hwnd_to_wef_id.empty()) {
+        g_hwnd_to_laufey_id.erase(hwnd);
+        if (g_hwnd_to_laufey_id.empty()) {
           PostQuitMessage(0);
         }
       }
@@ -366,7 +366,7 @@ WebView2Backend::WebView2Backend() {
   wc.cbSize = sizeof(WNDCLASSEXW);
   wc.lpfnWndProc = WindowProc;
   wc.hInstance = GetModuleHandle(nullptr);
-  wc.lpszClassName = L"WefWebView2";
+  wc.lpszClassName = L"LaufeyWebView2";
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
   wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
   RegisterClassExW(&wc);
@@ -380,7 +380,7 @@ WebView2Backend::~WebView2Backend() {
       state.controller->Close();
     {
       std::lock_guard<std::mutex> hlock(g_hwnd_mutex);
-      g_hwnd_to_wef_id.erase(state.hwnd);
+      g_hwnd_to_laufey_id.erase(state.hwnd);
     }
   }
   windows_.clear();
@@ -400,22 +400,22 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
                                      uint32_t flags) {
   DWORD style = WS_OVERLAPPEDWINDOW;
   DWORD ex_style = 0;
-  if (flags & WEF_WINDOW_FLAG_FRAMELESS) {
+  if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
     // Borderless popup: no caption / sizing frame.
     style = WS_POPUP;
   }
-  if (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) {
+  if (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) {
     // Don't steal foreground/focus; keep out of the taskbar and Alt-Tab.
     ex_style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
   }
 
   HWND hwnd = CreateWindowExW(
-      ex_style, L"WefWebView2", L"", style, CW_USEDEFAULT, CW_USEDEFAULT, width,
+      ex_style, L"LaufeyWebView2", L"", style, CW_USEDEFAULT, CW_USEDEFAULT, width,
       height, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
   {
     std::lock_guard<std::mutex> lock(g_hwnd_mutex);
-    g_hwnd_to_wef_id[hwnd] = window_id;
+    g_hwnd_to_laufey_id[hwnd] = window_id;
   }
 
   WinWindowState state;
@@ -431,7 +431,7 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
 
   // Showing a non-activating panel must not take foreground from the user's
   // active window.
-  ShowWindow(hwnd, (flags & WEF_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
+  ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
                                                          : SW_SHOW);
   UpdateWindow(hwnd);
 }
@@ -596,7 +596,7 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
       state->controller->Close();
     {
       std::lock_guard<std::mutex> hlock(g_hwnd_mutex);
-      g_hwnd_to_wef_id.erase(state->hwnd);
+      g_hwnd_to_laufey_id.erase(state->hwnd);
     }
     DestroyWindow(state->hwnd);
     windows_.erase(window_id);
@@ -630,7 +630,7 @@ void WebView2Backend::SetTitle(uint32_t window_id, const std::string& title) {
 }
 
 void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
-                                wef_js_result_fn callback,
+                                laufey_js_result_fn callback,
                                 void* callback_data) {
   std::wstring wscript = Utf8ToWide(script);
   std::lock_guard<std::mutex> lock(windows_mutex_);
@@ -649,9 +649,9 @@ void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
             [callback, callback_data](HRESULT hr,
                                       LPCWSTR resultJson) -> HRESULT {
               if (FAILED(hr)) {
-                auto errVal = wef::Value::String("ExecuteScript failed");
-                wef_value errWef(errVal);
-                callback(nullptr, &errWef, callback_data);
+                auto errVal = laufey::Value::String("ExecuteScript failed");
+                laufey_value errLaufey(errVal);
+                callback(nullptr, &errLaufey, callback_data);
                 return S_OK;
               }
               if (!resultJson) {
@@ -662,8 +662,8 @@ void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
               std::wstring wresult(resultJson);
               std::string result(wresult.begin(), wresult.end());
               auto val = json::ParseJson(result);
-              wef_value wef(val);
-              callback(&wef, nullptr, callback_data);
+              laufey_value laufey(val);
+              callback(&laufey, nullptr, callback_data);
               return S_OK;
             })
             .Get());
@@ -797,7 +797,7 @@ void WebView2Backend::PostUiTask(void (*task)(void*), void* data) {
 }
 
 void WebView2Backend::InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
-                                       wef::ValuePtr args) {
+                                       laufey::ValuePtr args) {
   std::string argsJson = json::Serialize(args);
   std::wstring wscript =
       Utf8ToWide(BuildInvokeCallbackScript(callback_id, argsJson));
@@ -835,8 +835,8 @@ void WebView2Backend::ReleaseJsCallback(uint32_t window_id,
 }
 
 void WebView2Backend::RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                                      wef::ValuePtr result,
-                                      wef::ValuePtr error) {
+                                      laufey::ValuePtr result,
+                                      laufey::ValuePtr error) {
   std::string resultJson = json::Serialize(result);
   std::string errorJson = error ? json::Serialize(error) : "null";
   std::wstring wscript = Utf8ToWide(BuildRespondScript(
@@ -859,7 +859,7 @@ void WebView2Backend::Run() {
 void WebView2Backend::HandleJsMessage(uint32_t window_id,
                                       const std::wstring& json) {
   std::string jsonStr = WideToUtf8(json);
-  wef::ValuePtr msg = json::ParseJson(jsonStr);
+  laufey::ValuePtr msg = json::ParseJson(jsonStr);
   if (!msg || !msg->IsDict())
     return;
 
@@ -881,8 +881,8 @@ void WebView2Backend::HandleJsMessage(uint32_t window_id,
 
   std::string method =
       methodIt->second->IsString() ? methodIt->second->GetString() : "";
-  wef::ValuePtr args =
-      (argsIt != dict.end()) ? argsIt->second : wef::Value::List();
+  laufey::ValuePtr args =
+      (argsIt != dict.end()) ? argsIt->second : laufey::Value::List();
 
   RuntimeLoader::GetInstance()->OnJsCall(window_id, call_id, method, args);
 }
@@ -892,9 +892,9 @@ void WebView2Backend::HandleJsMessage(uint32_t window_id,
 // ============================================================================
 
 void WebView2Backend::SetApplicationMenu(uint32_t window_id,
-                                         wef_value_t* menu_template,
-                                         const wef_backend_api_t* api,
-                                         wef_menu_click_fn on_click,
+                                         laufey_value_t* menu_template,
+                                         const laufey_backend_api_t* api,
+                                         laufey_menu_click_fn on_click,
                                          void* on_click_data) {
   if (!menu_template)
     return;
@@ -911,9 +911,9 @@ void WebView2Backend::SetApplicationMenu(uint32_t window_id,
 // ============================================================================
 
 void WebView2Backend::ShowContextMenu(uint32_t window_id, int x, int y,
-                                      wef_value_t* menu_template,
-                                      const wef_backend_api_t* api,
-                                      wef_menu_click_fn on_click,
+                                      laufey_value_t* menu_template,
+                                      const laufey_backend_api_t* api,
+                                      laufey_menu_click_fn on_click,
                                       void* on_click_data) {
   if (!menu_template)
     return;
@@ -946,7 +946,7 @@ int WebView2Backend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
                                 const std::string& message,
                                 const std::string& default_value,
                                 char** out_input_value) {
-  return wef_common::ShowDialogWin(dialog_type, title, message, default_value,
+  return laufey_common::ShowDialogWin(dialog_type, title, message, default_value,
                                    out_input_value);
 }
 
@@ -960,7 +960,7 @@ void WebView2Backend::BounceDock(int type) {
     if (!state.hwnd)
       continue;
     FLASHWINFO fi = {sizeof(FLASHWINFO), state.hwnd, 0, 0, 0};
-    if (type == WEF_DOCK_BOUNCE_CRITICAL) {
+    if (type == LAUFEY_DOCK_BOUNCE_CRITICAL) {
       fi.dwFlags = FLASHW_ALL | FLASHW_TIMER;
       fi.uCount = 0;
     } else {
@@ -972,7 +972,7 @@ void WebView2Backend::BounceDock(int type) {
 }
 
 // Badge via title prefix. Saved-titles map lives in
-// wef_common::ApplyTitlePrefixBadge. Win32 titles are UTF-16 natively
+// laufey_common::ApplyTitlePrefixBadge. Win32 titles are UTF-16 natively
 // but ApplyTitlePrefixBadge works in UTF-8 — we round-trip through
 // Utf8ToWide / WideToUtf8 here.
 void WebView2Backend::SetDockBadge(const char* badge_or_null) {
@@ -992,7 +992,7 @@ void WebView2Backend::SetDockBadge(const char* badge_or_null) {
     WideCharToMultiByte(CP_UTF8, 0, current_w.c_str(), n, current_u8.data(),
                         utf8_len, nullptr, nullptr);
     std::string next_u8 =
-        wef_common::ApplyTitlePrefixBadge(wid, current_u8, badge);
+        laufey_common::ApplyTitlePrefixBadge(wid, current_u8, badge);
     std::wstring next_w = Utf8ToWide(next_u8);
     SetWindowTextW(state.hwnd, next_w.c_str());
   }
@@ -1005,46 +1005,46 @@ void WebView2Backend::SetDockBadge(const char* badge_or_null) {
 // Thin trampolines over backend-common/src/tray_win.cc.
 
 uint32_t WebView2Backend::CreateTrayIcon() {
-  uint32_t tray_id = wef_common::CreateTrayIconWin();
-  wef_common::FinalizeTrayIconWin(tray_id);
+  uint32_t tray_id = laufey_common::CreateTrayIconWin();
+  laufey_common::FinalizeTrayIconWin(tray_id);
   return tray_id;
 }
 void WebView2Backend::DestroyTrayIcon(uint32_t tray_id) {
-  wef_common::DestroyTrayIconWin(tray_id);
+  laufey_common::DestroyTrayIconWin(tray_id);
 }
 void WebView2Backend::SetTrayIcon(uint32_t tray_id, const void* png_bytes,
                                   size_t len) {
-  wef_common::SetTrayIconWin(tray_id, png_bytes, len);
+  laufey_common::SetTrayIconWin(tray_id, png_bytes, len);
 }
 void WebView2Backend::SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
                                       size_t len) {
-  wef_common::SetTrayIconDarkWin(tray_id, png_bytes, len);
+  laufey_common::SetTrayIconDarkWin(tray_id, png_bytes, len);
 }
 
 bool WebView2Backend::GetTrayIconBounds(uint32_t tray_id, int* x, int* y,
                                         int* width, int* height) {
-  return wef_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
+  return laufey_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
 }
 void WebView2Backend::SetTrayDoubleClickHandler(uint32_t tray_id,
-                                                wef_tray_click_fn handler,
+                                                laufey_tray_click_fn handler,
                                                 void* user_data) {
-  wef_common::SetTrayDoubleClickHandlerWin(tray_id, handler, user_data);
+  laufey_common::SetTrayDoubleClickHandlerWin(tray_id, handler, user_data);
 }
 void WebView2Backend::SetTrayTooltip(uint32_t tray_id,
                                      const char* tooltip_or_null) {
-  wef_common::SetTrayTooltipWin(tray_id, tooltip_or_null);
+  laufey_common::SetTrayTooltipWin(tray_id, tooltip_or_null);
 }
-void WebView2Backend::SetTrayMenu(uint32_t tray_id, wef_value_t* menu_template,
-                                  const wef_backend_api_t* api,
-                                  wef_menu_click_fn on_click,
+void WebView2Backend::SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+                                  const laufey_backend_api_t* api,
+                                  laufey_menu_click_fn on_click,
                                   void* on_click_data) {
-  wef_common::SetTrayMenuWin(tray_id, menu_template, api, on_click,
+  laufey_common::SetTrayMenuWin(tray_id, menu_template, api, on_click,
                              on_click_data);
 }
 void WebView2Backend::SetTrayClickHandler(uint32_t tray_id,
-                                          wef_tray_click_fn handler,
+                                          laufey_tray_click_fn handler,
                                           void* user_data) {
-  wef_common::SetTrayClickHandlerWin(tray_id, handler, user_data);
+  laufey_common::SetTrayClickHandlerWin(tray_id, handler, user_data);
 }
 // ============================================================================
 // Notifications (WebView2 Windows)
@@ -1052,23 +1052,23 @@ void WebView2Backend::SetTrayClickHandler(uint32_t tray_id,
 //
 // Thin trampoline over backend-common/src/notifications_win.cc.
 
-uint32_t WebView2Backend::ShowNotification(wef_value_t* options,
-                                           const wef_backend_api_t* api,
-                                           wef_notification_event_fn on_event,
+uint32_t WebView2Backend::ShowNotification(laufey_value_t* options,
+                                           const laufey_backend_api_t* api,
+                                           laufey_notification_event_fn on_event,
                                            void* user_data) {
-  wef_common::NotificationOptions opts =
-      wef_common::ParseNotificationOptions(options, api);
-  return wef_common::ShowNotificationWin(opts, on_event, user_data);
+  laufey_common::NotificationOptions opts =
+      laufey_common::ParseNotificationOptions(options, api);
+  return laufey_common::ShowNotificationWin(opts, on_event, user_data);
 }
 
 void WebView2Backend::CloseNotification(uint32_t notification_id) {
-  wef_common::CloseNotificationWin(notification_id);
+  laufey_common::CloseNotificationWin(notification_id);
 }
 
 // ============================================================================
 // Factory Function
 // ============================================================================
 
-WefBackend* CreateWefBackend() {
+LaufeyBackend* CreateLaufeyBackend() {
   return new WebView2Backend();
 }

@@ -1,7 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#ifndef WEF_RENDER_PROCESS_HANDLER_H_
-#define WEF_RENDER_PROCESS_HANDLER_H_
+#ifndef LAUFEY_RENDER_PROCESS_HANDLER_H_
+#define LAUFEY_RENDER_PROCESS_HANDLER_H_
 
 #include <map>
 #include <vector>
@@ -16,9 +16,9 @@ struct StoredCallback {
   CefRefPtr<CefV8Context> context;
 };
 
-class WefPathObject : public CefV8Interceptor, public CefV8Handler {
+class LaufeyPathObject : public CefV8Interceptor, public CefV8Handler {
  public:
-  explicit WefPathObject(std::vector<std::string> path,
+  explicit LaufeyPathObject(std::vector<std::string> path,
                          CefRefPtr<CefFrame> frame);
 
   bool Get(const CefString& name, const CefRefPtr<CefV8Value> object,
@@ -41,7 +41,7 @@ class WefPathObject : public CefV8Interceptor, public CefV8Handler {
   std::vector<std::string> path_;
   CefRefPtr<CefFrame> frame_;
 
-  IMPLEMENT_REFCOUNTING(WefPathObject);
+  IMPLEMENT_REFCOUNTING(LaufeyPathObject);
 };
 
 class PromiseResolver : public CefBaseRefCounted {
@@ -59,9 +59,9 @@ class PromiseResolver : public CefBaseRefCounted {
   IMPLEMENT_REFCOUNTING(PromiseResolver);
 };
 
-class WefRenderProcessHandler : public CefRenderProcessHandler {
+class LaufeyRenderProcessHandler : public CefRenderProcessHandler {
  public:
-  WefRenderProcessHandler();
+  LaufeyRenderProcessHandler();
 
   void OnBrowserCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefDictionaryValue> extra_info) override;
@@ -98,9 +98,9 @@ class WefRenderProcessHandler : public CefRenderProcessHandler {
   std::map<uint64_t, CefRefPtr<PromiseResolver>> pending_calls_;
   std::map<uint64_t, StoredCallback> stored_callbacks_;
 
-  IMPLEMENT_REFCOUNTING(WefRenderProcessHandler);
+  IMPLEMENT_REFCOUNTING(LaufeyRenderProcessHandler);
 };
 
-extern CefRefPtr<WefRenderProcessHandler> g_render_handler;
+extern CefRefPtr<LaufeyRenderProcessHandler> g_render_handler;
 
 #endif

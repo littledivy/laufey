@@ -5,7 +5,7 @@
 // when the caller is already there (the typical case for the Deno
 // runtime); otherwise dispatch_sync forwards.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <Cocoa/Cocoa.h>
 
@@ -13,7 +13,7 @@
 #include <cstring>
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 int ShowDialogMac(int dialog_type, const std::string& title,
                   const std::string& message,
@@ -32,12 +32,12 @@ int ShowDialogMac(int dialog_type, const std::string& title,
     [alert setInformativeText:nsMessage];
 
     NSTextField* inputField = nil;
-    if (dialog_type == WEF_DIALOG_ALERT) {
+    if (dialog_type == LAUFEY_DIALOG_ALERT) {
       [alert addButtonWithTitle:@"OK"];
-    } else if (dialog_type == WEF_DIALOG_CONFIRM) {
+    } else if (dialog_type == LAUFEY_DIALOG_CONFIRM) {
       [alert addButtonWithTitle:@"OK"];
       [alert addButtonWithTitle:@"Cancel"];
-    } else if (dialog_type == WEF_DIALOG_PROMPT) {
+    } else if (dialog_type == LAUFEY_DIALOG_PROMPT) {
       [alert addButtonWithTitle:@"OK"];
       [alert addButtonWithTitle:@"Cancel"];
       inputField =
@@ -50,7 +50,7 @@ int ShowDialogMac(int dialog_type, const std::string& title,
 
     NSModalResponse response = [alert runModal];
     confirmed = (response == NSAlertFirstButtonReturn);
-    if (dialog_type == WEF_DIALOG_PROMPT && confirmed && inputField &&
+    if (dialog_type == LAUFEY_DIALOG_PROMPT && confirmed && inputField &&
         out_input_value) {
       const char* text = [[inputField stringValue] UTF8String];
       if (text)
@@ -69,4 +69,4 @@ int ShowDialogMac(int dialog_type, const std::string& title,
   return confirmed ? 1 : 0;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

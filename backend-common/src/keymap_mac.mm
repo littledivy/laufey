@@ -4,13 +4,13 @@
 // backend (CEF normalizes keyboard events to Windows VK codes and uses
 // keymap_vk.cc on every platform).
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <AppKit/AppKit.h>
 
 #include <string>
 
-namespace wef_common {
+namespace laufey_common {
 
 std::string NSEventKeyToKey(void* event_nsevent) {
   NSEvent* event = (__bridge NSEvent*)event_nsevent;
@@ -140,4 +140,4 @@ std::string NSEventKeyToCode(unsigned short keyCode) {
   }
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common

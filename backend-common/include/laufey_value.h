@@ -1,13 +1,13 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-// Canonical wef value type plus the shared value_* marshalling implementation.
-// Both the CEF and webview backends store values as wef::Value and install the
-// same value_* function pointers via wef_register_value_api(). A backend that
+// Canonical laufey value type plus the shared value_* marshalling implementation.
+// Both the CEF and webview backends store values as laufey::Value and install the
+// same value_* function pointers via laufey_register_value_api(). A backend that
 // needs a different native representation at its IPC boundary (e.g. CEF's
-// CefValue) converts to/from wef::Value only at that boundary, not per call.
+// CefValue) converts to/from laufey::Value only at that boundary, not per call.
 
-#ifndef WEF_BACKEND_COMMON_WEF_VALUE_H_
-#define WEF_BACKEND_COMMON_WEF_VALUE_H_
+#ifndef LAUFEY_BACKEND_COMMON_LAUFEY_VALUE_H_
+#define LAUFEY_BACKEND_COMMON_LAUFEY_VALUE_H_
 
 #include <cstdint>
 #include <cstring>
@@ -17,9 +17,9 @@
 #include <variant>
 #include <vector>
 
-#include "wef.h"
+#include "laufey.h"
 
-namespace wef {
+namespace laufey {
 
 struct Value;
 using ValuePtr = std::shared_ptr<Value>;
@@ -191,15 +191,15 @@ struct Value {
   }
 };
 
-}  // namespace wef
+}  // namespace laufey
 
-struct wef_value {
-  wef::ValuePtr value;
+struct laufey_value {
+  laufey::ValuePtr value;
   bool is_callback;
   uint64_t callback_id;
 
-  wef_value() : is_callback(false), callback_id(0) {}
-  explicit wef_value(wef::ValuePtr v)
+  laufey_value() : is_callback(false), callback_id(0) {}
+  explicit laufey_value(laufey::ValuePtr v)
       : value(v), is_callback(false), callback_id(0) {
     if (v && v->IsCallback()) {
       is_callback = true;
@@ -207,9 +207,9 @@ struct wef_value {
     }
   }
 
-  static wef_value* CreateCallback(uint64_t id) {
-    auto val = wef::Value::Callback(id);
-    wef_value* v = new wef_value(val);
+  static laufey_value* CreateCallback(uint64_t id) {
+    auto val = laufey::Value::Callback(id);
+    laufey_value* v = new laufey_value(val);
     v->is_callback = true;
     v->callback_id = id;
     return v;
@@ -217,7 +217,7 @@ struct wef_value {
 };
 
 // Install the shared value_* marshalling implementation into `api`. Call once
-// while a backend initializes its wef_backend_api_t.
-void wef_register_value_api(wef_backend_api_t* api);
+// while a backend initializes its laufey_backend_api_t.
+void laufey_register_value_api(laufey_backend_api_t* api);
 
-#endif  // WEF_VALUE_H_
+#endif  // LAUFEY_VALUE_H_

@@ -3,7 +3,7 @@
 #import <Cocoa/Cocoa.h>
 
 #include "runtime_loader.h"
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #include <iostream>
 #include <string>
@@ -61,14 +61,14 @@ void EnsureEditMenu(NSMenu* menubar) {
 }
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
-@property(nonatomic, assign) WefBackend* backend;
+@property(nonatomic, assign) LaufeyBackend* backend;
 @property(nonatomic, copy) NSString* runtimePath;
 @end
 
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
-  self.backend = CreateWefBackend();
+  self.backend = CreateLaufeyBackend();
 
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
   loader->SetBackend(self.backend);
@@ -96,14 +96,14 @@ void EnsureEditMenu(NSMenu* menubar) {
       }
     }
 
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       runtimePath = envPath;
     }
   }
 
   if (runtimePath.empty()) {
-    std::cerr << "No runtime library found. Set WEF_RUNTIME_PATH or place "
+    std::cerr << "No runtime library found. Set LAUFEY_RUNTIME_PATH or place "
                  "libruntime.dylib in the app bundle."
               << std::endl;
     [NSApp terminate:nil];
@@ -135,14 +135,14 @@ void EnsureEditMenu(NSMenu* menubar) {
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender
                     hasVisibleWindows:(BOOL)hasVisibleWindows {
-  wef_common::FireDockReopenMac(hasVisibleWindows ? true : false);
+  laufey_common::FireDockReopenMac(hasVisibleWindows ? true : false);
   // Always swallow the default "show last hidden window" behavior — the
   // embedder's callback decides what to do.
   return NO;
 }
 
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
-  return wef_common::GetDockMenuMac();
+  return laufey_common::GetDockMenuMac();
 }
 
 @end
@@ -161,7 +161,7 @@ static int run_headless(const char* runtimePath) {
   if (runtimePath) {
     path = runtimePath;
   } else {
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       path = envPath;
     }
@@ -226,7 +226,7 @@ int main(int argc, char* argv[]) {
     // `deno desktop --hmr`. AppKit derives the app menu title from the
     // process name for an exec'd bundle like ours, so set it before the
     // menu is built and before +sharedApplication.
-    if (const char* app_name = getenv("WEF_APP_NAME")) {
+    if (const char* app_name = getenv("LAUFEY_APP_NAME")) {
       if (*app_name) {
         [[NSProcessInfo processInfo]
             setProcessName:[NSString stringWithUTF8String:app_name]];
@@ -239,7 +239,7 @@ int main(int argc, char* argv[]) {
     // Allow the host to override the dock icon at launch (e.g. a project's
     // favicon during `deno desktop --hmr`). Setting it programmatically
     // bypasses LaunchServices' icon cache and the bundle's CFBundleIconFile.
-    if (const char* icon_path = getenv("WEF_APP_ICON")) {
+    if (const char* icon_path = getenv("LAUFEY_APP_ICON")) {
       NSImage* icon = [[NSImage alloc]
           initWithContentsOfFile:[NSString stringWithUTF8String:icon_path]];
       if (icon) {

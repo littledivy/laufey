@@ -1,12 +1,12 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 //
-// NSMenu construction from a wef_value_t menu template. Each non-role
+// NSMenu construction from a laufey_value_t menu template. Each non-role
 // menu item carries its own click handler+data in an attached
-// WefCommonMenuItem object (via NSMenuItem.representedObject), so the
+// LaufeyCommonMenuItem object (via NSMenuItem.representedObject), so the
 // same builder serves the application menu, context menu, dock menu,
 // and tray menus without per-context global state.
 
-#include "wef_backend_common.h"
+#include "laufey_backend_common.h"
 
 #import <AppKit/AppKit.h>
 
@@ -14,27 +14,27 @@
 #include <string>
 #include <vector>
 
-@interface WefCommonMenuItem : NSObject
+@interface LaufeyCommonMenuItem : NSObject
 @property(nonatomic, copy) NSString* itemId;
-@property(nonatomic, assign) wef_menu_click_fn clickFn;
+@property(nonatomic, assign) laufey_menu_click_fn clickFn;
 @property(nonatomic, assign) void* clickData;
 @property(nonatomic, assign) uint32_t windowId;
 @end
 
-@implementation WefCommonMenuItem
+@implementation LaufeyCommonMenuItem
 @end
 
-@interface WefCommonMenuTarget : NSObject
+@interface LaufeyCommonMenuTarget : NSObject
 + (instancetype)shared;
 - (void)menuItemClicked:(id)sender;
 @end
 
-@implementation WefCommonMenuTarget
+@implementation LaufeyCommonMenuTarget
 + (instancetype)shared {
-  static WefCommonMenuTarget* instance = nil;
+  static LaufeyCommonMenuTarget* instance = nil;
   static dispatch_once_t once;
   dispatch_once(&once, ^{
-    instance = [[WefCommonMenuTarget alloc] init];
+    instance = [[LaufeyCommonMenuTarget alloc] init];
   });
   return instance;
 }
@@ -42,14 +42,14 @@
 - (void)menuItemClicked:(id)sender {
   NSMenuItem* item = (NSMenuItem*)sender;
   id rep = [item representedObject];
-  if (![rep isKindOfClass:[WefCommonMenuItem class]]) return;
-  WefCommonMenuItem* w = (WefCommonMenuItem*)rep;
+  if (![rep isKindOfClass:[LaufeyCommonMenuItem class]]) return;
+  LaufeyCommonMenuItem* w = (LaufeyCommonMenuItem*)rep;
   if (!w.clickFn || !w.itemId) return;
   w.clickFn(w.clickData, w.windowId, [w.itemId UTF8String]);
 }
 @end
 
-namespace wef_common {
+namespace laufey_common {
 
 namespace {
 
@@ -140,9 +140,9 @@ NSMenuItem* CreateRoleMenuItem(const std::string& role) {
   return item;
 }
 
-std::string DictString(const wef_backend_api_t* api, wef_value_t* dict,
+std::string DictString(const laufey_backend_api_t* api, laufey_value_t* dict,
                        const char* key) {
-  wef_value_t* v = api->value_dict_get(dict, key);
+  laufey_value_t* v = api->value_dict_get(dict, key);
   if (!v || !api->value_is_string(v)) return std::string();
   size_t len = 0;
   char* s = api->value_get_string(v, &len);
@@ -154,15 +154,15 @@ std::string DictString(const wef_backend_api_t* api, wef_value_t* dict,
 
 }  // namespace
 
-NSMenu* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
-                             wef_menu_click_fn on_click, void* on_click_data,
+NSMenu* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
+                             laufey_menu_click_fn on_click, void* on_click_data,
                              uint32_t window_id) {
   if (!val || !api->value_is_list(val)) return nil;
   NSMenu* menu = [[NSMenu alloc] init];
   [menu setAutoenablesItems:NO];
   size_t count = api->value_list_size(val);
   for (size_t i = 0; i < count; ++i) {
-    wef_value_t* itemVal = api->value_list_get(val, i);
+    laufey_value_t* itemVal = api->value_list_get(val, i);
     if (!itemVal || !api->value_is_dict(itemVal)) continue;
 
     std::string typeStr = DictString(api, itemVal, "type");
@@ -182,7 +182,7 @@ NSMenu* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
     if (labelStr.empty()) continue;
     NSString* label = [NSString stringWithUTF8String:labelStr.c_str()];
 
-    wef_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
+    laufey_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
     if (submenuVal && api->value_is_list(submenuVal)) {
       NSMenuItem* submenuItem = [[NSMenuItem alloc] init];
       [submenuItem setTitle:label];
@@ -206,11 +206,11 @@ NSMenu* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
                                    action:@selector(menuItemClicked:)
                             keyEquivalent:keyEquiv];
     [nsItem setKeyEquivalentModifierMask:modMask];
-    [nsItem setTarget:[WefCommonMenuTarget shared]];
+    [nsItem setTarget:[LaufeyCommonMenuTarget shared]];
 
     std::string idStr = DictString(api, itemVal, "id");
     if (!idStr.empty()) {
-      WefCommonMenuItem* wrap = [[WefCommonMenuItem alloc] init];
+      LaufeyCommonMenuItem* wrap = [[LaufeyCommonMenuItem alloc] init];
       wrap.itemId = [NSString stringWithUTF8String:idStr.c_str()];
       wrap.clickFn = on_click;
       wrap.clickData = on_click_data;
@@ -218,7 +218,7 @@ NSMenu* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
       [nsItem setRepresentedObject:wrap];
     }
 
-    wef_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
+    laufey_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
     if (enabledVal && api->value_is_bool(enabledVal)) {
       [nsItem setEnabled:api->value_get_bool(enabledVal)];
     } else {
@@ -229,4 +229,4 @@ NSMenu* BuildNSMenuFromValue(wef_value_t* val, const wef_backend_api_t* api,
   return menu;
 }
 
-}  // namespace wef_common
+}  // namespace laufey_common
