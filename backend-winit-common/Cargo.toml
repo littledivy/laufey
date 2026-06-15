@@ -1,5 +1,5 @@
 [package]
-name = "wef-backend-winit-common"
+name = "laufey-backend-winit-common"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -10,8 +10,17 @@ raw-window-handle = "0.6"
 libloading = "0.8"
 rfd = "0.15"
 muda = "0.17"
+tray-icon = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+notify-rust = "4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSDockTile", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication"] }
-objc2-foundation = { version = "0.3", features = ["NSString", "NSThread"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSAppearance", "NSDockTile", "NSMenu", "NSMenuItem", "NSResponder", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSThread", "NSBundle", "NSError"] }
+objc2-user-notifications = "0.3"
+block2 = "0.6"
+dispatch2 = "0.3"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Registry"] }

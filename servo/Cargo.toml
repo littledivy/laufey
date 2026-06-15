@@ -1,16 +1,16 @@
 [package]
-name = "wef-servo"
+name = "laufey-servo"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.91.0"
-license = "MPL-2.0"
+license = "MIT"
 
 [[bin]]
-name = "wef_servo"
+name = "laufey_servo"
 path = "src/main.rs"
 
 [dependencies]
-wef-backend-winit-common = { path = "../backend-winit-common" }
+laufey-backend-winit-common = { path = "../backend-winit-common" }
 servo = { package = "libservo", git = "https://github.com/servo/servo.git", rev = "68f6dba66910f3118be0129f3b4b7b5e2fc72c65" }
 embedder_traits = { git = "https://github.com/servo/servo.git", rev = "68f6dba66910f3118be0129f3b4b7b5e2fc72c65" }
 webrender_api = { git = "https://github.com/servo/webrender", rev = "6cafc606096db4715a6119a6e16391aed9af47a5" }

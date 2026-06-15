@@ -6,6 +6,8 @@ members = [
     "servo",
     "backend-winit-common",
     "examples/hello",
+    "examples/binding_test",
     "examples/ddcore",
     "examples/presentation",
+    "examples/cef_e2e",
 ]

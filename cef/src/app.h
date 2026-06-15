@@ -1,7 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-#ifndef WEF_APP_H_
-#define WEF_APP_H_
+#ifndef LAUFEY_APP_H_
+#define LAUFEY_APP_H_
 
 #include <list>
 #include <map>
@@ -16,37 +16,48 @@
 
 extern std::string g_runtime_path;
 
-// Queue of wef window IDs waiting for OnAfterCreated to fire.
+// Queue of laufey window IDs waiting for OnAfterCreated to fire.
 // Push before CreateBrowserView, pop in OnAfterCreated.
 // Both happen on the UI thread so no synchronization needed.
-extern std::queue<uint32_t> g_pending_wef_ids;
+extern std::queue<uint32_t> g_pending_laufey_ids;
 
-class WefWindowDelegate : public CefWindowDelegate {
+class LaufeyWindowDelegate : public CefWindowDelegate {
  public:
-  WefWindowDelegate(CefRefPtr<CefBrowserView> browser_view, uint32_t wef_id)
-      : browser_view_(browser_view), wef_id_(wef_id) {}
+  LaufeyWindowDelegate(CefRefPtr<CefBrowserView> browser_view,
+                       uint32_t laufey_id, uint32_t flags = 0)
+      : browser_view_(browser_view), laufey_id_(laufey_id), flags_(flags) {}
 
   void OnWindowCreated(CefRefPtr<CefWindow> window) override;
   void OnWindowDestroyed(CefRefPtr<CefWindow> window) override;
   bool CanClose(CefRefPtr<CefWindow> window) override;
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override;
 
+  // Frameless windows (LAUFEY_WINDOW_FLAG_FRAMELESS) drop the title bar and
+  // standard window buttons.
+  bool IsFrameless(CefRefPtr<CefWindow> window) override;
+  // Non-activating panels (LAUFEY_WINDOW_FLAG_NO_ACTIVATE) accept the first
+  // click without the app having to activate first, so a tray popover can be
+  // interacted with while the previously-focused app keeps focus.
+  cef_state_t AcceptsFirstMouse(CefRefPtr<CefWindow> window) override;
+
  private:
   CefRefPtr<CefBrowserView> browser_view_;
-  uint32_t wef_id_ = 0;
-  IMPLEMENT_REFCOUNTING(WefWindowDelegate);
+  uint32_t laufey_id_ = 0;
+  uint32_t flags_ = 0;
+  IMPLEMENT_REFCOUNTING(LaufeyWindowDelegate);
 };
 
-class WefHandler : public CefClient,
-                   public CefLifeSpanHandler,
-                   public CefDisplayHandler,
-                   public CefKeyboardHandler,
-                   public CefJSDialogHandler {
+class LaufeyHandler : public CefClient,
+                      public CefLifeSpanHandler,
+                      public CefDisplayHandler,
+                      public CefKeyboardHandler,
+                      public CefDragHandler,
+                      public CefJSDialogHandler {
  public:
-  WefHandler();
-  ~WefHandler() override;
+  LaufeyHandler();
+  ~LaufeyHandler() override;
 
-  static WefHandler* GetInstance();
+  static LaufeyHandler* GetInstance();
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override {
     return this;
@@ -60,6 +71,15 @@ class WefHandler : public CefClient,
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override {
     return this;
   }
+  CefRefPtr<CefDragHandler> GetDragHandler() override {
+    return this;
+  }
+
+  // Forward the page's `-webkit-app-region: drag` rectangles to the window so
+  // those areas drag the OS window (used by the transparent-titlebar layout).
+  void OnDraggableRegionsChanged(
+      CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+      const std::vector<CefDraggableRegion>& regions) override;
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
@@ -95,10 +115,10 @@ class WefHandler : public CefClient,
   std::list<CefRefPtr<CefBrowser>> browser_list_;
   bool is_closing_ = false;
 
-  IMPLEMENT_REFCOUNTING(WefHandler);
+  IMPLEMENT_REFCOUNTING(LaufeyHandler);
 };
 
-class WefApp : public CefApp, public CefBrowserProcessHandler {
+class LaufeyApp : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
@@ -112,8 +132,22 @@ class WefApp : public CefApp, public CefBrowserProcessHandler {
 
   void OnContextInitialized() override;
 
+#if defined(__APPLE__)
+  // Drive CefDoMessageLoopWork from the main run loop (external_message_pump)
+  // so the libdispatch main queue keeps draining — tray/status-item creation
+  // and other dispatch_async(main_queue) work would otherwise never run under
+  // CEF's own message loop.
+  void OnScheduleMessagePumpWork(int64_t delay_ms) override;
+#endif
+
  private:
-  IMPLEMENT_REFCOUNTING(WefApp);
+  IMPLEMENT_REFCOUNTING(LaufeyApp);
 };
+
+#if defined(__APPLE__)
+// Stop the [NSApp run] main loop (replaces CefQuitMessageLoop on macOS).
+// Implemented in main_mac.mm.
+void LaufeyQuitMainLoopMac();
+#endif
 
 #endif

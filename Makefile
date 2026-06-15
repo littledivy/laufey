@@ -1,7 +1,5 @@
 SHELL := /bin/bash
 
-# ─── Platform Detection ─────────────────────────────────────────────
-
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
@@ -10,7 +8,6 @@ ifeq ($(UNAME_S),Darwin)
 else ifeq ($(UNAME_S),Linux)
   HOST_OS := linux
 else
-  # MSYS2, MINGW, Git Bash on Windows
   HOST_OS := windows
 endif
 
@@ -19,8 +16,6 @@ ifeq ($(filter arm64 aarch64,$(UNAME_M)),)
 else
   HOST_ARCH := aarch64
 endif
-
-# ─── CEF Configuration ──────────────────────────────────────────────
 
 ifeq ($(HOST_OS),macos)
   ifeq ($(HOST_ARCH),aarch64)
@@ -58,15 +53,12 @@ CEF_SRC := $(CEF_DIR)/src
 CEF_BUILD := $(CEF_DIR)/build
 CEF_ROOT := $(CEF_DIR)/install
 
-# ─── Environment ────────────────────────────────────────────────────
-
 ifeq ($(HOST_OS),macos)
   BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /opt/homebrew)
   LLVM_PREFIX := $(BREW_PREFIX)/opt/llvm
   export LIBCLANG_PATH := $(LLVM_PREFIX)/lib
 endif
 
-# Output directories
 BUILD_DIR := $(CURDIR)/build
 
 .PHONY: all clean check-deps help
@@ -91,8 +83,6 @@ ifeq ($(HOST_OS),macos)
 endif
 	@echo "All base dependencies OK."
 
-# ─── Runtimes ────────────────────────────────────────────────────────
-
 runtimes: hello-runtime ddcore-runtime ## Build all example runtimes
 
 hello-runtime: check-deps ## Build hello_runtime
@@ -101,19 +91,13 @@ hello-runtime: check-deps ## Build hello_runtime
 ddcore-runtime: check-deps ## Build ddcore_runtime
 	cargo build --release -p ddcore_runtime
 
-# ─── Winit Backend ───────────────────────────────────────────────────
-
 winit: check-deps ## Build the winit backend
 	cd winit && cargo build --release
-
-# ─── WebView Backend ─────────────────────────────────────────────────
 
 webview: check-deps ## Build the webview backend
 	cmake -G Ninja -B webview/build -S webview -DCMAKE_BUILD_TYPE=Release \
 		$(if $(WEBVIEW2_ROOT),-DWEBVIEW2_ROOT=$(WEBVIEW2_ROOT))
 	ninja -C webview/build
-
-# ─── CEF Backend ─────────────────────────────────────────────────────
 
 $(CEF_TARBALL):
 	@echo "Downloading CEF $(CEF_VERSION) for $(CEF_ARCH)..."
@@ -178,8 +162,6 @@ fmt-check: ## Check formatting without modifying files
 lint: ## Run all linters
 	cargo clippy --workspace -- -D warnings
 	deno lint
-
-# ─── Clean ───────────────────────────────────────────────────────────
 
 clean: ## Remove all build artifacts
 	cargo clean

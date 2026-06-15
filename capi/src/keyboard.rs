@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::sync::{Mutex, OnceLock};
 
-use crate::{api, KeyModifiers, WEF_KEY_PRESSED};
+use crate::{api, KeyModifiers, LAUFEY_KEY_PRESSED};
 
 #[derive(Debug, Clone)]
 pub struct KeyboardEvent {
@@ -20,6 +20,16 @@ pub struct KeyboardEvent {
 pub enum KeyState {
   Pressed,
   Released,
+}
+
+impl KeyState {
+  pub(crate) fn from_raw(raw: c_int) -> Self {
+    if raw == LAUFEY_KEY_PRESSED {
+      Self::Pressed
+    } else {
+      Self::Released
+    }
+  }
 }
 
 static KEYBOARD_HANDLERS: OnceLock<
@@ -71,11 +81,7 @@ unsafe extern "C" fn keyboard_event_trampoline(
 
   let event = KeyboardEvent {
     window_id,
-    state: if state == WEF_KEY_PRESSED {
-      KeyState::Pressed
-    } else {
-      KeyState::Released
-    },
+    state: KeyState::from_raw(state),
     key: key_str,
     code: code_str,
     modifiers: KeyModifiers::from_raw(modifiers),
@@ -98,4 +104,48 @@ where
     .lock()
     .unwrap()
     .insert(window_id, Box::new(handler));
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn key_state_from_raw_known_values() {
+    assert_eq!(KeyState::from_raw(LAUFEY_KEY_PRESSED), KeyState::Pressed);
+    assert_eq!(
+      KeyState::from_raw(crate::LAUFEY_KEY_RELEASED),
+      KeyState::Released
+    );
+  }
+
+  #[test]
+  fn key_state_unknown_defaults_to_released() {
+    // The trampoline collapses unknown raw values to Released — pinning
+    // so a future "Cancelled" state can't be misread as Pressed.
+    assert_eq!(KeyState::from_raw(42), KeyState::Released);
+    assert_eq!(KeyState::from_raw(-1), KeyState::Released);
+  }
+
+  #[test]
+  fn keyboard_event_field_passthrough() {
+    // The KeyboardEvent struct is built by the C trampoline from
+    // five separate args. A field swap there is silent at runtime
+    // (`key` and `code` are both Strings; `shift` and `repeat` are
+    // both bools). Pin a construction that fails compilation if the
+    // struct's field types or names change.
+    let ev = KeyboardEvent {
+      window_id: 7,
+      state: KeyState::Pressed,
+      key: "a".to_string(),
+      code: "KeyA".to_string(),
+      modifiers: KeyModifiers::default(),
+      repeat: true,
+    };
+    assert_eq!(ev.window_id, 7);
+    assert_eq!(ev.state, KeyState::Pressed);
+    assert_eq!(ev.key, "a");
+    assert_eq!(ev.code, "KeyA");
+    assert!(ev.repeat);
+  }
 }

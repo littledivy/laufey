@@ -2,5 +2,5 @@
 
 #include "renderer_app.h"
 
-WefRendererApp::WefRendererApp()
-    : render_handler_(new WefRenderProcessHandler()) {}
+LaufeyRendererApp::LaufeyRendererApp()
+    : render_handler_(new LaufeyRenderProcessHandler()) {}

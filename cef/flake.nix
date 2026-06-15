@@ -1,12 +1,12 @@
 {
-  description = "WEF - Web Engine Framework for macOS";
+  description = "LAUFEY - Web Engine Framework for macOS";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils, wefInclude ? null }:
+  outputs = { self, nixpkgs, flake-utils, laufeyInclude ? null }:
     flake-utils.lib.eachSystem [ "x86_64-darwin" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -89,7 +89,7 @@
           cef = cef;
 
           default = pkgs.stdenv.mkDerivation {
-            pname = "wef";
+            pname = "laufey";
             version = "1.0.0";
 
             src = combinedSrc;
@@ -107,14 +107,14 @@
 
             buildPhase = ''
               runHook preBuild
-              ${if wefInclude != null then ''
+              ${if laufeyInclude != null then ''
                 mkdir -p include
-                cp ${wefInclude}/wef.h include/
+                cp ${laufeyInclude}/laufey.h include/
               '' else ""}
               cmake -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCEF_ROOT=${cef} \
-                ${if wefInclude != null then "-DWEF_INCLUDE_DIR=$PWD/include" else ""} \
+                ${if laufeyInclude != null then "-DLAUFEY_INCLUDE_DIR=$PWD/include" else ""} \
                 .
               ninja
               runHook postBuild
@@ -123,7 +123,7 @@
             installPhase = ''
               runHook preInstall
               mkdir -p $out/Applications
-              cp -r Release/wef.app $out/Applications/
+              cp -r Release/laufey.app $out/Applications/
               runHook postInstall
             '';
           };
@@ -139,7 +139,7 @@
           CEF_ROOT = cef;
 
           shellHook = ''
-            echo "WEF Development Shell"
+            echo "LAUFEY Development Shell"
             echo "CEF_ROOT: ${cef}"
           '';
         };

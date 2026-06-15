@@ -26,7 +26,8 @@ jobs:
       - name: Install dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-format pkg-config libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev
+          sudo apt-get install -y pkg-config libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+          pipx install "clang-format==22.1.5"
 
       - name: cargo fmt
         run: cargo fmt --check
@@ -44,6 +45,21 @@ jobs:
 
       - name: deno lint
         run: deno lint
+
+  test:
+    name: cargo test (capi)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: test
+      # Only the capi crate has unit-testable logic (pure conversions /
+      # builders). The example runtimes are cdylibs and the winit/webview
+      # backends require display servers, so we don't run their tests in CI.
+      - run: cargo test -p laufey --lib
+      - run: cargo test -p laufey --doc
 
   build-winit:
     name: winit / ${{ matrix.target }}
@@ -68,7 +84,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev
+          sudo apt-get install -y pkg-config libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -85,19 +101,19 @@ jobs:
         run: |
           mkdir staging
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp target/release/wef_winit.exe staging/
-            cd staging && 7z a ../wef-winit-${{ matrix.target }}.zip *
+            cp target/release/laufey_winit.exe staging/
+            cd staging && 7z a ../laufey-winit-${{ matrix.target }}.zip *
           else
-            cp target/release/wef_winit staging/
-            tar czf wef-winit-${{ matrix.target }}.tar.gz -C staging .
+            cp target/release/laufey_winit staging/
+            tar czf laufey-winit-${{ matrix.target }}.tar.gz -C staging .
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wef-winit-${{ matrix.target }}
+          name: laufey-winit-${{ matrix.target }}
           path: |
-            wef-winit-${{ matrix.target }}.tar.gz
-            wef-winit-${{ matrix.target }}.zip
+            laufey-winit-${{ matrix.target }}.tar.gz
+            laufey-winit-${{ matrix.target }}.zip
 
   build-webview:
     name: webview / ${{ matrix.target }}
@@ -147,19 +163,73 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            tar czf wef-webview-${{ matrix.target }}.tar.gz -C webview/build wef_webview.app
+            tar czf laufey-webview-${{ matrix.target }}.tar.gz -C webview/build laufey_webview.app
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            cd webview/build && 7z a ../../wef-webview-${{ matrix.target }}.zip wef_webview.exe
+            cd webview/build && 7z a ../../laufey-webview-${{ matrix.target }}.zip laufey_webview.exe
           else
-            tar czf wef-webview-${{ matrix.target }}.tar.gz -C webview/build wef_webview
+            tar czf laufey-webview-${{ matrix.target }}.tar.gz -C webview/build laufey_webview
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wef-webview-${{ matrix.target }}
+          name: laufey-webview-${{ matrix.target }}
           path: |
-            wef-webview-${{ matrix.target }}.tar.gz
-            wef-webview-${{ matrix.target }}.zip
+            laufey-webview-${{ matrix.target }}.tar.gz
+            laufey-webview-${{ matrix.target }}.zip
+
+  e2e-cef-linux:
+    name: e2e / cef / x86_64-unknown-linux-gnu (Xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: e2e-cef-linux
+
+      - name: Install runtime + build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            xvfb xdotool dbus-x11 \
+            libx11-dev libxi-dev libglib2.0-dev libnss3-dev libnspr4-dev \
+            libatk1.0-dev libatk-bridge2.0-dev libcups2-dev libdrm-dev \
+            libgtk-3-dev libgbm-dev libasound2-dev libpango1.0-dev \
+            libcairo2-dev libxcomposite-dev libxdamage-dev libxrandr-dev \
+            libxkbcommon-dev libdbus-1-dev libxext-dev libxfixes-dev
+
+      - name: Cache CEF vendor
+        uses: actions/cache@v4
+        with:
+          path: vendor/cef
+          key: cef-ubuntu-latest-${{ runner.arch }}
+
+      - name: Build CEF backend
+        run: make cef
+
+      - name: Build e2e harness
+        run: cargo build --release -p cef_e2e_runtime
+
+      - name: Launch under Xvfb and assert
+        # The harness exits 0 on PASS, 1 on FAIL. `xvfb-run` provides
+        # the headless display; `dbus-launch` gives CEF the session
+        # bus it expects (Chromium probes it during startup and stalls
+        # for several seconds if absent).
+        #
+        # 90-second outer timeout to fail loud rather than letting CI
+        # block for the full 6-hour ceiling if a binding pipeline
+        # regression makes the harness hang forever.
+        run: |
+          export LAUFEY_BIN="$PWD/cef/build/Release/laufey"
+          if [ ! -x "$LAUFEY_BIN" ]; then
+            echo "::error::CEF backend binary not at $LAUFEY_BIN — build step changed layout?"
+            ls cef/build/Release || true
+            exit 1
+          fi
+          timeout 90 \
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
+            dbus-launch --exit-with-session \
+            "$LAUFEY_BIN" --runtime "$PWD/target/release/libcef_e2e_runtime.so"
 
   build-cef:
     name: cef / ${{ matrix.target }}
@@ -210,19 +280,19 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            tar czf wef-cef-${{ matrix.target }}.tar.gz -C cef/build/Release wef.app
+            tar czf laufey-cef-${{ matrix.target }}.tar.gz -C cef/build/Release laufey.app
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            cd cef/build/Release && 7z a ../../../wef-cef-${{ matrix.target }}.zip *
+            cd cef/build/Release && 7z a ../../../laufey-cef-${{ matrix.target }}.zip *
           else
-            tar czf wef-cef-${{ matrix.target }}.tar.gz -C cef/build/Release .
+            tar czf laufey-cef-${{ matrix.target }}.tar.gz -C cef/build/Release .
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wef-cef-${{ matrix.target }}
+          name: laufey-cef-${{ matrix.target }}
           path: |
-            wef-cef-${{ matrix.target }}.tar.gz
-            wef-cef-${{ matrix.target }}.zip
+            laufey-cef-${{ matrix.target }}.tar.gz
+            laufey-cef-${{ matrix.target }}.zip
 
   build-servo:
     name: servo / ${{ matrix.target }}
@@ -312,6 +382,17 @@ jobs:
           files=(*.tar.gz *.zip)
           sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish laufey crate to crates.io
+        working-directory: capi
+        # Non-fatal: a missing/under-scoped CARGO_REGISTRY_TOKEN, or a version
+        # already on crates.io, must not block the GitHub release below.
+        continue-on-error: true
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
 
       - name: Create release
         uses: softprops/action-gh-release@v2

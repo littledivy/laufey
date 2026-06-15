@@ -36,7 +36,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   if (runtimePath.empty()) {
     char envPath[MAX_PATH];
-    if (GetEnvironmentVariableA("WEF_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
+    if (GetEnvironmentVariableA("LAUFEY_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
       runtimePath = envPath;
     }
   }
@@ -55,14 +55,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   if (runtimePath.empty()) {
     MessageBoxA(nullptr,
-                "No runtime library found.\nSet WEF_RUNTIME_PATH or use "
+                "No runtime library found.\nSet LAUFEY_RUNTIME_PATH or use "
                 "--runtime <path>",
-                "WEF Webview Error", MB_OK | MB_ICONERROR);
+                "LAUFEY Webview Error", MB_OK | MB_ICONERROR);
     CoUninitialize();
     return 1;
   }
 
-  WefBackend* backend = CreateWefBackend();
+  LaufeyBackend* backend = CreateLaufeyBackend();
 
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
   loader->SetBackend(backend);
@@ -70,14 +70,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (!loader->Load(runtimePath)) {
     MessageBoxA(nullptr,
                 ("Failed to load runtime from: " + runtimePath).c_str(),
-                "WEF Webview Error", MB_OK | MB_ICONERROR);
+                "LAUFEY Webview Error", MB_OK | MB_ICONERROR);
     delete backend;
     CoUninitialize();
     return 1;
   }
 
   if (!loader->Start()) {
-    MessageBoxA(nullptr, "Failed to start runtime", "WEF Webview Error",
+    MessageBoxA(nullptr, "Failed to start runtime", "LAUFEY Webview Error",
                 MB_OK | MB_ICONERROR);
     delete backend;
     CoUninitialize();

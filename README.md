@@ -1,164 +1,52 @@
-![wef-doodle](https://github.com/user-attachments/assets/c7d55981-ab29-4bea-a4c6-28feeb1b4520)
+<img src="docs/laufey.png" alt="laufey" width="320">
 
-wef ("Web embedded framework") lets you build cross platform apps using web
+laufey is a web embedded framework: build cross platform apps using web
 technologies with your choice of browser engine.
 
 ### How it works
 
-wef is built around a C ABI that separates browser engines (backends) from
-application logic (runtimes). Prebuilt backends for [CEF](./cef), system
-[WebView](./webview) and [Servo](./servo) implement the `wef_backend_api_t`
-interface defined in [`capi/include/wef.h`](capi/include/wef.h)
+laufey is built around a C ABI that separates browser engines (backends) from
+application logic (runtimes). Prebuilt backends for [CEF](./cef) and the system
+[WebView](./webview) implement the `laufey_backend_api_t` interface defined in
+[`capi/include/laufey.h`](capi/include/laufey.h), and a [Winit](./winit) backend
+handles windowing without a web engine. (A Servo-based backend lives on the
+[`servo`](https://github.com/littledivy/laufey/tree/servo) branch.)
 
 Runtimes are shared libraries compiled with user application logic. When the
 backend starts, it loads the runtime dylib and hands control to the runtime. The
 runtime uses the interface to create windows, register JavaScript bindings, and
 respond to calls from the web content.
 
-wef also handles bidirectional marshalling that abstracts message passing
+laufey also handles bidirectional marshalling that abstracts message passing
 between JS and native code. This modular approach leads to fast development and
-packaging of wef applications.
+packaging of laufey applications.
 
 ```rust
-use wef::{Window, Value};
+use laufey::{Value, Window};
 
 fn main() {
     Window::new(800, 600)
-      .title("My App")
-      .bind("greet", |call| {
-         let name = call.args.get(0)
-             .and_then(|v| v.as_string())
-             .unwrap_or("World");
-         call.resolve(Value::String(format!("Hello, {}!", name)));
-      })
-      .load_url("https://example.com");
+        .title("My App")
+        .bind("greet", |call| {
+            let name = call
+                .args
+                .first()
+                .and_then(|v| v.as_string())
+                .unwrap_or("World");
+            call.resolve(Value::String(format!("Hello, {name}!")));
+        })
+        .load("index.html");
 }
 
-wef::main!(main);
+laufey::main!(main);
 ```
 
-### Backend matrix
+### Docs
 
-wef ships three backends today. The [CEF](./cef) backend embeds Chromium 144 and
-runs a multi-process architecture identical to a full browser — you get the same
-renderer, GPU process, and DevTools you would in Chrome, bundled into your app.
-The system [WebView](./webview) backend delegates to the platform's native web
-engine (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux), so the
-engine is never bundled and your app stays small. The [Servo](./servo) backend
-uses Mozilla's experimental Rust-based engine with GPU-accelerated rendering via
-WebRender; it is still early and the JS bridge is stubbed out.
-
-|             | CEF             | WebView         | Servo           | Winit           |
-| ----------- | --------------- | --------------- | --------------- | --------------- |
-| **macOS**   | x86_64, aarch64 | x86_64, aarch64 | x86_64, aarch64 | x86_64, aarch64 |
-| **Windows** | x86_64          | x86_64          | ❌              | x86_64          |
-| **Linux**   | x86_64, aarch64 | x86_64, aarch64 | x86_64, aarch64 | x86_64, aarch64 |
-| **Android** | ❌              | ❌              | ❌              | ❌              |
-
-|             | Engine        | Multi-process | Bundled | JS bridge |
-| ----------- | ------------- | ------------- | ------- | --------- |
-| **CEF**     | Chromium 144  | ✅            | ✅      | ✅        |
-| **WebView** | System native | ❌            | ❌      | ✅        |
-| **Servo**   | Servo         | ❌            | ✅      | ❌        |
-
-### Feature support matrix
-
-Features marked with platform qualifiers indicate per-platform differences
-within a backend.
-
-#### Window management
-
-| Feature                   | CEF | WebView | Servo | Winit |
-| ------------------------- | --- | ------- | ----- | ----- |
-| Create / close window     | ✅  | ✅      | ✅    | ✅    |
-| Navigate (load URL)       | ✅  | ✅      | ✅    | ❌    |
-| Set title                 | ✅  | ✅      | ✅    | ✅    |
-| Execute JavaScript        | ✅  | ✅      | ✅    | ❌    |
-| Set / get window size     | ✅  | ✅      | ✅    | ✅    |
-| Set / get window position | ✅  | ✅      | ✅    | ✅    |
-| Set / get resizable       | ✅  | ✅      | ✅    | ✅    |
-| Set / get always on top   | ✅  | ✅      | ✅    | ✅    |
-| Show / hide / is visible  | ✅  | ✅      | ✅    | ✅    |
-| Focus                     | ✅  | ✅      | ✅    | ✅    |
-| Quit                      | ✅  | ✅      | ✅    | ✅    |
-| Post UI task              | ✅  | ✅      | ✅    | ✅    |
-
-#### JavaScript interop
-
-| Feature                           | CEF | WebView | Servo | Winit |
-| --------------------------------- | --- | ------- | ----- | ----- |
-| JS call handler (native bindings) | ✅  | ✅      | ❌    | ❌    |
-| Respond to JS calls               | ✅  | ✅      | ❌    | ❌    |
-| Invoke JS callbacks               | ✅  | ✅      | ❌    | ❌    |
-| Release JS callbacks              | ✅  | ✅      | ❌    | ❌    |
-| Custom JS namespace               | ✅  | ✅      | ❌    | ❌    |
-| Execute JS with result callback   | ✅  | ✅      | ❌    | ❌    |
-
-#### Menus
-
-| Feature          | CEF            | WebView | Servo          | Winit          |
-| ---------------- | -------------- | ------- | -------------- | -------------- |
-| Application menu | macOS, Windows | ✅      | macOS, Windows | macOS, Windows |
-| Context menu     | macOS, Windows | ✅      | macOS, Windows | macOS, Windows |
-| Open DevTools    | ✅             | ✅      | ❌             | ❌             |
-
-CEF, Servo, and Winit on Linux cannot support menus because they create raw
-X11/Wayland windows without a GTK container.
-
-#### Dock / taskbar
-
-The dock is a macOS concept; on Windows the analog is the taskbar button, on
-Linux it's the window-manager urgency hint / title convention.
-
-| Feature         | CEF   | WebView | Servo | Winit |
-|-----------------|-------|---------|-------|-------|
-| Bounce / flash  | ✅     | ✅       | ✅     | ✅     |
-| Badge           | ✅     | ✅       | ✅     | ✅     |
-| Dock menu       | macOS | macOS   | macOS | macOS |
-| Hide dock icon  | macOS | macOS   | macOS | macOS |
-| Reopen callback | macOS | macOS   | macOS | macOS |
-
-On macOS, the badge uses `NSDockTile.badgeLabel` (native red overlay on the
-dock icon). On Windows and Linux, all four backends implement the badge as a
-`"(N) "` prefix on the window title — the convention used by Slack, Discord,
-Telegram, etc. Taskbars and window managers surface the title, so the badge
-appears on the taskbar button / window manager overview. Proper Windows
-overlay icons (`ITaskbarList3::SetOverlayIcon`) and Linux libunity counts
-are future work. The dock menu, dock visibility, and reopen callback have
-no clean cross-platform analog.
-
-#### Native dialogs
-
-| Feature                        | CEF | WebView | Servo | Winit |
-| ------------------------------ | --- | ------- | ----- | ----- |
-| Alert                          | ✅  | ✅      | ✅    | ✅    |
-| Confirm                        | ✅  | ✅      | ✅    | ✅    |
-| Prompt                         | ✅  | ✅      | ✅    | ✅    |
-| Browser JS dialogs (native UI) | ✅  | ✅      | ❌    | ❌    |
-
-#### Input events
-
-| Feature               | CEF | WebView | Servo | Winit |
-| --------------------- | --- | ------- | ----- | ----- |
-| Keyboard events       | ✅  | ✅      | ✅    | ✅    |
-| Mouse click events    | ✅  | ✅      | ✅    | ✅    |
-| Mouse move events     | ✅  | ✅      | ✅    | ✅    |
-| Wheel / scroll events | ✅  | ✅      | ✅    | ✅    |
-| Cursor enter / leave  | ✅  | ✅      | ✅    | ✅    |
-
-#### Window events
-
-| Feature         | CEF | WebView | Servo | Winit |
-| --------------- | --- | ------- | ----- | ----- |
-| Focus / blur    | ✅  | ✅      | ✅    | ✅    |
-| Resize          | ✅  | ✅      | ✅    | ✅    |
-| Move            | ✅  | ✅      | ✅    | ✅    |
-| Close requested | ✅  | ✅      | ✅    | ✅    |
-
-#### Window handles (GPU surface creation)
-
-| Feature                | CEF | WebView | Servo | Winit |
-| ---------------------- | --- | ------- | ----- | ----- |
-| Get window handle      | ❌  | ❌      | ❌    | ✅    |
-| Get display handle     | ❌  | ❌      | ❌    | ✅    |
-| Get window handle type | ❌  | ❌      | ❌    | ✅    |
+- [architecture.md](docs/architecture.md) — backend/runtime split
+- [c-abi.md](docs/c-abi.md) — the `laufey.h` C ABI: runtime entry points, the
+  API table, the value model, and the JS call flow
+- [backends.md](docs/backends.md) — CEF, WebView, and Winit
+- [features/](docs/features/) — one page per feature, with a usage example and
+  the per-platform support matrix
+- [building.md](docs/building.md) — `make` targets and prerequisites

@@ -1,0 +1,20 @@
+# Summary
+
+[Introduction](index.md)
+
+- [Architecture](architecture.md)
+- [C ABI](c-abi.md)
+- [Backends](backends.md)
+- [Window management](window-management.md)
+- [JavaScript interop](javascript-interop.md)
+- [Menus](menus.md)
+- [Native dialogs](dialogs.md)
+- [Input events](input-events.md)
+- [Window events](window-events.md)
+- [Window handles](window-handles.md)
+- [Dock / taskbar](dock-taskbar.md)
+- [Tray / status bar](tray.md)
+- [Notifications](notifications.md)
+- [Permissions](permissions.md)
+- [Packaging & distribution](distribution.md)
+- [Building](building.md)

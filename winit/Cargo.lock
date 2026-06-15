@@ -1380,7 +1380,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wef-backend-winit-common"
+name = "laufey-backend-winit-common"
 version = "0.1.0"
 dependencies = [
  "libloading",
@@ -1389,10 +1389,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "wef-winit"
+name = "laufey-winit"
 version = "0.1.0"
 dependencies = [
- "wef-backend-winit-common",
+ "laufey-backend-winit-common",
 ]
 
 [[package]]

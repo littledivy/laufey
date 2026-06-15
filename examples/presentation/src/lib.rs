@@ -1,4 +1,4 @@
-use wef::Window;
+use laufey::Window;
 
 fn presentation_main() {
   let mut args = std::env::args().skip(1);
@@ -16,7 +16,7 @@ fn presentation_main() {
     }
   }
   let url = url.unwrap_or_else(|| {
-    eprintln!("Usage: wef-presentation <google-slides-url>");
+    eprintln!("Usage: laufey-presentation <google-slides-url>");
     std::process::exit(1);
   });
 
@@ -40,11 +40,11 @@ fn presentation_main() {
   let rt = tokio::runtime::Runtime::new().unwrap();
   rt.block_on(async {
     let _win = Window::new(1280, 720)
-      .title("WEF - Presentation")
+      .title("LAUFEY - Presentation")
       .load(&url);
 
-    wef::run().await;
+    laufey::run().await;
   });
 }
 
-wef::main!(presentation_main);
+laufey::main!(presentation_main);

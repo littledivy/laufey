@@ -1,13 +1,24 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
 #include "runtime_loader.h"
-#include "wef_json.h"
+#include "laufey_backend_common.h"
+#include "laufey_json.h"
+#include "init_script.h"
 #include <win32_menu.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <shellapi.h>
+#include <wincodec.h>
 #include <wrl.h>
+
+// windows.h defines CreateWindow as a macro which conflicts with
+// LaufeyBackend::CreateWindow
+#undef CreateWindow
+
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 // WebView2 headers
 #include "WebView2.h"
@@ -21,216 +32,31 @@ using namespace Microsoft::WRL;
 
 namespace keyboard {
 
-std::string VirtualKeyToKey(WPARAM vk, LPARAM lParam) {
-  switch (vk) {
-    case VK_BACK:
-      return "Backspace";
-    case VK_TAB:
-      return "Tab";
-    case VK_RETURN:
-      return "Enter";
-    case VK_SHIFT:
-      return "Shift";
-    case VK_CONTROL:
-      return "Control";
-    case VK_MENU:
-      return "Alt";
-    case VK_PAUSE:
-      return "Pause";
-    case VK_CAPITAL:
-      return "CapsLock";
-    case VK_ESCAPE:
-      return "Escape";
-    case VK_SPACE:
-      return " ";
-    case VK_PRIOR:
-      return "PageUp";
-    case VK_NEXT:
-      return "PageDown";
-    case VK_END:
-      return "End";
-    case VK_HOME:
-      return "Home";
-    case VK_LEFT:
-      return "ArrowLeft";
-    case VK_UP:
-      return "ArrowUp";
-    case VK_RIGHT:
-      return "ArrowRight";
-    case VK_DOWN:
-      return "ArrowDown";
-    case VK_INSERT:
-      return "Insert";
-    case VK_DELETE:
-      return "Delete";
-    case VK_LWIN:
-    case VK_RWIN:
-      return "Meta";
-    case VK_F1:
-      return "F1";
-    case VK_F2:
-      return "F2";
-    case VK_F3:
-      return "F3";
-    case VK_F4:
-      return "F4";
-    case VK_F5:
-      return "F5";
-    case VK_F6:
-      return "F6";
-    case VK_F7:
-      return "F7";
-    case VK_F8:
-      return "F8";
-    case VK_F9:
-      return "F9";
-    case VK_F10:
-      return "F10";
-    case VK_F11:
-      return "F11";
-    case VK_F12:
-      return "F12";
-    case VK_NUMLOCK:
-      return "NumLock";
-    case VK_SCROLL:
-      return "ScrollLock";
-    default:
-      if (vk >= 'A' && vk <= 'Z') {
-        bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-        bool caps = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-        char c = static_cast<char>(vk);
-        if (!(shift ^ caps))
-          c += 32;  // lowercase
-        return std::string(1, c);
-      }
-      if (vk >= '0' && vk <= '9') {
-        return std::string(1, static_cast<char>(vk));
-      }
-      return "Unidentified";
-  }
+// VK → W3C key/code mapping lives in backend-common
+// (laufey_common::VkToKey / VkToCode). These thin wrappers extract
+// the Windows-only state (GetKeyState / lParam scancode) and forward.
+inline std::string VirtualKeyToKey(WPARAM vk, LPARAM /*lParam*/) {
+  bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+  bool caps = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+  return laufey_common::VkToKey(static_cast<int>(vk), 0, shift, caps);
 }
 
-std::string VirtualKeyToCode(WPARAM vk, LPARAM lParam) {
-  bool isExtended = (lParam & (1 << 24)) != 0;
-  switch (vk) {
-    case VK_BACK:
-      return "Backspace";
-    case VK_TAB:
-      return "Tab";
-    case VK_RETURN:
-      return isExtended ? "NumpadEnter" : "Enter";
-    case VK_SHIFT:
-      return (MapVirtualKey((lParam >> 16) & 0xFF, MAPVK_VSC_TO_VK_EX) ==
-              VK_RSHIFT)
-                 ? "ShiftRight"
-                 : "ShiftLeft";
-    case VK_CONTROL:
-      return isExtended ? "ControlRight" : "ControlLeft";
-    case VK_MENU:
-      return isExtended ? "AltRight" : "AltLeft";
-    case VK_PAUSE:
-      return "Pause";
-    case VK_CAPITAL:
-      return "CapsLock";
-    case VK_ESCAPE:
-      return "Escape";
-    case VK_SPACE:
-      return "Space";
-    case VK_PRIOR:
-      return "PageUp";
-    case VK_NEXT:
-      return "PageDown";
-    case VK_END:
-      return "End";
-    case VK_HOME:
-      return "Home";
-    case VK_LEFT:
-      return "ArrowLeft";
-    case VK_UP:
-      return "ArrowUp";
-    case VK_RIGHT:
-      return "ArrowRight";
-    case VK_DOWN:
-      return "ArrowDown";
-    case VK_INSERT:
-      return "Insert";
-    case VK_DELETE:
-      return "Delete";
-    case VK_LWIN:
-      return "MetaLeft";
-    case VK_RWIN:
-      return "MetaRight";
-    case VK_F1:
-      return "F1";
-    case VK_F2:
-      return "F2";
-    case VK_F3:
-      return "F3";
-    case VK_F4:
-      return "F4";
-    case VK_F5:
-      return "F5";
-    case VK_F6:
-      return "F6";
-    case VK_F7:
-      return "F7";
-    case VK_F8:
-      return "F8";
-    case VK_F9:
-      return "F9";
-    case VK_F10:
-      return "F10";
-    case VK_F11:
-      return "F11";
-    case VK_F12:
-      return "F12";
-    case VK_NUMLOCK:
-      return "NumLock";
-    case VK_SCROLL:
-      return "ScrollLock";
-    case VK_OEM_1:
-      return "Semicolon";
-    case VK_OEM_PLUS:
-      return "Equal";
-    case VK_OEM_COMMA:
-      return "Comma";
-    case VK_OEM_MINUS:
-      return "Minus";
-    case VK_OEM_PERIOD:
-      return "Period";
-    case VK_OEM_2:
-      return "Slash";
-    case VK_OEM_3:
-      return "Backquote";
-    case VK_OEM_4:
-      return "BracketLeft";
-    case VK_OEM_5:
-      return "Backslash";
-    case VK_OEM_6:
-      return "BracketRight";
-    case VK_OEM_7:
-      return "Quote";
-    default:
-      if (vk >= 'A' && vk <= 'Z') {
-        return "Key" + std::string(1, static_cast<char>(vk));
-      }
-      if (vk >= '0' && vk <= '9') {
-        return "Digit" + std::string(1, static_cast<char>(vk));
-      }
-      return "Unidentified";
-  }
+inline std::string VirtualKeyToCode(WPARAM vk, LPARAM lParam) {
+  bool is_extended = (lParam & (1 << 24)) != 0;
+  uint32_t scancode = static_cast<uint32_t>((lParam >> 16) & 0xFF);
+  return laufey_common::VkToCode(static_cast<int>(vk), is_extended, scancode);
 }
 
-uint32_t GetWefModifiers() {
+inline uint32_t GetLaufeyModifiers() {
   uint32_t modifiers = 0;
   if (GetKeyState(VK_SHIFT) & 0x8000)
-    modifiers |= WEF_MOD_SHIFT;
+    modifiers |= LAUFEY_MOD_SHIFT;
   if (GetKeyState(VK_CONTROL) & 0x8000)
-    modifiers |= WEF_MOD_CONTROL;
+    modifiers |= LAUFEY_MOD_CONTROL;
   if (GetKeyState(VK_MENU) & 0x8000)
-    modifiers |= WEF_MOD_ALT;
+    modifiers |= LAUFEY_MOD_ALT;
   if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000)
-    modifiers |= WEF_MOD_META;
+    modifiers |= LAUFEY_MOD_META;
   return modifiers;
 }
 
@@ -258,16 +84,16 @@ static std::string WideToUtf8(const std::wstring& wstr) {
   return result;
 }
 
-// HWND → wef_id mapping
-static std::map<HWND, uint32_t> g_hwnd_to_wef_id;
+// HWND → laufey_id mapping
+static std::map<HWND, uint32_t> g_hwnd_to_laufey_id;
 static std::mutex g_hwnd_mutex;
 
-static uint32_t WefIdForHwnd(HWND hwnd) {
+static uint32_t LaufeyIdForHwnd(HWND hwnd) {
   if (!hwnd)
     return 0;
   std::lock_guard<std::mutex> lock(g_hwnd_mutex);
-  auto it = g_hwnd_to_wef_id.find(hwnd);
-  return it != g_hwnd_to_wef_id.end() ? it->second : 0;
+  auto it = g_hwnd_to_laufey_id.find(hwnd);
+  return it != g_hwnd_to_laufey_id.end() ? it->second : 0;
 }
 
 // Per-window state
@@ -293,123 +119,23 @@ struct UiTaskData {
 // WebView2 Backend
 // ============================================================================
 
-static std::string BuildInitScript(const std::string& ns,
-                                   const std::string& postMessage) {
-  return R"JS(
-(function() {
-  const pendingCalls = new Map();
-  let nextCallId = 1;
-
-  function createWefProxy(path = []) {
-    return new Proxy(function() {}, {
-      get(target, prop) {
-        if (prop === 'then' || prop === 'catch' || prop === 'finally' ||
-            prop === 'constructor' || prop === Symbol.toStringTag) {
-          return undefined;
-        }
-        return createWefProxy([...path, prop]);
-      },
-      apply(target, thisArg, args) {
-        return new Promise((resolve, reject) => {
-          const callId = nextCallId++;
-          pendingCalls.set(callId, { resolve, reject });
-
-          const processedArgs = args.map(arg => {
-            if (typeof arg === 'function') {
-              const cbId = nextCallId++;
-              window.__wefCallbacks = window.__wefCallbacks || {};
-              window.__wefCallbacks[cbId] = arg;
-              return { __callback__: String(cbId) };
-            }
-            if (arg instanceof ArrayBuffer) {
-              const bytes = new Uint8Array(arg);
-              let binary = '';
-              bytes.forEach(b => binary += String.fromCharCode(b));
-              return { __binary__: btoa(binary) };
-            }
-            if (arg instanceof Uint8Array) {
-              let binary = '';
-              arg.forEach(b => binary += String.fromCharCode(b));
-              return { __binary__: btoa(binary) };
-            }
-            return arg;
-          });
-
-          )JS" +
-         postMessage + R"JS(
-        });
-      }
-    });
-  }
-
-  window[")JS" +
-         ns + R"JS("] = createWefProxy();
-
-  window.__wefRespond = function(callId, result, error) {
-    const pending = pendingCalls.get(callId);
-    if (pending) {
-      pendingCalls.delete(callId);
-      if (error) {
-        pending.reject(new Error(error));
-      } else {
-        function convertBinary(obj) {
-          if (obj && typeof obj === 'object') {
-            if (obj.__binary__) {
-              const binary = atob(obj.__binary__);
-              const bytes = new Uint8Array(binary.length);
-              for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i);
-              }
-              return bytes.buffer;
-            }
-            if (Array.isArray(obj)) {
-              return obj.map(convertBinary);
-            }
-            const result = {};
-            for (const key in obj) {
-              result[key] = convertBinary(obj[key]);
-            }
-            return result;
-          }
-          return obj;
-        }
-        pending.resolve(convertBinary(result));
-      }
-    }
-  };
-
-  window.__wefInvokeCallback = function(callbackId, args) {
-    const cb = window.__wefCallbacks && window.__wefCallbacks[callbackId];
-    if (cb) {
-      cb.apply(null, args);
-    }
-  };
-
-  window.__wefReleaseCallback = function(callbackId) {
-    if (window.__wefCallbacks) {
-      delete window.__wefCallbacks[callbackId];
-    }
-  };
-
-})();
-)JS";
-}
-
 class WebView2Backend;
 static WebView2Backend* g_win_backend = nullptr;
 
-class WebView2Backend : public WefBackend {
+class WebView2Backend : public LaufeyBackend {
  public:
   WebView2Backend();
   ~WebView2Backend() override;
 
   void CreateWindow(uint32_t window_id, int width, int height) override;
+  void CreateWindowEx(uint32_t window_id, int width, int height,
+                      uint32_t flags) override;
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
-                 wef_js_result_fn callback, void* callback_data) override;
+                 laufey_js_result_fn callback, void* callback_data) override;
   void Quit() override;
   void SetWindowSize(uint32_t window_id, int width, int height) override;
   void GetWindowSize(uint32_t window_id, int* width, int* height) override;
@@ -426,31 +152,66 @@ class WebView2Backend : public WefBackend {
   void PostUiTask(void (*task)(void*), void* data) override;
 
   void InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
-                        wef::ValuePtr args) override;
+                        laufey::ValuePtr args) override;
   void ReleaseJsCallback(uint32_t window_id, uint64_t callback_id) override;
   void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                       wef::ValuePtr result, wef::ValuePtr error) override;
+                       laufey::ValuePtr result,
+                       laufey::ValuePtr error) override;
 
   void Run() override;
 
-  void SetApplicationMenu(uint32_t window_id, wef_value_t* menu_template,
-                          const wef_backend_api_t* api,
-                          wef_menu_click_fn on_click,
+  void SetApplicationMenu(uint32_t window_id, laufey_value_t* menu_template,
+                          const laufey_backend_api_t* api,
+                          laufey_menu_click_fn on_click,
                           void* on_click_data) override;
 
   void ShowContextMenu(uint32_t window_id, int x, int y,
-                       wef_value_t* menu_template, const wef_backend_api_t* api,
-                       wef_menu_click_fn on_click,
+                       laufey_value_t* menu_template,
+                       const laufey_backend_api_t* api,
+                       laufey_menu_click_fn on_click,
                        void* on_click_data) override;
 
   void OpenDevTools(uint32_t window_id) override;
 
-  void ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
-                  const std::string& message, const std::string& default_value,
-                  wef_dialog_result_fn callback, void* callback_data) override;
+  int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
+                 const std::string& message, const std::string& default_value,
+                 char** out_input_value) override;
 
   void BounceDock(int type) override;
   void SetDockBadge(const char* badge_or_null) override;
+
+  uint32_t CreateTrayIcon() override;
+  void DestroyTrayIcon(uint32_t tray_id) override;
+  void SetTrayIcon(uint32_t tray_id, const void* png_bytes,
+                   size_t len) override;
+  void SetTrayTooltip(uint32_t tray_id, const char* tooltip_or_null) override;
+  void SetTrayMenu(uint32_t tray_id, laufey_value_t* menu_template,
+                   const laufey_backend_api_t* api,
+                   laufey_menu_click_fn on_click, void* on_click_data) override;
+  void SetTrayClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
+                           void* user_data) override;
+  void SetTrayDoubleClickHandler(uint32_t tray_id, laufey_tray_click_fn handler,
+                                 void* user_data) override;
+  void SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
+                       size_t len) override;
+  bool GetTrayIconBounds(uint32_t tray_id, int* x, int* y, int* width,
+                         int* height) override;
+
+  uint32_t ShowNotification(laufey_value_t* options,
+                            const laufey_backend_api_t* api,
+                            laufey_notification_event_fn on_event,
+                            void* user_data) override;
+  void CloseNotification(uint32_t notification_id) override;
+
+  // Shell_NotifyIcon balloons have no permission model — always granted.
+  void QueryPermission(int kind, laufey_permission_callback_fn cb,
+                       void* user_data) override {
+    laufey_common::QueryPermissionStub(kind, cb, user_data);
+  }
+  void RequestPermission(int kind, laufey_permission_callback_fn cb,
+                         void* user_data) override {
+    laufey_common::RequestPermissionStub(kind, cb, user_data);
+  }
 
   void HandleJsMessage(uint32_t window_id, const std::wstring& json);
 
@@ -467,7 +228,7 @@ class WebView2Backend : public WefBackend {
 
 LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                              LPARAM lParam) {
-  uint32_t wid = WefIdForHwnd(hwnd);
+  uint32_t wid = LaufeyIdForHwnd(hwnd);
 
   switch (msg) {
     case WM_SIZE: {
@@ -514,31 +275,31 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
         break;
       int state = (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN ||
                    msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN)
-                      ? WEF_MOUSE_PRESSED
-                      : WEF_MOUSE_RELEASED;
+                      ? LAUFEY_MOUSE_PRESSED
+                      : LAUFEY_MOUSE_RELEASED;
       int button;
       switch (msg) {
         case WM_LBUTTONDOWN:
         case WM_LBUTTONUP:
-          button = WEF_MOUSE_BUTTON_LEFT;
+          button = LAUFEY_MOUSE_BUTTON_LEFT;
           break;
         case WM_RBUTTONDOWN:
         case WM_RBUTTONUP:
-          button = WEF_MOUSE_BUTTON_RIGHT;
+          button = LAUFEY_MOUSE_BUTTON_RIGHT;
           break;
         case WM_MBUTTONDOWN:
         case WM_MBUTTONUP:
-          button = WEF_MOUSE_BUTTON_MIDDLE;
+          button = LAUFEY_MOUSE_BUTTON_MIDDLE;
           break;
         default:
           button = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1)
-                       ? WEF_MOUSE_BUTTON_BACK
-                       : WEF_MOUSE_BUTTON_FORWARD;
+                       ? LAUFEY_MOUSE_BUTTON_BACK
+                       : LAUFEY_MOUSE_BUTTON_FORWARD;
           break;
       }
       double x = static_cast<double>(GET_X_LPARAM(lParam));
       double y = static_cast<double>(GET_Y_LPARAM(lParam));
-      uint32_t modifiers = keyboard::GetWefModifiers();
+      uint32_t modifiers = keyboard::GetLaufeyModifiers();
       RuntimeLoader::GetInstance()->DispatchMouseClickEvent(wid, state, button,
                                                             x, y, modifiers, 1);
       break;
@@ -549,10 +310,11 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
         break;
       std::string key = keyboard::VirtualKeyToKey(wParam, lParam);
       std::string code = keyboard::VirtualKeyToCode(wParam, lParam);
-      uint32_t modifiers = keyboard::GetWefModifiers();
+      uint32_t modifiers = keyboard::GetLaufeyModifiers();
       bool repeat = (lParam & (1 << 30)) != 0;
       RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
-          wid, WEF_KEY_PRESSED, key.c_str(), code.c_str(), modifiers, repeat);
+          wid, LAUFEY_KEY_PRESSED, key.c_str(), code.c_str(), modifiers,
+          repeat);
       break;
     }
     case WM_KEYUP:
@@ -561,9 +323,10 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
         break;
       std::string key = keyboard::VirtualKeyToKey(wParam, lParam);
       std::string code = keyboard::VirtualKeyToCode(wParam, lParam);
-      uint32_t modifiers = keyboard::GetWefModifiers();
+      uint32_t modifiers = keyboard::GetLaufeyModifiers();
       RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
-          wid, WEF_KEY_RELEASED, key.c_str(), code.c_str(), modifiers, false);
+          wid, LAUFEY_KEY_RELEASED, key.c_str(), code.c_str(), modifiers,
+          false);
       break;
     }
     case WM_CLOSE:
@@ -574,8 +337,8 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       {
         std::lock_guard<std::mutex> lock(g_hwnd_mutex);
         // Remove this window from map
-        g_hwnd_to_wef_id.erase(hwnd);
-        if (g_hwnd_to_wef_id.empty()) {
+        g_hwnd_to_laufey_id.erase(hwnd);
+        if (g_hwnd_to_laufey_id.empty()) {
           PostQuitMessage(0);
         }
       }
@@ -608,7 +371,7 @@ WebView2Backend::WebView2Backend() {
   wc.cbSize = sizeof(WNDCLASSEXW);
   wc.lpfnWndProc = WindowProc;
   wc.hInstance = GetModuleHandle(nullptr);
-  wc.lpszClassName = L"WefWebView2";
+  wc.lpszClassName = L"LaufeyWebView2";
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
   wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
   RegisterClassExW(&wc);
@@ -622,7 +385,7 @@ WebView2Backend::~WebView2Backend() {
       state.controller->Close();
     {
       std::lock_guard<std::mutex> hlock(g_hwnd_mutex);
-      g_hwnd_to_wef_id.erase(state.hwnd);
+      g_hwnd_to_laufey_id.erase(state.hwnd);
     }
   }
   windows_.clear();
@@ -635,13 +398,29 @@ WinWindowState* WebView2Backend::GetWindow(uint32_t window_id) {
 }
 
 void WebView2Backend::CreateWindow(uint32_t window_id, int width, int height) {
+  CreateWindowEx(window_id, width, height, 0);
+}
+
+void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
+                                     uint32_t flags) {
+  DWORD style = WS_OVERLAPPEDWINDOW;
+  DWORD ex_style = 0;
+  if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
+    // Borderless popup: no caption / sizing frame.
+    style = WS_POPUP;
+  }
+  if (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) {
+    // Don't steal foreground/focus; keep out of the taskbar and Alt-Tab.
+    ex_style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+  }
+
   HWND hwnd = CreateWindowExW(
-      0, L"WefWebView2", L"", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+      ex_style, L"LaufeyWebView2", L"", style, CW_USEDEFAULT, CW_USEDEFAULT,
       width, height, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
   {
     std::lock_guard<std::mutex> lock(g_hwnd_mutex);
-    g_hwnd_to_wef_id[hwnd] = window_id;
+    g_hwnd_to_laufey_id[hwnd] = window_id;
   }
 
   WinWindowState state;
@@ -655,7 +434,10 @@ void WebView2Backend::CreateWindow(uint32_t window_id, int width, int height) {
 
   InitializeWebViewForWindow(window_id, hwnd);
 
-  ShowWindow(hwnd, SW_SHOW);
+  // Showing a non-activating panel must not take foreground from the user's
+  // active window.
+  ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
+                                                            : SW_SHOW);
   UpdateWindow(hwnd);
 }
 
@@ -819,7 +601,7 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
       state->controller->Close();
     {
       std::lock_guard<std::mutex> hlock(g_hwnd_mutex);
-      g_hwnd_to_wef_id.erase(state->hwnd);
+      g_hwnd_to_laufey_id.erase(state->hwnd);
     }
     DestroyWindow(state->hwnd);
     windows_.erase(window_id);
@@ -853,13 +635,14 @@ void WebView2Backend::SetTitle(uint32_t window_id, const std::string& title) {
 }
 
 void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
-                                wef_js_result_fn callback,
+                                laufey_js_result_fn callback,
                                 void* callback_data) {
   std::wstring wscript = Utf8ToWide(script);
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (!state || !state->webview_ready || !state->webview) {
-    if (callback) callback(nullptr, nullptr, callback_data);
+    if (callback)
+      callback(nullptr, nullptr, callback_data);
     return;
   }
   if (!callback) {
@@ -868,11 +651,12 @@ void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
     state->webview->ExecuteScript(
         wscript.c_str(),
         Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-            [callback, callback_data](HRESULT hr, LPCWSTR resultJson) -> HRESULT {
+            [callback, callback_data](HRESULT hr,
+                                      LPCWSTR resultJson) -> HRESULT {
               if (FAILED(hr)) {
-                auto errVal = wef::Value::String("ExecuteScript failed");
-                wef_value errWef(errVal);
-                callback(nullptr, &errWef, callback_data);
+                auto errVal = laufey::Value::String("ExecuteScript failed");
+                laufey_value errLaufey(errVal);
+                callback(nullptr, &errLaufey, callback_data);
                 return S_OK;
               }
               if (!resultJson) {
@@ -883,10 +667,11 @@ void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
               std::wstring wresult(resultJson);
               std::string result(wresult.begin(), wresult.end());
               auto val = json::ParseJson(result);
-              wef_value wef(val);
-              callback(&wef, nullptr, callback_data);
+              laufey_value laufey(val);
+              callback(&laufey, nullptr, callback_data);
               return S_OK;
-            }).Get());
+            })
+            .Get());
   }
 }
 
@@ -1017,11 +802,10 @@ void WebView2Backend::PostUiTask(void (*task)(void*), void* data) {
 }
 
 void WebView2Backend::InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
-                                       wef::ValuePtr args) {
+                                       laufey::ValuePtr args) {
   std::string argsJson = json::Serialize(args);
-  std::string script = "window.__wefInvokeCallback(" +
-                       std::to_string(callback_id) + ", " + argsJson + ");";
-  std::wstring wscript = Utf8ToWide(script);
+  std::wstring wscript =
+      Utf8ToWide(BuildInvokeCallbackScript(callback_id, argsJson));
   std::lock_guard<std::mutex> lock(windows_mutex_);
   if (window_id == 0) {
     for (auto& [wid, state] : windows_) {
@@ -1039,9 +823,7 @@ void WebView2Backend::InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
 
 void WebView2Backend::ReleaseJsCallback(uint32_t window_id,
                                         uint64_t callback_id) {
-  std::string script =
-      "window.__wefReleaseCallback(" + std::to_string(callback_id) + ");";
-  std::wstring wscript = Utf8ToWide(script);
+  std::wstring wscript = Utf8ToWide(BuildReleaseCallbackScript(callback_id));
   std::lock_guard<std::mutex> lock(windows_mutex_);
   if (window_id == 0) {
     for (auto& [wid, state] : windows_) {
@@ -1058,19 +840,12 @@ void WebView2Backend::ReleaseJsCallback(uint32_t window_id,
 }
 
 void WebView2Backend::RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                                      wef::ValuePtr result,
-                                      wef::ValuePtr error) {
+                                      laufey::ValuePtr result,
+                                      laufey::ValuePtr error) {
   std::string resultJson = json::Serialize(result);
-  std::string script;
-  if (error) {
-    std::string errorJson = json::Serialize(error);
-    script = "window.__wefRespond(" + std::to_string(call_id) + ", null, " +
-             errorJson + ");";
-  } else {
-    script = "window.__wefRespond(" + std::to_string(call_id) + ", " +
-             resultJson + ", null);";
-  }
-  std::wstring wscript = Utf8ToWide(script);
+  std::string errorJson = error ? json::Serialize(error) : "null";
+  std::wstring wscript = Utf8ToWide(BuildRespondScript(
+      call_id, resultJson, errorJson, static_cast<bool>(error)));
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state && state->webview_ready && state->webview) {
@@ -1089,7 +864,7 @@ void WebView2Backend::Run() {
 void WebView2Backend::HandleJsMessage(uint32_t window_id,
                                       const std::wstring& json) {
   std::string jsonStr = WideToUtf8(json);
-  wef::ValuePtr msg = json::ParseJson(jsonStr);
+  laufey::ValuePtr msg = json::ParseJson(jsonStr);
   if (!msg || !msg->IsDict())
     return;
 
@@ -1111,8 +886,8 @@ void WebView2Backend::HandleJsMessage(uint32_t window_id,
 
   std::string method =
       methodIt->second->IsString() ? methodIt->second->GetString() : "";
-  wef::ValuePtr args =
-      (argsIt != dict.end()) ? argsIt->second : wef::Value::List();
+  laufey::ValuePtr args =
+      (argsIt != dict.end()) ? argsIt->second : laufey::Value::List();
 
   RuntimeLoader::GetInstance()->OnJsCall(window_id, call_id, method, args);
 }
@@ -1122,9 +897,9 @@ void WebView2Backend::HandleJsMessage(uint32_t window_id,
 // ============================================================================
 
 void WebView2Backend::SetApplicationMenu(uint32_t window_id,
-                                         wef_value_t* menu_template,
-                                         const wef_backend_api_t* api,
-                                         wef_menu_click_fn on_click,
+                                         laufey_value_t* menu_template,
+                                         const laufey_backend_api_t* api,
+                                         laufey_menu_click_fn on_click,
                                          void* on_click_data) {
   if (!menu_template)
     return;
@@ -1141,9 +916,9 @@ void WebView2Backend::SetApplicationMenu(uint32_t window_id,
 // ============================================================================
 
 void WebView2Backend::ShowContextMenu(uint32_t window_id, int x, int y,
-                                      wef_value_t* menu_template,
-                                      const wef_backend_api_t* api,
-                                      wef_menu_click_fn on_click,
+                                      laufey_value_t* menu_template,
+                                      const laufey_backend_api_t* api,
+                                      laufey_menu_click_fn on_click,
                                       void* on_click_data) {
   if (!menu_template)
     return;
@@ -1171,72 +946,13 @@ void WebView2Backend::OpenDevTools(uint32_t window_id) {
 // Dialog
 // ============================================================================
 
-void WebView2Backend::ShowDialog(uint32_t window_id, int dialog_type,
-                                 const std::string& title,
-                                 const std::string& message,
-                                 const std::string& default_value,
-                                 wef_dialog_result_fn callback,
-                                 void* callback_data) {
-  // Convert strings to wide strings for Win32 API
-  auto toWide = [](const std::string& s) -> std::wstring {
-    if (s.empty())
-      return L"";
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring ws(len - 1, 0);
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
-    return ws;
-  };
-
-  std::wstring wTitle = toWide(title);
-  std::wstring wMessage = toWide(message);
-
-  HWND hwnd = nullptr;
-  auto* win = GetWindow(window_id);
-  if (win)
-    hwnd = win->hwnd;
-
-  if (dialog_type == WEF_DIALOG_ALERT) {
-    MessageBoxW(hwnd, wMessage.c_str(), wTitle.c_str(),
-                MB_OK | MB_ICONINFORMATION);
-    if (callback)
-      callback(callback_data, 1, nullptr);
-  } else if (dialog_type == WEF_DIALOG_CONFIRM) {
-    int ret = MessageBoxW(hwnd, wMessage.c_str(), wTitle.c_str(),
-                          MB_OKCANCEL | MB_ICONQUESTION);
-    if (callback)
-      callback(callback_data, (ret == IDOK) ? 1 : 0, nullptr);
-  } else if (dialog_type == WEF_DIALOG_PROMPT) {
-    // Windows does not have a built-in prompt dialog, so use PowerShell
-    std::string script =
-        "Add-Type -AssemblyName Microsoft.VisualBasic; "
-        "[Microsoft.VisualBasic.Interaction]::InputBox('" +
-        message + "', '" + title + "', '" + default_value + "')";
-    std::string cmd = "powershell -Command \"" + script + "\"";
-
-    FILE* fp = _popen(cmd.c_str(), "r");
-    if (fp) {
-      char buf[4096] = {};
-      std::string result;
-      while (fgets(buf, sizeof(buf), fp)) {
-        result += buf;
-      }
-      int ret = _pclose(fp);
-      // Trim trailing whitespace
-      while (!result.empty() &&
-             (result.back() == '\n' || result.back() == '\r'))
-        result.pop_back();
-      if (!result.empty()) {
-        if (callback)
-          callback(callback_data, 1, result.c_str());
-      } else {
-        if (callback)
-          callback(callback_data, 0, nullptr);
-      }
-    } else {
-      if (callback)
-        callback(callback_data, 0, nullptr);
-    }
-  }
+int WebView2Backend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
+                                const std::string& title,
+                                const std::string& message,
+                                const std::string& default_value,
+                                char** out_input_value) {
+  return laufey_common::ShowDialogWin(dialog_type, title, message,
+                                      default_value, out_input_value);
 }
 
 // ============================================================================
@@ -1249,7 +965,7 @@ void WebView2Backend::BounceDock(int type) {
     if (!state.hwnd)
       continue;
     FLASHWINFO fi = {sizeof(FLASHWINFO), state.hwnd, 0, 0, 0};
-    if (type == WEF_DOCK_BOUNCE_CRITICAL) {
+    if (type == LAUFEY_DOCK_BOUNCE_CRITICAL) {
       fi.dwFlags = FLASHW_ALL | FLASHW_TIMER;
       fi.uCount = 0;
     } else {
@@ -1260,50 +976,104 @@ void WebView2Backend::BounceDock(int type) {
   }
 }
 
-// Badge via title prefix. See CEF backend for the same best-effort model.
-static std::mutex g_wv_badge_mutex;
-static std::map<uint32_t, std::wstring> g_wv_saved_titles;
-
-static std::wstring Utf8ToWide(const std::string& s) {
-  if (s.empty())
-    return std::wstring();
-  int len = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-  std::wstring out(len, L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), out.data(), len);
-  return out;
-}
-
+// Badge via title prefix. Saved-titles map lives in
+// laufey_common::ApplyTitlePrefixBadge. Win32 titles are UTF-16 natively
+// but ApplyTitlePrefixBadge works in UTF-8 — we round-trip through
+// Utf8ToWide / WideToUtf8 here.
 void WebView2Backend::SetDockBadge(const char* badge_or_null) {
   std::string badge =
       (badge_or_null && *badge_or_null) ? std::string(badge_or_null) : "";
   std::lock_guard<std::mutex> wlock(windows_mutex_);
-  std::lock_guard<std::mutex> block(g_wv_badge_mutex);
   for (auto& [wid, state] : windows_) {
     if (!state.hwnd)
       continue;
-    if (!badge.empty()) {
-      if (g_wv_saved_titles.find(wid) == g_wv_saved_titles.end()) {
-        wchar_t buf[512];
-        int n = GetWindowTextW(state.hwnd, buf, 512);
-        g_wv_saved_titles[wid] = std::wstring(buf, n);
-      }
-      std::wstring prefixed =
-          L"(" + Utf8ToWide(badge) + L") " + g_wv_saved_titles[wid];
-      SetWindowTextW(state.hwnd, prefixed.c_str());
-    } else {
-      auto it = g_wv_saved_titles.find(wid);
-      if (it != g_wv_saved_titles.end()) {
-        SetWindowTextW(state.hwnd, it->second.c_str());
-        g_wv_saved_titles.erase(it);
-      }
-    }
+    wchar_t buf[512];
+    int n = GetWindowTextW(state.hwnd, buf, 512);
+    std::wstring current_w(buf, n);
+    // UTF-16 → UTF-8 for ApplyTitlePrefixBadge.
+    int utf8_len = WideCharToMultiByte(CP_UTF8, 0, current_w.c_str(), n,
+                                       nullptr, 0, nullptr, nullptr);
+    std::string current_u8(utf8_len, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, current_w.c_str(), n, current_u8.data(),
+                        utf8_len, nullptr, nullptr);
+    std::string next_u8 =
+        laufey_common::ApplyTitlePrefixBadge(wid, current_u8, badge);
+    std::wstring next_w = Utf8ToWide(next_u8);
+    SetWindowTextW(state.hwnd, next_w.c_str());
   }
+}
+
+// ============================================================================
+// Tray / status bar (Windows)
+// ============================================================================
+//
+// Thin trampolines over backend-common/src/tray_win.cc.
+
+uint32_t WebView2Backend::CreateTrayIcon() {
+  uint32_t tray_id = laufey_common::CreateTrayIconWin();
+  laufey_common::FinalizeTrayIconWin(tray_id);
+  return tray_id;
+}
+void WebView2Backend::DestroyTrayIcon(uint32_t tray_id) {
+  laufey_common::DestroyTrayIconWin(tray_id);
+}
+void WebView2Backend::SetTrayIcon(uint32_t tray_id, const void* png_bytes,
+                                  size_t len) {
+  laufey_common::SetTrayIconWin(tray_id, png_bytes, len);
+}
+void WebView2Backend::SetTrayIconDark(uint32_t tray_id, const void* png_bytes,
+                                      size_t len) {
+  laufey_common::SetTrayIconDarkWin(tray_id, png_bytes, len);
+}
+
+bool WebView2Backend::GetTrayIconBounds(uint32_t tray_id, int* x, int* y,
+                                        int* width, int* height) {
+  return laufey_common::GetTrayIconBoundsWin(tray_id, x, y, width, height);
+}
+void WebView2Backend::SetTrayDoubleClickHandler(uint32_t tray_id,
+                                                laufey_tray_click_fn handler,
+                                                void* user_data) {
+  laufey_common::SetTrayDoubleClickHandlerWin(tray_id, handler, user_data);
+}
+void WebView2Backend::SetTrayTooltip(uint32_t tray_id,
+                                     const char* tooltip_or_null) {
+  laufey_common::SetTrayTooltipWin(tray_id, tooltip_or_null);
+}
+void WebView2Backend::SetTrayMenu(uint32_t tray_id,
+                                  laufey_value_t* menu_template,
+                                  const laufey_backend_api_t* api,
+                                  laufey_menu_click_fn on_click,
+                                  void* on_click_data) {
+  laufey_common::SetTrayMenuWin(tray_id, menu_template, api, on_click,
+                                on_click_data);
+}
+void WebView2Backend::SetTrayClickHandler(uint32_t tray_id,
+                                          laufey_tray_click_fn handler,
+                                          void* user_data) {
+  laufey_common::SetTrayClickHandlerWin(tray_id, handler, user_data);
+}
+// ============================================================================
+// Notifications (WebView2 Windows)
+// ============================================================================
+//
+// Thin trampoline over backend-common/src/notifications_win.cc.
+
+uint32_t WebView2Backend::ShowNotification(
+    laufey_value_t* options, const laufey_backend_api_t* api,
+    laufey_notification_event_fn on_event, void* user_data) {
+  laufey_common::NotificationOptions opts =
+      laufey_common::ParseNotificationOptions(options, api);
+  return laufey_common::ShowNotificationWin(opts, on_event, user_data);
+}
+
+void WebView2Backend::CloseNotification(uint32_t notification_id) {
+  laufey_common::CloseNotificationWin(notification_id);
 }
 
 // ============================================================================
 // Factory Function
 // ============================================================================
 
-WefBackend* CreateWefBackend() {
+LaufeyBackend* CreateLaufeyBackend() {
   return new WebView2Backend();
 }

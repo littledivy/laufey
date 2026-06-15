@@ -3,24 +3,72 @@
 #import <Cocoa/Cocoa.h>
 
 #include "runtime_loader.h"
+#include "laufey_backend_common.h"
 
 #include <iostream>
 #include <string>
 
-// Dock state lives in webview_macos.mm.
-extern NSMenu* g_wv_dock_menu;
-extern wef_dock_reopen_fn g_wv_dock_reopen_fn;
-extern void* g_wv_dock_reopen_data;
+// Cmd+C/V/X/A on macOS dispatch through the main menu's performKeyEquivalent:
+// — Cocoa matches the keystroke against menu items, then sends their action
+// (cut:/copy:/paste:/selectAll:) up the responder chain to the WKWebView,
+// which forwards it to the page. Without these items in the main menu, the
+// standard editing shortcuts have nowhere to land.
+NSMenu* BuildDefaultEditSubmenu() {
+  NSMenu* edit = [[NSMenu alloc] initWithTitle:@"Edit"];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Undo"
+                                           action:@selector(undo:)
+                                    keyEquivalent:@"z"]];
+  NSMenuItem* redo = [[NSMenuItem alloc] initWithTitle:@"Redo"
+                                                action:@selector(redo:)
+                                         keyEquivalent:@"Z"];
+  [redo setKeyEquivalentModifierMask:(NSEventModifierFlagCommand |
+                                      NSEventModifierFlagShift)];
+  [edit addItem:redo];
+  [edit addItem:[NSMenuItem separatorItem]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Cut"
+                                           action:@selector(cut:)
+                                    keyEquivalent:@"x"]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Copy"
+                                           action:@selector(copy:)
+                                    keyEquivalent:@"c"]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Paste"
+                                           action:@selector(paste:)
+                                    keyEquivalent:@"v"]];
+  [edit addItem:[NSMenuItem separatorItem]];
+  [edit addItem:[[NSMenuItem alloc] initWithTitle:@"Select All"
+                                           action:@selector(selectAll:)
+                                    keyEquivalent:@"a"]];
+  return edit;
+}
+
+static bool MenuTreeHasCopyAction(NSMenu* menu) {
+  for (NSMenuItem* item in [menu itemArray]) {
+    if ([item action] == @selector(copy:))
+      return true;
+    if ([item submenu] && MenuTreeHasCopyAction([item submenu]))
+      return true;
+  }
+  return false;
+}
+
+// Force an Edit submenu into the menubar if the embedder didn't include one.
+void EnsureEditMenu(NSMenu* menubar) {
+  if (MenuTreeHasCopyAction(menubar))
+    return;
+  NSMenuItem* editItem = [[NSMenuItem alloc] init];
+  [editItem setSubmenu:BuildDefaultEditSubmenu()];
+  [menubar addItem:editItem];
+}
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
-@property(nonatomic, assign) WefBackend* backend;
+@property(nonatomic, assign) LaufeyBackend* backend;
 @property(nonatomic, copy) NSString* runtimePath;
 @end
 
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification*)notification {
-  self.backend = CreateWefBackend();
+  self.backend = CreateLaufeyBackend();
 
   RuntimeLoader* loader = RuntimeLoader::GetInstance();
   loader->SetBackend(self.backend);
@@ -48,14 +96,14 @@ extern void* g_wv_dock_reopen_data;
       }
     }
 
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       runtimePath = envPath;
     }
   }
 
   if (runtimePath.empty()) {
-    std::cerr << "No runtime library found. Set WEF_RUNTIME_PATH or place "
+    std::cerr << "No runtime library found. Set LAUFEY_RUNTIME_PATH or place "
                  "libruntime.dylib in the app bundle."
               << std::endl;
     [NSApp terminate:nil];
@@ -87,16 +135,14 @@ extern void* g_wv_dock_reopen_data;
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication*)sender
                     hasVisibleWindows:(BOOL)hasVisibleWindows {
-  if (g_wv_dock_reopen_fn) {
-    g_wv_dock_reopen_fn(g_wv_dock_reopen_data, hasVisibleWindows ? true : false);
-  }
+  laufey_common::FireDockReopenMac(hasVisibleWindows ? true : false);
   // Always swallow the default "show last hidden window" behavior — the
   // embedder's callback decides what to do.
   return NO;
 }
 
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
-  return g_wv_dock_menu;
+  return laufey_common::GetDockMenuMac();
 }
 
 @end
@@ -115,7 +161,7 @@ static int run_headless(const char* runtimePath) {
   if (runtimePath) {
     path = runtimePath;
   } else {
-    const char* envPath = getenv("WEF_RUNTIME_PATH");
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       path = envPath;
     }
@@ -175,8 +221,31 @@ int main(int argc, char* argv[]) {
   }
 
   @autoreleasepool {
+    // Allow the host to override the user-visible app name (menu-bar app
+    // menu, Dock, Cmd-Tab) at launch, e.g. the project name during
+    // `deno desktop --hmr`. AppKit derives the app menu title from the
+    // process name for an exec'd bundle like ours, so set it before the
+    // menu is built and before +sharedApplication.
+    if (const char* app_name = getenv("LAUFEY_APP_NAME")) {
+      if (*app_name) {
+        [[NSProcessInfo processInfo]
+            setProcessName:[NSString stringWithUTF8String:app_name]];
+      }
+    }
+
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+
+    // Allow the host to override the dock icon at launch (e.g. a project's
+    // favicon during `deno desktop --hmr`). Setting it programmatically
+    // bypasses LaunchServices' icon cache and the bundle's CFBundleIconFile.
+    if (const char* icon_path = getenv("LAUFEY_APP_ICON")) {
+      NSImage* icon = [[NSImage alloc]
+          initWithContentsOfFile:[NSString stringWithUTF8String:icon_path]];
+      if (icon) {
+        [NSApp setApplicationIconImage:icon];
+      }
+    }
 
     AppDelegate* delegate = [[AppDelegate alloc] init];
     delegate.runtimePath = runtimePathArg;
@@ -186,7 +255,6 @@ int main(int argc, char* argv[]) {
     NSMenu* menubar = [[NSMenu alloc] init];
     NSMenuItem* appMenuItem = [[NSMenuItem alloc] init];
     [menubar addItem:appMenuItem];
-    [NSApp setMainMenu:menubar];
 
     NSMenu* appMenu = [[NSMenu alloc] init];
     NSMenuItem* quitItem =
@@ -195,6 +263,9 @@ int main(int argc, char* argv[]) {
                             keyEquivalent:@"q"];
     [appMenu addItem:quitItem];
     [appMenuItem setSubmenu:appMenu];
+
+    EnsureEditMenu(menubar);
+    [NSApp setMainMenu:menubar];
 
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];

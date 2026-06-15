@@ -3,15 +3,15 @@
 cmake_minimum_required(VERSION 3.19)
 
 if(APPLE)
-  project(wef VERSION 1.0.0 LANGUAGES C CXX OBJCXX)
+  project(laufey VERSION 1.0.0 LANGUAGES C CXX OBJCXX)
 else()
-  project(wef VERSION 1.0.0 LANGUAGES C CXX)
+  project(laufey VERSION 1.0.0 LANGUAGES C CXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(WEF_RENDERER_SRCS
+set(LAUFEY_RENDERER_SRCS
   src/render_process_handler.cc
   src/render_process_handler.h
   src/renderer_app.cc
@@ -22,7 +22,18 @@ if(NOT DEFINED CEF_ROOT)
   message(FATAL_ERROR "CEF_ROOT must be defined")
 endif()
 
-set(WEF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../capi/include" CACHE PATH "Path to wef.h header directory")
+set(LAUFEY_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../capi/include" CACHE PATH "Path to laufey.h header directory")
+
+# CEF uses the static CRT (/MT) on Windows; build everything, including
+# backend-common, the same way or the link fails with LNK2038.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# Shared native-API implementations (notifications, tray, dock, dialogs, ...).
+# Each platform branch links laufey_backend_common below.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend-common
+                 ${CMAKE_BINARY_DIR}/backend-common)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
 
@@ -31,7 +42,7 @@ find_package(CEF REQUIRED)
 include(cef_macros)
 include(cef_variables)
 
-set(CEF_TARGET "wef")
+set(CEF_TARGET "laufey")
 SET_CEF_TARGET_OUT_DIR()
 
 if(OS_MAC)
@@ -47,7 +58,7 @@ if(OS_MAC)
     )
   endif()
 
-  set(WEF_SRCS_COMMON
+  set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
     src/runtime_loader.cc
@@ -55,45 +66,49 @@ if(OS_MAC)
     src/runtime_loader.h
   )
 
-  set(WEF_SRCS_MAC
+  set(LAUFEY_SRCS_MAC
     src/main_mac.mm
   )
 
-  set(WEF_HELPER_SRCS
+  set(LAUFEY_HELPER_SRCS
     src/helper.cc
-    ${WEF_RENDERER_SRCS}
+    ${LAUFEY_RENDERER_SRCS}
   )
 
-  set(WEF_RESOURCES_SRCS
+  set(LAUFEY_RESOURCES_SRCS
     macos/Info.plist.in
   )
 
-  set(CEF_HELPER_TARGET "wef_Helper")
-  set(CEF_HELPER_OUTPUT_NAME "wef Helper")
+  set(CEF_HELPER_TARGET "laufey_Helper")
+  set(CEF_HELPER_OUTPUT_NAME "laufey Helper")
 
   option(OPTION_USE_ARC "Build with ARC (automatic Reference Counting) on macOS." ON)
-  if(OPTION_USE_ARC)
-    list(APPEND CEF_COMPILER_FLAGS
-      -fobjc-arc
-    )
-    set_target_properties(${target} PROPERTIES
-      CLANG_ENABLE_OBJC_ARC "YES"
-    )
-  endif()
 
   set(CEF_APP "${CEF_TARGET_OUT_DIR}/${CEF_TARGET}.app")
 
   set(EXECUTABLE_NAME "${CEF_TARGET}")
   set(PRODUCT_NAME "${CEF_TARGET}")
 
-  add_executable(${CEF_TARGET} MACOSX_BUNDLE ${WEF_RESOURCES_SRCS} ${WEF_SRCS_COMMON} ${WEF_SRCS_MAC})
+  add_executable(${CEF_TARGET} MACOSX_BUNDLE ${LAUFEY_RESOURCES_SRCS} ${LAUFEY_SRCS_COMMON} ${LAUFEY_SRCS_MAC})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
-  target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${WEF_INCLUDE_DIR}")
+  if(OPTION_USE_ARC)
+    # CEF's SET_EXECUTABLE_TARGET_PROPERTIES applies CEF_COMPILER_FLAGS only
+    # to COMPILE_LANGUAGE:C/CXX, so .mm files miss -fobjc-arc otherwise. Apply
+    # it explicitly here — without ARC, ObjC pointers stored in C++ structs
+    # like TrayEntry are not retained, leading to use-after-free crashes when
+    # the dispatched main-queue blocks dereference them.
+    target_compile_options(${CEF_TARGET} PRIVATE
+      $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fobjc-arc>
+    )
+  endif()
+  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS}
+    laufey_backend_common
+    "-framework UserNotifications")
+  target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${LAUFEY_INCLUDE_DIR}")
   set_target_properties(${CEF_TARGET} PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in
-    MACOSX_BUNDLE_GUI_IDENTIFIER "io.wef.cef"
-    MACOSX_BUNDLE_BUNDLE_NAME "WEF CEF"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.deno.desktop"
+    MACOSX_BUNDLE_BUNDLE_NAME "Deno"
     MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
   )
@@ -116,10 +131,10 @@ if(OS_MAC)
     string(REPLACE "\${BUNDLE_ID_SUFFIX}" "${_plist_suffix}" _plist_contents ${_plist_contents})
     file(WRITE ${_helper_info_plist} ${_plist_contents})
 
-    add_executable(${_helper_target} MACOSX_BUNDLE ${WEF_HELPER_SRCS})
+    add_executable(${_helper_target} MACOSX_BUNDLE ${LAUFEY_HELPER_SRCS})
     SET_EXECUTABLE_TARGET_PROPERTIES(${_helper_target})
     target_link_libraries(${_helper_target} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
-    target_include_directories(${_helper_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${WEF_INCLUDE_DIR}")
+    target_include_directories(${_helper_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${LAUFEY_INCLUDE_DIR}")
     set_target_properties(${_helper_target} PROPERTIES
       MACOSX_BUNDLE_INFO_PLIST ${_helper_info_plist}
       OUTPUT_NAME ${_helper_output_name}
@@ -138,7 +153,7 @@ if(OS_MAC)
   endforeach()
 
   set(PREFIXES "macos/")
-  COPY_MAC_RESOURCES("${WEF_RESOURCES_SRCS}" "${PREFIXES}" "${CEF_TARGET}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CEF_APP}")
+  COPY_MAC_RESOURCES("${LAUFEY_RESOURCES_SRCS}" "${PREFIXES}" "${CEF_TARGET}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CEF_APP}")
 
 elseif(OS_WINDOWS)
   # Find the wrapper lib (.lib on Windows)
@@ -154,22 +169,22 @@ elseif(OS_WINDOWS)
     )
   endif()
 
-  set(WEF_SRCS_COMMON
+  set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
     src/runtime_loader.cc
     src/runtime_loader.h
   )
 
-  set(WEF_SRCS_WIN
+  set(LAUFEY_SRCS_WIN
     src/main_windows.cc
-    ${WEF_RENDERER_SRCS}
+    ${LAUFEY_RENDERER_SRCS}
   )
 
-  add_executable(${CEF_TARGET} WIN32 ${WEF_SRCS_COMMON} ${WEF_SRCS_WIN})
+  add_executable(${CEF_TARGET} WIN32 ${LAUFEY_SRCS_COMMON} ${LAUFEY_SRCS_WIN})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_LIB_RELEASE} ${CEF_STANDARD_LIBS})
-  target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${WEF_INCLUDE_DIR}")
+  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_LIB_RELEASE} ${CEF_STANDARD_LIBS} laufey_backend_common)
+  target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${LAUFEY_INCLUDE_DIR}")
 
   # Copy CEF binaries and resources to the output directory
   add_custom_command(
@@ -201,34 +216,46 @@ elseif(OS_LINUX)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
   pkg_check_modules(XI2 REQUIRED xi)
+  pkg_check_modules(APPINDICATOR appindicator3-0.1)
+  if(NOT APPINDICATOR_FOUND)
+    pkg_check_modules(APPINDICATOR ayatana-appindicator3-0.1)
+  endif()
 
-  set(WEF_SRCS_COMMON
+  set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
     src/runtime_loader.cc
     src/runtime_loader.h
   )
 
-  set(WEF_SRCS_LINUX
+  set(LAUFEY_SRCS_LINUX
     src/main_linux.cc
-    ${WEF_RENDERER_SRCS}
+    src/runtime_loader_linux.cc
+    ${LAUFEY_RENDERER_SRCS}
   )
 
-  add_executable(${CEF_TARGET} ${WEF_SRCS_COMMON} ${WEF_SRCS_LINUX})
+  add_executable(${CEF_TARGET} ${LAUFEY_SRCS_COMMON} ${LAUFEY_SRCS_LINUX})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
   # Chromium launches child processes with --change-stack-guard-on-fork=enable
-  # (re-randomizes __stack_chk_guard after fork). The wef binary's main() is
+  # (re-randomizes __stack_chk_guard after fork). The laufey binary's main() is
   # not part of Chromium's runtime, so its entry-time canary no longer matches
   # at return, tripping __stack_chk_fail. Disable stack protection to bypass.
   target_compile_options(${CEF_TARGET} PRIVATE -fno-stack-protector)
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_LIB_RELEASE} ${CEF_STANDARD_LIBS} ${GTK3_LIBRARIES} ${XI2_LIBRARIES})
-  target_link_directories(${CEF_TARGET} PRIVATE ${GTK3_LIBRARY_DIRS} ${XI2_LIBRARY_DIRS})
+  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_LIB_RELEASE} ${CEF_STANDARD_LIBS} ${GTK3_LIBRARIES} ${XI2_LIBRARIES} ${APPINDICATOR_LIBRARIES} laufey_backend_common)
+  target_link_directories(${CEF_TARGET} PRIVATE ${GTK3_LIBRARY_DIRS} ${XI2_LIBRARY_DIRS} ${APPINDICATOR_LIBRARY_DIRS})
   target_include_directories(${CEF_TARGET} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${WEF_INCLUDE_DIR}"
+    "${LAUFEY_INCLUDE_DIR}"
     ${GTK3_INCLUDE_DIRS}
     ${XI2_INCLUDE_DIRS}
+    ${APPINDICATOR_INCLUDE_DIRS}
   )
+
+  if(APPINDICATOR_FOUND)
+    target_compile_definitions(${CEF_TARGET} PRIVATE LAUFEY_HAVE_APPINDICATOR=1)
+  else()
+    message(STATUS "libappindicator not found — tray icon will be a no-op on this build")
+  endif()
 
   # Set RPATH so the executable finds libcef.so next to it
   set_target_properties(${CEF_TARGET} PROPERTIES

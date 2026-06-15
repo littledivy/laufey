@@ -1,9 +1,10 @@
 [package]
-name = "wef"
-version = "0.1.0"
+name = "laufey"
+version = "0.3.2"
 edition = "2021"
-description = "Web embedded framework"
+description = "A web embedded framework: build cross-platform apps with web technologies and your choice of browser engine."
 license = "MIT"
+repository = "https://github.com/littledivy/laufey"
 
 [lib]
 crate-type = ["rlib"]

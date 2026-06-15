@@ -6,3 +6,5 @@ build/
 */build/
 */build*/
 webview/packages/
+/book
+result-*

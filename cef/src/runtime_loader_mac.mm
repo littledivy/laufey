@@ -3,11 +3,22 @@
 // helpers.
 
 #include "runtime_loader.h"
+#include "laufey_backend_common.h"
 
+#include <atomic>
+#include <map>
 #include <string>
 #include <vector>
 
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
+#import <objc/message.h>
+
+// Defined in main_mac.mm — appends a default Edit submenu (Cut/Copy/Paste/
+// Select All/Undo/Redo) to the given menubar if no submenu in the tree
+// already exposes -copy:. Cmd+C/V on macOS dispatch via the main menu, so
+// this has to be present for them to work at all.
+extern void EnsureEditMenu(NSMenu* menubar);
 
 // --- NSWindow Helpers (called from app.cc to avoid Obj-C in cross-platform
 // code) ---
@@ -31,6 +42,50 @@ bool IsNSWindowResizable(void* cef_handle) {
     return (nswindow.styleMask & NSWindowStyleMaskResizable) != 0;
   }
   return true;
+}
+
+void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (!nswindow)
+    return;
+  // Float above normal windows, follow the active space, and stay visible
+  // without taking part in window cycling — the behavior expected of a
+  // menu-bar / tray popover.
+  [nswindow setLevel:NSPopUpMenuWindowLevel];
+  [nswindow setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                  NSWindowCollectionBehaviorTransient |
+                                  NSWindowCollectionBehaviorIgnoresCycle];
+  // Don't drop the panel when the owning app deactivates; the app manages
+  // visibility itself (typically hiding on blur).
+  [nswindow setHidesOnDeactivate:NO];
+  // Showing the panel must not steal key focus from the foreground app. There
+  // is no public NSWindow API for this on a non-NSPanel window, so use the
+  // private -_setPreventsActivation: when available (invoked with a correctly
+  // typed objc_msgSend since the arg is a BOOL). Degrades gracefully — the
+  // window still floats and accepts first-mouse clicks without it.
+  SEL prevent_sel = NSSelectorFromString(@"_setPreventsActivation:");
+  if ([nswindow respondsToSelector:prevent_sel]) {
+    using PreventsActivationFn = void (*)(id, SEL, BOOL);
+    auto prevent = reinterpret_cast<PreventsActivationFn>(objc_msgSend);
+    prevent(nswindow, prevent_sel, YES);
+  }
+}
+
+void ConfigureNSWindowTransparentTitlebarForCefHandle(void* cef_handle) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (!nswindow)
+    return;
+  // Hidden/inset title bar: the content view extends the full height of the
+  // window (under the title bar), the title bar itself is transparent and its
+  // text hidden, so the web page draws into that strip with the standard
+  // traffic-light buttons floating on top. Matches Electron's
+  // `titleBarStyle: 'hidden'`. The window stays draggable by its title-bar
+  // region; the app insets its own toolbar to clear the traffic lights.
+  nswindow.styleMask |= NSWindowStyleMaskFullSizeContentView;
+  nswindow.titlebarAppearsTransparent = YES;
+  nswindow.titleVisibility = NSWindowTitleHidden;
 }
 
 void RegisterNSWindowForCefHandle(void* cef_handle, uint32_t window_id) {
@@ -60,40 +115,41 @@ static id g_blur_observer = nil;
 static id g_resize_observer = nil;
 static id g_move_observer = nil;
 
-static uint32_t NSModifierFlagsToWef(NSEventModifierFlags flags) {
+static uint32_t NSModifierFlagsToLaufey(NSEventModifierFlags flags) {
   uint32_t mods = 0;
   if (flags & NSEventModifierFlagShift)
-    mods |= WEF_MOD_SHIFT;
+    mods |= LAUFEY_MOD_SHIFT;
   if (flags & NSEventModifierFlagControl)
-    mods |= WEF_MOD_CONTROL;
+    mods |= LAUFEY_MOD_CONTROL;
   if (flags & NSEventModifierFlagOption)
-    mods |= WEF_MOD_ALT;
+    mods |= LAUFEY_MOD_ALT;
   if (flags & NSEventModifierFlagCommand)
-    mods |= WEF_MOD_META;
+    mods |= LAUFEY_MOD_META;
   return mods;
 }
 
-static int NSButtonToWef(NSInteger buttonNumber) {
+static int NSButtonToLaufey(NSInteger buttonNumber) {
   switch (buttonNumber) {
     case 0:
-      return WEF_MOUSE_BUTTON_LEFT;
+      return LAUFEY_MOUSE_BUTTON_LEFT;
     case 1:
-      return WEF_MOUSE_BUTTON_RIGHT;
+      return LAUFEY_MOUSE_BUTTON_RIGHT;
     case 2:
-      return WEF_MOUSE_BUTTON_MIDDLE;
+      return LAUFEY_MOUSE_BUTTON_MIDDLE;
     case 3:
-      return WEF_MOUSE_BUTTON_BACK;
+      return LAUFEY_MOUSE_BUTTON_BACK;
     case 4:
-      return WEF_MOUSE_BUTTON_FORWARD;
+      return LAUFEY_MOUSE_BUTTON_FORWARD;
     default:
-      return WEF_MOUSE_BUTTON_LEFT;
+      return LAUFEY_MOUSE_BUTTON_LEFT;
   }
 }
 
-static uint32_t WefIdForNSWindow(NSWindow* win) {
+static uint32_t LaufeyIdForNSWindow(NSWindow* win) {
   if (!win)
     return 0;
-  return RuntimeLoader::GetInstance()->GetWefIdForNSWindow((__bridge void*)win);
+  return RuntimeLoader::GetInstance()->GetLaufeyIdForNSWindow(
+      (__bridge void*)win);
 }
 
 // Per-window menu storage (must be declared before focus observer uses them)
@@ -112,7 +168,7 @@ void InstallNativeMouseMonitor() {
       addLocalMonitorForEventsMatchingMask:mask
                                    handler:^NSEvent*(NSEvent* event) {
                                      NSWindow* win = [event window];
-                                     uint32_t wid = WefIdForNSWindow(win);
+                                     uint32_t wid = LaufeyIdForNSWindow(win);
                                      if (wid == 0)
                                        return event;
 
@@ -121,17 +177,18 @@ void InstallNativeMouseMonitor() {
                                        case NSEventTypeLeftMouseDown:
                                        case NSEventTypeRightMouseDown:
                                        case NSEventTypeOtherMouseDown:
-                                         state = WEF_MOUSE_PRESSED;
+                                         state = LAUFEY_MOUSE_PRESSED;
                                          break;
                                        default:
-                                         state = WEF_MOUSE_RELEASED;
+                                         state = LAUFEY_MOUSE_RELEASED;
                                          break;
                                      }
 
                                      int button =
-                                         NSButtonToWef([event buttonNumber]);
-                                     uint32_t modifiers = NSModifierFlagsToWef(
-                                         [event modifierFlags]);
+                                         NSButtonToLaufey([event buttonNumber]);
+                                     uint32_t modifiers =
+                                         NSModifierFlagsToLaufey(
+                                             [event modifierFlags]);
                                      int32_t click_count =
                                          (int32_t)[event clickCount];
 
@@ -158,12 +215,13 @@ void InstallNativeMouseMonitor() {
                                             NSEventMaskOtherMouseDragged)
                                    handler:^NSEvent*(NSEvent* event) {
                                      NSWindow* win = [event window];
-                                     uint32_t wid = WefIdForNSWindow(win);
+                                     uint32_t wid = LaufeyIdForNSWindow(win);
                                      if (wid == 0)
                                        return event;
 
-                                     uint32_t modifiers = NSModifierFlagsToWef(
-                                         [event modifierFlags]);
+                                     uint32_t modifiers =
+                                         NSModifierFlagsToLaufey(
+                                             [event modifierFlags]);
                                      NSPoint loc = [event locationInWindow];
                                      double x = loc.x;
                                      double y = 0;
@@ -182,19 +240,20 @@ void InstallNativeMouseMonitor() {
       addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
                                    handler:^NSEvent*(NSEvent* event) {
                                      NSWindow* win = [event window];
-                                     uint32_t wid = WefIdForNSWindow(win);
+                                     uint32_t wid = LaufeyIdForNSWindow(win);
                                      if (wid == 0)
                                        return event;
 
                                      double delta_x = [event scrollingDeltaX];
                                      double delta_y = [event scrollingDeltaY];
-                                     uint32_t modifiers = NSModifierFlagsToWef(
-                                         [event modifierFlags]);
+                                     uint32_t modifiers =
+                                         NSModifierFlagsToLaufey(
+                                             [event modifierFlags]);
 
                                      int32_t delta_mode =
                                          [event hasPreciseScrollingDeltas]
-                                             ? WEF_WHEEL_DELTA_PIXEL
-                                             : WEF_WHEEL_DELTA_LINE;
+                                             ? LAUFEY_WHEEL_DELTA_PIXEL
+                                             : LAUFEY_WHEEL_DELTA_LINE;
 
                                      NSPoint loc = [event locationInWindow];
                                      double x = loc.x;
@@ -216,7 +275,7 @@ void InstallNativeMouseMonitor() {
                   object:nil
                    queue:nil
               usingBlock:^(NSNotification* note) {
-                uint32_t wid = WefIdForNSWindow([note object]);
+                uint32_t wid = LaufeyIdForNSWindow([note object]);
                 if (wid > 0) {
                   RuntimeLoader::GetInstance()->DispatchFocusedEvent(wid, 1);
                   // Swap to this window's menu
@@ -233,7 +292,7 @@ void InstallNativeMouseMonitor() {
                   object:nil
                    queue:nil
               usingBlock:^(NSNotification* note) {
-                uint32_t wid = WefIdForNSWindow([note object]);
+                uint32_t wid = LaufeyIdForNSWindow([note object]);
                 if (wid > 0) {
                   RuntimeLoader::GetInstance()->DispatchFocusedEvent(wid, 0);
                 }
@@ -245,7 +304,7 @@ void InstallNativeMouseMonitor() {
                    queue:nil
               usingBlock:^(NSNotification* note) {
                 NSWindow* win = [note object];
-                uint32_t wid = WefIdForNSWindow(win);
+                uint32_t wid = LaufeyIdForNSWindow(win);
                 if (wid > 0 && win) {
                   NSRect frame = [[win contentView] frame];
                   RuntimeLoader::GetInstance()->DispatchResizeEvent(
@@ -259,7 +318,7 @@ void InstallNativeMouseMonitor() {
                    queue:nil
               usingBlock:^(NSNotification* note) {
                 NSWindow* win = [note object];
-                uint32_t wid = WefIdForNSWindow(win);
+                uint32_t wid = LaufeyIdForNSWindow(win);
                 if (wid > 0 && win) {
                   NSRect frame = [win frame];
                   RuntimeLoader::GetInstance()->DispatchMoveEvent(
@@ -338,304 +397,19 @@ NativeDialogResult ShowNativeJSDialog_Mac(int type, const std::string& message,
   return result;
 }
 
-// --- Native Dialog (macOS) ---
+// --- Application Menu / Context Menu (macOS) ---
+//
+// Menu construction lives in backend-common
+// (laufey_common::BuildNSMenuFromValue).
 
-void ShowNativeDialog_Mac(int dialog_type, const char* title,
-                          const char* message, const char* default_value,
-                          wef_dialog_result_fn callback, void* callback_data) {
-  NSString* nsTitle = title ? [NSString stringWithUTF8String:title] : @"";
-  NSString* nsMessage = message ? [NSString stringWithUTF8String:message] : @"";
-  NSString* nsDefault =
-      default_value ? [NSString stringWithUTF8String:default_value] : @"";
-
-  dispatch_async(dispatch_get_main_queue(), ^{
-    NSAlert* alert = [[NSAlert alloc] init];
-    [alert setMessageText:nsTitle];
-    [alert setInformativeText:nsMessage];
-
-    NSTextField* inputField = nil;
-
-    if (dialog_type == WEF_DIALOG_ALERT) {
-      [alert addButtonWithTitle:@"OK"];
-    } else if (dialog_type == WEF_DIALOG_CONFIRM) {
-      [alert addButtonWithTitle:@"OK"];
-      [alert addButtonWithTitle:@"Cancel"];
-    } else if (dialog_type == WEF_DIALOG_PROMPT) {
-      [alert addButtonWithTitle:@"OK"];
-      [alert addButtonWithTitle:@"Cancel"];
-      inputField =
-          [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 300, 24)];
-      [inputField setStringValue:nsDefault];
-      [alert setAccessoryView:inputField];
-      // Make the text field first responder
-      [alert layout];
-      [[alert window] makeFirstResponder:inputField];
-    }
-
-    NSModalResponse response = [alert runModal];
-    bool confirmed = (response == NSAlertFirstButtonReturn);
-
-    if (callback) {
-      if (dialog_type == WEF_DIALOG_PROMPT && confirmed && inputField) {
-        const char* text = [[inputField stringValue] UTF8String];
-        callback(callback_data, 1, text);
-      } else {
-        callback(callback_data, confirmed ? 1 : 0, nullptr);
-      }
-    }
-  });
-}
-
-// --- Application Menu (macOS) ---
-
-static wef_menu_click_fn g_menu_click_fn = nullptr;
-static void* g_menu_click_data = nullptr;
-
-@interface WefMenuTarget : NSObject
-+ (instancetype)shared;
-- (void)menuItemClicked:(id)sender;
-@end
-
-@implementation WefMenuTarget
-
-+ (instancetype)shared {
-  static WefMenuTarget* instance = nil;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    instance = [[WefMenuTarget alloc] init];
-  });
-  return instance;
-}
-
-- (void)menuItemClicked:(id)sender {
-  NSMenuItem* item = (NSMenuItem*)sender;
-  NSString* itemId = [item representedObject];
-  if (itemId && g_menu_click_fn) {
-    uint32_t wid = WefIdForNSWindow([NSApp keyWindow]);
-    g_menu_click_fn(g_menu_click_data, wid, [itemId UTF8String]);
-  }
-}
-
-@end
-
-static void ParseAccelerator(const std::string& accel, NSString** outKey,
-                             NSEventModifierFlags* outMask) {
-  *outKey = @"";
-  *outMask = 0;
-
-  std::string lower = accel;
-  for (auto& c : lower)
-    c = tolower(c);
-
-  size_t pos = 0;
-  std::vector<std::string> parts;
-  std::string remaining = lower;
-  while ((pos = remaining.find('+')) != std::string::npos) {
-    parts.push_back(remaining.substr(0, pos));
-    remaining = remaining.substr(pos + 1);
-  }
-  if (!remaining.empty())
-    parts.push_back(remaining);
-
-  for (const auto& part : parts) {
-    if (part == "cmd" || part == "command" || part == "cmdorctrl" ||
-        part == "commandorcontrol") {
-      *outMask |= NSEventModifierFlagCommand;
-    } else if (part == "shift") {
-      *outMask |= NSEventModifierFlagShift;
-    } else if (part == "alt" || part == "option") {
-      *outMask |= NSEventModifierFlagOption;
-    } else if (part == "ctrl" || part == "control") {
-      *outMask |= NSEventModifierFlagControl;
-    } else {
-      *outKey = [NSString stringWithUTF8String:part.c_str()];
-    }
-  }
-}
-
-static NSMenuItem* CreateRoleMenuItem(const std::string& role) {
-  NSString* title = @"";
-  SEL action = nil;
-  NSString* keyEquiv = @"";
-  NSEventModifierFlags mask = NSEventModifierFlagCommand;
-
-  if (role == "quit") {
-    title = @"Quit";
-    action = @selector(terminate:);
-    keyEquiv = @"q";
-  } else if (role == "copy") {
-    title = @"Copy";
-    action = @selector(copy:);
-    keyEquiv = @"c";
-  } else if (role == "paste") {
-    title = @"Paste";
-    action = @selector(paste:);
-    keyEquiv = @"v";
-  } else if (role == "cut") {
-    title = @"Cut";
-    action = @selector(cut:);
-    keyEquiv = @"x";
-  } else if (role == "selectall" || role == "selectAll") {
-    title = @"Select All";
-    action = @selector(selectAll:);
-    keyEquiv = @"a";
-  } else if (role == "undo") {
-    title = @"Undo";
-    action = @selector(undo:);
-    keyEquiv = @"z";
-  } else if (role == "redo") {
-    title = @"Redo";
-    action = @selector(redo:);
-    keyEquiv = @"Z";
-    mask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
-  } else if (role == "minimize") {
-    title = @"Minimize";
-    action = @selector(performMiniaturize:);
-    keyEquiv = @"m";
-  } else if (role == "zoom") {
-    title = @"Zoom";
-    action = @selector(performZoom:);
-  } else if (role == "close") {
-    title = @"Close";
-    action = @selector(performClose:);
-    keyEquiv = @"w";
-  } else if (role == "about") {
-    title = @"About";
-    action = @selector(orderFrontStandardAboutPanel:);
-  } else if (role == "hide") {
-    title = @"Hide";
-    action = @selector(hide:);
-    keyEquiv = @"h";
-  } else if (role == "hideothers" || role == "hideOthers") {
-    title = @"Hide Others";
-    action = @selector(hideOtherApplications:);
-    keyEquiv = @"h";
-    mask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
-  } else if (role == "unhide") {
-    title = @"Show All";
-    action = @selector(unhideAllApplications:);
-  } else if (role == "front") {
-    title = @"Bring All to Front";
-    action = @selector(arrangeInFront:);
-  } else if (role == "togglefullscreen" || role == "toggleFullScreen") {
-    title = @"Toggle Full Screen";
-    action = @selector(toggleFullScreen:);
-    keyEquiv = @"f";
-    mask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
-  } else {
-    return nil;
-  }
-
-  NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:title
-                                                action:action
-                                         keyEquivalent:keyEquiv];
-  [item setKeyEquivalentModifierMask:mask];
-  return item;
-}
-
-static NSMenu* BuildMenuFromValue(wef_value_t* val,
-                                  const wef_backend_api_t* api, id target,
-                                  SEL action) {
-  if (!val || !api->value_is_list(val))
-    return nil;
-  NSMenu* menu = [[NSMenu alloc] init];
-  [menu setAutoenablesItems:NO];
-  size_t count = api->value_list_size(val);
-  for (size_t i = 0; i < count; ++i) {
-    wef_value_t* itemVal = api->value_list_get(val, i);
-    if (!itemVal || !api->value_is_dict(itemVal))
-      continue;
-    wef_value_t* typeVal = api->value_dict_get(itemVal, "type");
-    if (typeVal && api->value_is_string(typeVal)) {
-      size_t len = 0;
-      char* typeStr = api->value_get_string(typeVal, &len);
-      if (typeStr && std::string(typeStr) == "separator") {
-        [menu addItem:[NSMenuItem separatorItem]];
-        api->value_free_string(typeStr);
-        continue;
-      }
-      if (typeStr)
-        api->value_free_string(typeStr);
-    }
-    wef_value_t* roleVal = api->value_dict_get(itemVal, "role");
-    if (roleVal && api->value_is_string(roleVal)) {
-      size_t len = 0;
-      char* roleStr = api->value_get_string(roleVal, &len);
-      if (roleStr) {
-        NSMenuItem* roleItem = CreateRoleMenuItem(roleStr);
-        if (roleItem)
-          [menu addItem:roleItem];
-        api->value_free_string(roleStr);
-        continue;
-      }
-    }
-    wef_value_t* labelVal = api->value_dict_get(itemVal, "label");
-    if (!labelVal || !api->value_is_string(labelVal))
-      continue;
-    size_t labelLen = 0;
-    char* labelStr = api->value_get_string(labelVal, &labelLen);
-    if (!labelStr)
-      continue;
-    NSString* label = [NSString stringWithUTF8String:labelStr];
-    api->value_free_string(labelStr);
-    wef_value_t* submenuVal = api->value_dict_get(itemVal, "submenu");
-    if (submenuVal && api->value_is_list(submenuVal)) {
-      NSMenuItem* submenuItem = [[NSMenuItem alloc] init];
-      [submenuItem setTitle:label];
-      NSMenu* submenu = BuildMenuFromValue(submenuVal, api, target, action);
-      [submenu setTitle:label];
-      [submenuItem setSubmenu:submenu];
-      [menu addItem:submenuItem];
-      continue;
-    }
-    NSString* keyEquiv = @"";
-    NSEventModifierFlags modMask = NSEventModifierFlagCommand;
-    wef_value_t* accelVal = api->value_dict_get(itemVal, "accelerator");
-    if (accelVal && api->value_is_string(accelVal)) {
-      size_t accelLen = 0;
-      char* accelStr = api->value_get_string(accelVal, &accelLen);
-      if (accelStr) {
-        ParseAccelerator(accelStr, &keyEquiv, &modMask);
-        api->value_free_string(accelStr);
-      }
-    }
-    NSMenuItem* nsItem =
-        [[NSMenuItem alloc] initWithTitle:label
-                                   action:action
-                            keyEquivalent:keyEquiv];
-    [nsItem setKeyEquivalentModifierMask:modMask];
-    [nsItem setTarget:target];
-    wef_value_t* idVal = api->value_dict_get(itemVal, "id");
-    if (idVal && api->value_is_string(idVal)) {
-      size_t idLen = 0;
-      char* idStr = api->value_get_string(idVal, &idLen);
-      if (idStr) {
-        [nsItem setRepresentedObject:[NSString stringWithUTF8String:idStr]];
-        api->value_free_string(idStr);
-      }
-    }
-    wef_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
-    if (enabledVal && api->value_is_bool(enabledVal)) {
-      [nsItem setEnabled:api->value_get_bool(enabledVal)];
-    } else {
-      [nsItem setEnabled:YES];
-    }
-    [menu addItem:nsItem];
-  }
-  return menu;
-}
-
-// Exported function called from runtime_loader.cc on macOS
 void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x, int y,
-                                 wef_value_t* menu_template,
-                                 wef_menu_click_fn on_click,
+                                 laufey_value_t* menu_template,
+                                 laufey_menu_click_fn on_click,
                                  void* on_click_data) {
   if (!menu_template)
     return;
-  g_menu_click_fn = on_click;
-  g_menu_click_data = on_click_data;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
 
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (!browser)
@@ -643,9 +417,8 @@ void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x, int y,
 
   void* handle = browser->GetHost()->GetWindowHandle();
   dispatch_async(dispatch_get_main_queue(), ^{
-    NSMenu* menu = BuildMenuFromValue(menu_template, api,
-                                      [WefMenuTarget shared],
-                                      @selector(menuItemClicked:));
+    NSMenu* menu = laufey_common::BuildNSMenuFromValue(
+        menu_template, api, on_click, on_click_data, window_id);
     if (!menu)
       return;
 
@@ -655,7 +428,7 @@ void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x, int y,
       return;
 
     NSView* contentView = [win contentView];
-    // Convert from top-left origin (wef coordinates) to bottom-left origin
+    // Convert from top-left origin (laufey coordinates) to bottom-left origin
     // (NSView)
     NSPoint loc = NSMakePoint(x, [contentView frame].size.height - y);
     [menu popUpMenuPositioningItem:nil atLocation:loc inView:contentView];
@@ -663,27 +436,25 @@ void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x, int y,
 }
 
 void Backend_SetApplicationMenu_Mac(void* data, uint32_t window_id,
-                                    wef_value_t* menu_template,
-                                    wef_menu_click_fn on_click,
+                                    laufey_value_t* menu_template,
+                                    laufey_menu_click_fn on_click,
                                     void* on_click_data) {
   if (!menu_template)
     return;
-  g_menu_click_fn = on_click;
-  g_menu_click_data = on_click_data;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
   dispatch_async(dispatch_get_main_queue(), ^{
-    NSMenu* menubar = BuildMenuFromValue(menu_template, api,
-                                         [WefMenuTarget shared],
-                                         @selector(menuItemClicked:));
+    NSMenu* menubar = laufey_common::BuildNSMenuFromValue(
+        menu_template, api, on_click, on_click_data, window_id);
     if (menubar) {
+      EnsureEditMenu(menubar);
       // Store per-window
       {
         std::lock_guard<std::mutex> lock(g_window_menus_mutex);
         g_window_menus[window_id] = menubar;
       }
       // If this window is currently key, apply immediately
-      uint32_t keyWid = WefIdForNSWindow([NSApp keyWindow]);
+      uint32_t keyWid = LaufeyIdForNSWindow([NSApp keyWindow]);
       if (keyWid == window_id) {
         [NSApp setMainMenu:menubar];
       }
@@ -693,93 +464,137 @@ void Backend_SetApplicationMenu_Mac(void* data, uint32_t window_id,
 
 // --- Dock (macOS) ---
 
-// Dock menu + reopen handler storage (consumed by WefAppDelegate in
-// main_mac.mm — declared extern there).
-NSMenu* g_dock_menu = nil;
-static wef_menu_click_fn g_dock_click_fn = nullptr;
-static void* g_dock_click_data = nullptr;
-wef_dock_reopen_fn g_dock_reopen_fn = nullptr;
-void* g_dock_reopen_data = nullptr;
-
-@interface WefDockMenuTarget : NSObject
-+ (instancetype)shared;
-- (void)dockMenuItemClicked:(id)sender;
-@end
-
-@implementation WefDockMenuTarget
-
-+ (instancetype)shared {
-  static WefDockMenuTarget* instance = nil;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    instance = [[WefDockMenuTarget alloc] init];
-  });
-  return instance;
-}
-
-- (void)dockMenuItemClicked:(id)sender {
-  NSMenuItem* item = (NSMenuItem*)sender;
-  NSString* itemId = [item representedObject];
-  if (itemId && g_dock_click_fn) {
-    // window_id = 0 because dock menu is app-scoped.
-    g_dock_click_fn(g_dock_click_data, 0, [itemId UTF8String]);
-  }
-}
-
-@end
-
 void Backend_SetDockBadge_Mac(void* /*data*/, const char* badge_or_null) {
-  NSString* ns = badge_or_null && *badge_or_null
-                     ? [NSString stringWithUTF8String:badge_or_null]
-                     : nil;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [[NSApp dockTile] setBadgeLabel:ns];
-  });
+  laufey_common::SetDockBadgeMac(badge_or_null);
 }
 
 void Backend_BounceDock_Mac(void* /*data*/, int type) {
-  NSRequestUserAttentionType t = (type == WEF_DOCK_BOUNCE_CRITICAL)
-                                     ? NSCriticalRequest
-                                     : NSInformationalRequest;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [NSApp requestUserAttention:t];
-  });
+  laufey_common::BounceDockMac(type);
 }
 
-void Backend_SetDockMenu_Mac(void* data, wef_value_t* menu_template,
-                             wef_menu_click_fn on_click, void* on_click_data) {
+void Backend_SetDockMenu_Mac(void* data, laufey_value_t* menu_template,
+                             laufey_menu_click_fn on_click,
+                             void* on_click_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  const wef_backend_api_t* api = &loader->GetBackendApi();
+  const laufey_backend_api_t* api = &loader->GetBackendApi();
   if (!menu_template) {
     dispatch_async(dispatch_get_main_queue(), ^{
-      g_dock_menu = nil;
-      g_dock_click_fn = nullptr;
-      g_dock_click_data = nullptr;
+      laufey_common::SetDockMenuMac(nil);
     });
     return;
   }
-  g_dock_click_fn = on_click;
-  g_dock_click_data = on_click_data;
   dispatch_async(dispatch_get_main_queue(), ^{
-    NSMenu* menu = BuildMenuFromValue(menu_template, api,
-                                      [WefDockMenuTarget shared],
-                                      @selector(dockMenuItemClicked:));
-    g_dock_menu = menu;
+    // window_id = 0 because dock menu is app-scoped.
+    NSMenu* menu = laufey_common::BuildNSMenuFromValue(
+        menu_template, api, on_click, on_click_data, 0);
+    laufey_common::SetDockMenuMac(menu);
   });
 }
 
 void Backend_SetDockVisible_Mac(void* /*data*/, bool visible) {
-  NSApplicationActivationPolicy policy = visible
-                                             ? NSApplicationActivationPolicyRegular
-                                             : NSApplicationActivationPolicyAccessory;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [NSApp setActivationPolicy:policy];
-  });
+  laufey_common::SetDockVisibleMac(visible);
 }
 
 void Backend_SetDockReopenHandler_Mac(void* /*data*/,
-                                      wef_dock_reopen_fn handler,
+                                      laufey_dock_reopen_fn handler,
                                       void* user_data) {
-  g_dock_reopen_fn = handler;
-  g_dock_reopen_data = user_data;
+  laufey_common::SetDockReopenHandlerMac(handler, user_data);
+}
+
+// --- Tray / status-bar icon (macOS) ---
+//
+// Thin trampolines over backend-common/src/tray_mac.mm.
+
+uint32_t Backend_CreateTrayIcon_Mac(void* /*data*/) {
+  return laufey_common::CreateTrayIconMac();
+}
+
+void Backend_DestroyTrayIcon_Mac(void* /*data*/, uint32_t tray_id) {
+  laufey_common::DestroyTrayIconMac(tray_id);
+}
+
+void Backend_SetTrayIcon_Mac(void* /*data*/, uint32_t tray_id,
+                             const void* png_bytes, size_t len) {
+  laufey_common::SetTrayIconMac(tray_id, png_bytes, len);
+}
+
+void Backend_SetTrayIconDark_Mac(void* /*data*/, uint32_t tray_id,
+                                 const void* png_bytes, size_t len) {
+  laufey_common::SetTrayIconDarkMac(tray_id, png_bytes, len);
+}
+
+bool Backend_GetTrayIconBounds_Mac(void* /*data*/, uint32_t tray_id, int* x,
+                                   int* y, int* width, int* height) {
+  return laufey_common::GetTrayIconBoundsMac(tray_id, x, y, width, height);
+}
+
+void Backend_SetTrayTooltip_Mac(void* /*data*/, uint32_t tray_id,
+                                const char* tooltip_or_null) {
+  laufey_common::SetTrayTooltipMac(tray_id, tooltip_or_null);
+}
+
+void Backend_SetTrayMenu_Mac(void* data, uint32_t tray_id,
+                             laufey_value_t* menu_template,
+                             laufey_menu_click_fn on_click,
+                             void* on_click_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  laufey_common::SetTrayMenuMac(tray_id, menu_template,
+                                &loader->GetBackendApi(), on_click,
+                                on_click_data);
+}
+
+void Backend_SetTrayClickHandler_Mac(void* /*data*/, uint32_t tray_id,
+                                     laufey_tray_click_fn handler,
+                                     void* user_data) {
+  laufey_common::SetTrayClickHandlerMac(tray_id, handler, user_data);
+}
+
+void Backend_SetTrayDoubleClickHandler_Mac(void* /*data*/, uint32_t tray_id,
+                                           laufey_tray_click_fn handler,
+                                           void* user_data) {
+  laufey_common::SetTrayDoubleClickHandlerMac(tray_id, handler, user_data);
+}
+
+// --- Notifications (macOS) ---
+//
+// Thin trampolines over backend-common/src/notifications_mac.mm
+// (UNUserNotificationCenter-backed).
+
+uint32_t Backend_ShowNotification_Mac(void* data, laufey_value_t* options,
+                                      laufey_notification_event_fn on_event,
+                                      void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  laufey_common::NotificationOptions opts =
+      laufey_common::ParseNotificationOptions(options,
+                                              &loader->GetBackendApi());
+  return laufey_common::ShowNotificationMac(opts, on_event, user_data);
+}
+
+void Backend_CloseNotification_Mac(void* /*data*/, uint32_t notification_id) {
+  laufey_common::CloseNotificationMac(notification_id);
+}
+
+// --- Permissions (UNUserNotificationCenter) ---
+//
+// UN is the modern (10.14+) replacement for NSUserNotification's
+// implicit "always granted" model. It requires the process to run
+// inside a bundled .app with a CFBundleIdentifier; without one
+// `getNotificationSettings:` returns garbage and `requestAuthorization:`
+// fails immediately. We detect that case and report UNSUPPORTED so the
+// embedder (Deno) can branch on it instead of seeing a phantom DENIED.
+
+// --- Permissions (macOS) ---
+//
+// Thin trampolines over backend-common/src/permissions_mac.mm.
+
+void Backend_QueryPermission_Mac(void* /*data*/, int kind,
+                                 laufey_permission_callback_fn cb,
+                                 void* user_data) {
+  laufey_common::QueryPermissionMac(kind, cb, user_data);
+}
+
+void Backend_RequestPermission_Mac(void* /*data*/, int kind,
+                                   laufey_permission_callback_fn cb,
+                                   void* user_data) {
+  laufey_common::RequestPermissionMac(kind, cb, user_data);
 }

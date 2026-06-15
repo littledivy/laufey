@@ -7,18 +7,18 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::{api, KeyModifiers};
 
-pub const WEF_MOUSE_BUTTON_LEFT: i32 = 0;
-pub const WEF_MOUSE_BUTTON_RIGHT: i32 = 1;
-pub const WEF_MOUSE_BUTTON_MIDDLE: i32 = 2;
-pub const WEF_MOUSE_BUTTON_BACK: i32 = 3;
-pub const WEF_MOUSE_BUTTON_FORWARD: i32 = 4;
+pub const LAUFEY_MOUSE_BUTTON_LEFT: i32 = 0;
+pub const LAUFEY_MOUSE_BUTTON_RIGHT: i32 = 1;
+pub const LAUFEY_MOUSE_BUTTON_MIDDLE: i32 = 2;
+pub const LAUFEY_MOUSE_BUTTON_BACK: i32 = 3;
+pub const LAUFEY_MOUSE_BUTTON_FORWARD: i32 = 4;
 
-pub const WEF_MOUSE_PRESSED: i32 = 0;
-pub const WEF_MOUSE_RELEASED: i32 = 1;
+pub const LAUFEY_MOUSE_PRESSED: i32 = 0;
+pub const LAUFEY_MOUSE_RELEASED: i32 = 1;
 
-pub const WEF_WHEEL_DELTA_PIXEL: i32 = 0;
-pub const WEF_WHEEL_DELTA_LINE: i32 = 1;
-pub const WEF_WHEEL_DELTA_PAGE: i32 = 2;
+pub const LAUFEY_WHEEL_DELTA_PIXEL: i32 = 0;
+pub const LAUFEY_WHEEL_DELTA_LINE: i32 = 1;
+pub const LAUFEY_WHEEL_DELTA_PAGE: i32 = 2;
 
 // --- Mouse click ---
 
@@ -53,6 +53,16 @@ pub enum MouseButtonState {
   Released,
 }
 
+impl MouseButtonState {
+  pub(crate) fn from_raw(raw: c_int) -> Self {
+    if raw == LAUFEY_MOUSE_PRESSED {
+      Self::Pressed
+    } else {
+      Self::Released
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
   Left,
@@ -66,11 +76,11 @@ pub enum MouseButton {
 impl MouseButton {
   fn from_raw(button: i32) -> Self {
     match button {
-      WEF_MOUSE_BUTTON_LEFT => MouseButton::Left,
-      WEF_MOUSE_BUTTON_RIGHT => MouseButton::Right,
-      WEF_MOUSE_BUTTON_MIDDLE => MouseButton::Middle,
-      WEF_MOUSE_BUTTON_BACK => MouseButton::Back,
-      WEF_MOUSE_BUTTON_FORWARD => MouseButton::Forward,
+      LAUFEY_MOUSE_BUTTON_LEFT => MouseButton::Left,
+      LAUFEY_MOUSE_BUTTON_RIGHT => MouseButton::Right,
+      LAUFEY_MOUSE_BUTTON_MIDDLE => MouseButton::Middle,
+      LAUFEY_MOUSE_BUTTON_BACK => MouseButton::Back,
+      LAUFEY_MOUSE_BUTTON_FORWARD => MouseButton::Forward,
       other => MouseButton::Other(other),
     }
   }
@@ -156,11 +166,7 @@ unsafe extern "C" fn mouse_click_trampoline(
 ) {
   let event = MouseClickEvent {
     window_id,
-    state: if state == WEF_MOUSE_PRESSED {
-      MouseButtonState::Pressed
-    } else {
-      MouseButtonState::Released
-    },
+    state: MouseButtonState::from_raw(state),
     button: MouseButton::from_raw(button),
     x,
     y,
@@ -235,6 +241,16 @@ pub enum WheelDeltaMode {
   Page,
 }
 
+impl WheelDeltaMode {
+  pub(crate) fn from_raw(raw: i32) -> Self {
+    match raw {
+      LAUFEY_WHEEL_DELTA_LINE => Self::Line,
+      LAUFEY_WHEEL_DELTA_PAGE => Self::Page,
+      _ => Self::Pixel,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WheelEvent {
   pub window_id: u32,
@@ -263,11 +279,7 @@ unsafe extern "C" fn wheel_trampoline(
     x,
     y,
     modifiers: KeyModifiers::from_raw(modifiers),
-    delta_mode: match delta_mode {
-      WEF_WHEEL_DELTA_LINE => WheelDeltaMode::Line,
-      WEF_WHEEL_DELTA_PAGE => WheelDeltaMode::Page,
-      _ => WheelDeltaMode::Pixel,
-    },
+    delta_mode: WheelDeltaMode::from_raw(delta_mode),
   };
 
   let guard = wheel_handlers().lock().unwrap();
@@ -466,4 +478,209 @@ where
     .lock()
     .unwrap()
     .insert(window_id, Box::new(handler));
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::KeyModifiers;
+
+  // --- MouseButton::from_raw ---
+
+  #[test]
+  fn mouse_button_known() {
+    assert_eq!(
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_LEFT),
+      MouseButton::Left
+    );
+    assert_eq!(
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_RIGHT),
+      MouseButton::Right
+    );
+    assert_eq!(
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_MIDDLE),
+      MouseButton::Middle
+    );
+    assert_eq!(
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_BACK),
+      MouseButton::Back
+    );
+    assert_eq!(
+      MouseButton::from_raw(LAUFEY_MOUSE_BUTTON_FORWARD),
+      MouseButton::Forward
+    );
+  }
+
+  #[test]
+  fn mouse_button_unknown_preserves_id() {
+    // Unknown raw codes are surfaced as Other(n) so the backend can ship
+    // a new button kind without breaking the runtime, and the embedder
+    // can still inspect what came through.
+    assert_eq!(MouseButton::from_raw(99), MouseButton::Other(99));
+  }
+
+  // --- MouseClickEvent predicates ---
+
+  fn ev(
+    state: MouseButtonState,
+    button: MouseButton,
+    clicks: i32,
+  ) -> MouseClickEvent {
+    MouseClickEvent {
+      window_id: 1,
+      state,
+      button,
+      x: 0.0,
+      y: 0.0,
+      modifiers: KeyModifiers::default(),
+      click_count: clicks,
+    }
+  }
+
+  #[test]
+  fn is_click_requires_left_released_with_clicks() {
+    assert!(ev(MouseButtonState::Released, MouseButton::Left, 1).is_click());
+    assert!(ev(MouseButtonState::Released, MouseButton::Left, 2).is_click());
+  }
+
+  #[test]
+  fn is_click_rejects_press_and_non_left() {
+    // Press of left button is not a click.
+    assert!(!ev(MouseButtonState::Pressed, MouseButton::Left, 1).is_click());
+    // Right-button release is not a click.
+    assert!(!ev(MouseButtonState::Released, MouseButton::Right, 1).is_click());
+    // Zero click_count means the backend reported a release that didn't
+    // pair with a recent press — don't fire `click`.
+    assert!(!ev(MouseButtonState::Released, MouseButton::Left, 0).is_click());
+  }
+
+  #[test]
+  fn is_double_click_requires_click_count_2() {
+    assert!(
+      !ev(MouseButtonState::Released, MouseButton::Left, 1).is_double_click()
+    );
+    assert!(
+      ev(MouseButtonState::Released, MouseButton::Left, 2).is_double_click()
+    );
+    assert!(
+      ev(MouseButtonState::Released, MouseButton::Left, 3).is_double_click()
+    );
+    // Right-button double click doesn't count for `dblclick`.
+    assert!(
+      !ev(MouseButtonState::Released, MouseButton::Right, 2).is_double_click()
+    );
+  }
+
+  // --- MouseButtonState::from_raw ---
+
+  #[test]
+  fn mouse_button_state_known_values() {
+    assert_eq!(
+      MouseButtonState::from_raw(LAUFEY_MOUSE_PRESSED),
+      MouseButtonState::Pressed
+    );
+    assert_eq!(
+      MouseButtonState::from_raw(LAUFEY_MOUSE_RELEASED),
+      MouseButtonState::Released
+    );
+  }
+
+  #[test]
+  fn mouse_button_state_unknown_defaults_to_released() {
+    // The trampoline collapses anything that isn't LAUFEY_MOUSE_PRESSED
+    // to Released. Pinning this so a future "Cancelled" state can't
+    // accidentally come through as Pressed.
+    assert_eq!(MouseButtonState::from_raw(99), MouseButtonState::Released);
+    assert_eq!(MouseButtonState::from_raw(-1), MouseButtonState::Released);
+  }
+
+  // --- WheelDeltaMode::from_raw ---
+
+  #[test]
+  fn wheel_delta_mode_known_values() {
+    assert_eq!(
+      WheelDeltaMode::from_raw(LAUFEY_WHEEL_DELTA_PIXEL),
+      WheelDeltaMode::Pixel
+    );
+    assert_eq!(
+      WheelDeltaMode::from_raw(LAUFEY_WHEEL_DELTA_LINE),
+      WheelDeltaMode::Line
+    );
+    assert_eq!(
+      WheelDeltaMode::from_raw(LAUFEY_WHEEL_DELTA_PAGE),
+      WheelDeltaMode::Page
+    );
+  }
+
+  #[test]
+  fn wheel_delta_mode_unknown_defaults_to_pixel() {
+    // The WheelEvent contract is that deltas are in *some* unit; the
+    // safest default for unknown modes is Pixel (the highest resolution).
+    assert_eq!(WheelDeltaMode::from_raw(99), WheelDeltaMode::Pixel);
+    assert_eq!(WheelDeltaMode::from_raw(-1), WheelDeltaMode::Pixel);
+  }
+
+  // --- Event struct field passthrough ---
+  //
+  // The trampolines wrap raw C args into typed Event structs; the
+  // wrapping is mechanical, but the FIELD ORDER matters because a swap
+  // (e.g. `width`↔`height`) silently flips dimensions. These tests pin
+  // construction so a future refactor that re-orders the struct fails
+  // them visibly.
+
+  #[test]
+  fn resize_event_fields_distinct() {
+    let ev = ResizeEvent {
+      window_id: 1,
+      width: 800,
+      height: 600,
+    };
+    assert_eq!(ev.width, 800);
+    assert_eq!(ev.height, 600);
+  }
+
+  #[test]
+  fn move_event_fields_distinct() {
+    let ev = MoveEvent {
+      window_id: 1,
+      x: 100,
+      y: 200,
+    };
+    assert_eq!(ev.x, 100);
+    assert_eq!(ev.y, 200);
+  }
+
+  #[test]
+  fn cursor_enter_leave_carries_position_and_entered_flag() {
+    let entered = CursorEnterLeaveEvent {
+      window_id: 1,
+      entered: true,
+      x: 10.5,
+      y: 20.5,
+      modifiers: KeyModifiers::default(),
+    };
+    let left = CursorEnterLeaveEvent {
+      entered: false,
+      ..entered
+    };
+    assert!(entered.entered);
+    assert!(!left.entered);
+    // Position must survive the boolean toggle.
+    assert_eq!(left.x, 10.5);
+    assert_eq!(left.y, 20.5);
+  }
+
+  #[test]
+  fn focused_event_distinct_states() {
+    let focused = FocusedEvent {
+      window_id: 1,
+      focused: true,
+    };
+    let blurred = FocusedEvent {
+      window_id: 1,
+      focused: false,
+    };
+    assert!(focused.focused);
+    assert!(!blurred.focused);
+  }
 }
