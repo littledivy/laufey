@@ -11,11 +11,12 @@ path = "src/main.rs"
 
 [dependencies]
 laufey-backend-winit-common = { path = "../backend-winit-common" }
-servo = { package = "libservo", git = "https://github.com/servo/servo.git", rev = "68f6dba66910f3118be0129f3b4b7b5e2fc72c65" }
-embedder_traits = { git = "https://github.com/servo/servo.git", rev = "68f6dba66910f3118be0129f3b4b7b5e2fc72c65" }
-webrender_api = { git = "https://github.com/servo/webrender", rev = "6cafc606096db4715a6119a6e16391aed9af47a5" }
+servo = "0.3.0"
+servo-embedder-traits = "0.3.0"
+webrender_api = "0.68.0"
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 euclid = "0.22"
 url = "2"
 tracing = "0.1"
 keyboard-types = "0.8.3"
+libc = "0.2"

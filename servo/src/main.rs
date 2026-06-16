@@ -210,7 +210,9 @@ impl App {
     event_loop: &winit::event_loop::ActiveEventLoop,
     window_id: u32,
   ) {
+    eprintln!("[Servo][diag] create_window window_id={window_id}");
     self.ensure_servo();
+    eprintln!("[Servo][diag] ensure_servo done for window_id={window_id}");
 
     let backend_state =
       BackendState::get().expect("BackendState not initialized");
@@ -301,6 +303,7 @@ impl servo::WebViewDelegate for ServoWindowState {
 impl ApplicationHandler<UserEvent> for App {
   fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
     // Windows are created on-demand via CreateWindow events
+    eprintln!("[Servo][diag] ApplicationHandler::resumed");
   }
 
   fn user_event(
@@ -311,14 +314,20 @@ impl ApplicationHandler<UserEvent> for App {
     match event {
       UserEvent::Common(ref common) => match common {
         CommonEvent::Quit => {
+          eprintln!("[Servo][diag] CommonEvent::Quit -> event_loop.exit()");
           event_loop.exit();
         }
         CommonEvent::CreateWindow { window_id } => {
+          eprintln!("[Servo][diag] CommonEvent::CreateWindow {window_id}");
           self.create_window(event_loop, *window_id);
         }
         CommonEvent::CloseWindow { window_id } => {
+          eprintln!("[Servo][diag] CommonEvent::CloseWindow {window_id}");
           self.close_window(*window_id);
           if self.windows.is_empty() {
+            eprintln!(
+              "[Servo][diag] last window closed -> event_loop.exit()"
+            );
             event_loop.exit();
           }
         }
@@ -362,6 +371,11 @@ impl ApplicationHandler<UserEvent> for App {
         }
       }
       UserEvent::Navigate { window_id } => {
+        eprintln!(
+          "[Servo][diag] UserEvent::Navigate window_id={window_id} (have_window={}, have_servo={})",
+          self.windows.contains_key(&window_id),
+          self.servo.is_some()
+        );
         if let (Some(win_state), Some(backend_state), Some(ref servo)) = (
           self.windows.get(&window_id),
           BackendState::get(),
@@ -898,7 +912,61 @@ fn keyboard_event_from_winit(
   )
 }
 
+/// Debugging aids for the experimental Servo backend: catch the process
+/// going down (signal or panic) and say *why*, since deno only reports the
+/// child's final wait status (e.g. "signal: 15 (SIGTERM)") and not who sent
+/// it. The signal handler writes an async-signal-safe message to stderr,
+/// then restores the default disposition and re-raises so the process still
+/// terminates with the same status deno observes.
+mod debug_diag {
+  unsafe extern "C" fn on_signal(sig: libc::c_int) {
+    let msg: &[u8] = match sig {
+      libc::SIGTERM => b"[Servo][diag] caught SIGTERM (15)\n",
+      libc::SIGINT => b"[Servo][diag] caught SIGINT (2)\n",
+      libc::SIGHUP => b"[Servo][diag] caught SIGHUP (1)\n",
+      libc::SIGQUIT => b"[Servo][diag] caught SIGQUIT (3)\n",
+      libc::SIGPIPE => b"[Servo][diag] caught SIGPIPE (13)\n",
+      _ => b"[Servo][diag] caught signal\n",
+    };
+    // SAFETY: write(2)/signal(2)/raise(3) are async-signal-safe.
+    unsafe {
+      libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
+      libc::signal(sig, libc::SIG_DFL);
+      libc::raise(sig);
+    }
+  }
+
+  pub fn install() {
+    // SAFETY: installing simple C signal handlers at startup.
+    unsafe {
+      for sig in [
+        libc::SIGTERM,
+        libc::SIGINT,
+        libc::SIGHUP,
+        libc::SIGQUIT,
+        libc::SIGPIPE,
+      ] {
+        libc::signal(sig, on_signal as libc::sighandler_t);
+      }
+    }
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+      eprintln!(
+        "[Servo][diag] PANIC on thread {:?}: {}",
+        std::thread::current().name().unwrap_or("<unnamed>"),
+        info
+      );
+      default(info);
+    }));
+  }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+  debug_diag::install();
+  eprintln!("[Servo][diag] main() start (pid {})", unsafe {
+    libc::getpid()
+  });
+
   rustls::crypto::aws_lc_rs::default_provider()
     .install_default()
     .expect("Failed to install crypto provider");
@@ -917,5 +985,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   laufey_backend_winit_common::load_and_start_runtime(create_backend_api());
 
   let mut app = App::new(&event_loop);
-  Ok(event_loop.run_app(&mut app)?)
+  eprintln!("[Servo][diag] entering winit event loop");
+  let result = event_loop.run_app(&mut app);
+  eprintln!("[Servo][diag] winit event loop returned: {:?}", result);
+  Ok(result?)
 }

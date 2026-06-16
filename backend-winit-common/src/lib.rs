@@ -3327,6 +3327,14 @@ pub fn load_and_start_runtime(api: LaufeyBackendApi) {
         if result != 0 {
           eprintln!("Runtime start failed with code: {}", result);
         }
+        // Diagnostic: the runtime thread returning here is normal (the UI
+        // event loop keeps the process alive), but if the process dies
+        // around this point it tells us the runtime, not the UI, drove the
+        // shutdown.
+        eprintln!(
+          "[backend] laufey_runtime_start returned (code {}); runtime thread exiting",
+          result
+        );
 
         std::mem::forget(lib);
       });
