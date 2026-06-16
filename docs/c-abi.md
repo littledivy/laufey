@@ -124,19 +124,19 @@ registered URL scheme (e.g. `app://`) entirely in-process — no network socket,
 port, or `localhost` exposure. This is how the Deno desktop runtime serves an
 embedded browser over an in-memory byte channel instead of a TCP loopback.
 
-1. The runtime calls `register_scheme_handler(scheme, handler, on_cancel,
-   user_data)` with the scheme name (e.g. `"app"`, no `://`). The backend
-   registers it as a standard, secure, fetch/CORS-enabled scheme and installs a
-   handler factory.
+1. The runtime calls
+   `register_scheme_handler(scheme, handler, on_cancel,
+   user_data)` with the
+   scheme name (e.g. `"app"`, no `://`). The backend registers it as a standard,
+   secure, fetch/CORS-enabled scheme and installs a handler factory.
 2. When the webview requests `<scheme>://…`, the backend invokes `handler` with
    request metadata (method, URL, headers) and an opaque
-   `laufey_scheme_exchange_t*`. Headers use a flat
-   `name\0value\0…\0` encoding (`headers_len` counts every terminating NUL).
-3. The runtime pulls the request body (if any) with
-   `scheme_request_read_body` (returns >0 bytes, 0 at EOF, <0 on error), then
-   streams the response: `scheme_response_begin(status, headers)` once,
-   `scheme_response_write(bytes)` any number of times, and
-   `scheme_response_finish` to release the exchange.
+   `laufey_scheme_exchange_t*`. Headers use a flat `name\0value\0…\0` encoding
+   (`headers_len` counts every terminating NUL).
+3. The runtime pulls the request body (if any) with `scheme_request_read_body`
+   (returns >0 bytes, 0 at EOF, <0 on error), then streams the response:
+   `scheme_response_begin(status, headers)` once, `scheme_response_write(bytes)`
+   any number of times, and `scheme_response_finish` to release the exchange.
 
 If the webview cancels (navigation away, window closed) before the response
 finishes, `scheme_response_write` / `scheme_request_read_body` return negative;
