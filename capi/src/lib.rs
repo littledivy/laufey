@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 25;
+pub const LAUFEY_API_VERSION: u32 = 26;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -473,6 +473,182 @@ pub async fn run() {
     poll_js_calls();
     if should_shutdown() {
       break;
+    }
+  }
+}
+
+// --- Custom URL scheme handler (in-process app transport) -------------------
+
+static SCHEME_HANDLER: OnceLock<
+  Mutex<Option<Box<dyn Fn(SchemeRequest) + Send + Sync>>>,
+> = OnceLock::new();
+
+fn scheme_handler_store(
+) -> &'static Mutex<Option<Box<dyn Fn(SchemeRequest) + Send + Sync>>> {
+  SCHEME_HANDLER.get_or_init(|| Mutex::new(None))
+}
+
+/// One in-flight scheme request/response exchange. Bridges a webview request
+/// for a registered scheme to the embedder, which streams a response back.
+pub struct SchemeRequest {
+  pub window_id: u32,
+  pub method: String,
+  pub url: String,
+  pub headers: Vec<(String, String)>,
+  pub exchange: SchemeExchange,
+}
+
+/// Handle used to read the request body and stream the response back to the
+/// webview. Backed by the backend's `scheme_*` vtable functions.
+pub struct SchemeExchange(*mut ffi::laufey_scheme_exchange_t);
+
+// The exchange handle is owned and synchronized by the backend; the embedder
+// may move it across threads and share references across them (e.g. hold a
+// `&SchemeExchange` across an await on a multi-threaded tokio runtime). Every
+// method forwards to a backend vtable function that synchronizes internally.
+unsafe impl Send for SchemeExchange {}
+unsafe impl Sync for SchemeExchange {}
+
+impl SchemeExchange {
+  /// Pull up to `buf.len()` bytes of the request body. Returns bytes read
+  /// (>0), 0 at end of body, or a negative value on error.
+  pub fn read_body(&self, buf: &mut [u8]) -> isize {
+    let api = api();
+    match api.scheme_request_read_body {
+      Some(f) => unsafe {
+        f(api.backend_data, self.0, buf.as_mut_ptr(), buf.len())
+      },
+      None => -1,
+    }
+  }
+
+  /// Send the response status and headers. Call once, before `write`.
+  pub fn begin(&self, status: i32, headers: &[(String, String)]) {
+    let api = api();
+    if let Some(f) = api.scheme_response_begin {
+      let flat = flatten_headers(headers);
+      unsafe {
+        f(
+          api.backend_data,
+          self.0,
+          status as c_int,
+          flat.as_ptr() as *const c_char,
+          flat.len(),
+        )
+      };
+    }
+  }
+
+  /// Append response body bytes. Returns bytes accepted, or a negative value
+  /// if the webview has gone away (the embedder should then stop and drop
+  /// the exchange via `finish`).
+  pub fn write(&self, buf: &[u8]) -> isize {
+    let api = api();
+    match api.scheme_response_write {
+      Some(f) => unsafe {
+        f(api.backend_data, self.0, buf.as_ptr(), buf.len())
+      },
+      None => -1,
+    }
+  }
+
+  /// Complete the response and release the exchange.
+  pub fn finish(self) {
+    let api = api();
+    if let Some(f) = api.scheme_response_finish {
+      unsafe { f(api.backend_data, self.0) };
+    }
+  }
+}
+
+fn flatten_headers(headers: &[(String, String)]) -> Vec<u8> {
+  let mut out = Vec::new();
+  for (name, value) in headers {
+    out.extend_from_slice(name.as_bytes());
+    out.push(0);
+    out.extend_from_slice(value.as_bytes());
+    out.push(0);
+  }
+  out
+}
+
+unsafe fn parse_flat_headers(
+  ptr: *const c_char,
+  len: usize,
+) -> Vec<(String, String)> {
+  if ptr.is_null() || len == 0 {
+    return Vec::new();
+  }
+  let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+  let mut out = Vec::new();
+  let mut parts = bytes.split(|&b| b == 0);
+  loop {
+    let (Some(name), Some(value)) = (parts.next(), parts.next()) else {
+      break;
+    };
+    if name.is_empty() && value.is_empty() {
+      break;
+    }
+    out.push((
+      String::from_utf8_lossy(name).into_owned(),
+      String::from_utf8_lossy(value).into_owned(),
+    ));
+  }
+  out
+}
+
+unsafe extern "C" fn scheme_request_trampoline(
+  _user_data: *mut c_void,
+  window_id: u32,
+  exchange: *mut ffi::laufey_scheme_exchange_t,
+  method: *const c_char,
+  url: *const c_char,
+  headers: *const c_char,
+  headers_len: usize,
+) {
+  let to_string = |p: *const c_char| {
+    if p.is_null() {
+      String::new()
+    } else {
+      unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
+  };
+  let req = SchemeRequest {
+    window_id,
+    method: to_string(method),
+    url: to_string(url),
+    headers: unsafe { parse_flat_headers(headers, headers_len) },
+    exchange: SchemeExchange(exchange),
+  };
+  let store = scheme_handler_store().lock().unwrap();
+  if let Some(handler) = store.as_ref() {
+    handler(req);
+  } else {
+    // No handler registered: release the exchange so the webview isn't hung.
+    req.exchange.finish();
+  }
+}
+
+/// Register `handler` to service every webview request for `scheme` (the
+/// scheme name only, e.g. `"app"`). The handler runs on a backend-internal
+/// thread and must not block it; offload work (e.g. onto a tokio task).
+/// Requires a backend built against laufey API version 26 or newer.
+pub fn register_scheme_handler<F>(scheme: &str, handler: F)
+where
+  F: Fn(SchemeRequest) + Send + Sync + 'static,
+{
+  *scheme_handler_store().lock().unwrap() = Some(Box::new(handler));
+  let api = api();
+  if let Some(register) = api.register_scheme_handler {
+    let c_scheme = CString::new(scheme).expect("scheme contains NUL");
+    unsafe {
+      register(
+        api.backend_data,
+        c_scheme.as_ptr(),
+        Some(scheme_request_trampoline),
+        None,
+        std::ptr::null_mut(),
+      );
     }
   }
 }

@@ -9,6 +9,12 @@
 #include "init_script.h"
 #include <webkit2/webkit2.h>
 #include <JavaScriptCore/JavaScript.h>
+#include <gio/gunixinputstream.h>
+
+#include <errno.h>
+#include <unistd.h>
+
+#include <atomic>
 
 #include <iostream>
 #include <map>
@@ -332,6 +338,8 @@ class WebKitGTKBackend : public LaufeyBackend {
                        laufey::ValuePtr error) override;
 
   void Run() override;
+
+  void RegisterSchemeHandler(const std::string& scheme) override;
 
   void SetApplicationMenu(uint32_t window_id, laufey_value_t* menu_template,
                           const laufey_backend_api_t* api,
@@ -1121,6 +1129,155 @@ uint32_t WebKitGTKBackend::ShowNotification(
 
 void WebKitGTKBackend::CloseNotification(uint32_t notification_id) {
   laufey_common::CloseNotificationLinux(notification_id);
+}
+
+// ============================================================================
+// Custom app:// scheme handling (in-process transport)
+// ============================================================================
+
+namespace {
+
+// Exchange wrapping a WebKitURISchemeRequest. The response is streamed through
+// a pipe: a GInputStream over the read end is handed to WebKit (on the GTK main
+// thread), and the runtime writes the body to the write end. WebKit reads the
+// stream as bytes arrive; closing the write end signals EOF.
+class LinuxSchemeExchange : public SchemeExchangeBase {
+ public:
+  explicit LinuxSchemeExchange(WebKitURISchemeRequest* request)
+      : request_(WEBKIT_URI_SCHEME_REQUEST(g_object_ref(request))) {}
+
+  ~LinuxSchemeExchange() override {
+    if (write_fd_ >= 0)
+      close(write_fd_);
+    if (request_)
+      g_object_unref(request_);
+  }
+
+  // WebKitURISchemeRequest does not expose the request body.
+  intptr_t ReadRequestBody(uint8_t*, size_t) override { return 0; }
+
+  void Begin(int status, const char* headers, size_t headers_len) override {
+    int fds[2];
+    if (pipe(fds) != 0) {
+      failed_.store(true);
+      return;
+    }
+    read_fd_ = fds[0];
+    write_fd_ = fds[1];
+    auto* d = new BeginData;
+    d->request = WEBKIT_URI_SCHEME_REQUEST(g_object_ref(request_));
+    d->read_fd = read_fd_;
+    d->status = status;
+    d->headers = LaufeyParseFlatHeaders(headers, headers_len);
+    g_idle_add(BeginOnMain, d);
+  }
+
+  intptr_t WriteResponse(const uint8_t* buf, size_t len) override {
+    if (write_fd_ < 0 || failed_.load())
+      return -1;
+    size_t off = 0;
+    while (off < len) {
+      ssize_t n = write(write_fd_, buf + off, len - off);
+      if (n < 0) {
+        if (errno == EINTR)
+          continue;
+        failed_.store(true);
+        return -1;  // EPIPE: the webview went away
+      }
+      off += static_cast<size_t>(n);
+    }
+    return static_cast<intptr_t>(len);
+  }
+
+  void Finish() override {
+    if (write_fd_ >= 0) {
+      close(write_fd_);  // EOF for the GInputStream
+      write_fd_ = -1;
+    }
+    delete this;
+  }
+
+ private:
+  struct BeginData {
+    WebKitURISchemeRequest* request;
+    int read_fd;
+    int status;
+    std::vector<std::pair<std::string, std::string>> headers;
+  };
+
+  static gboolean BeginOnMain(gpointer data) {
+    auto* d = static_cast<BeginData*>(data);
+    GInputStream* stream = g_unix_input_stream_new(d->read_fd, TRUE);
+    WebKitURISchemeResponse* resp = webkit_uri_scheme_response_new(stream, -1);
+    webkit_uri_scheme_response_set_status(resp, d->status, nullptr);
+    SoupMessageHeaders* hdrs =
+        soup_message_headers_new(SOUP_MESSAGE_HEADERS_RESPONSE);
+    for (const auto& [k, v] : d->headers) {
+      soup_message_headers_append(hdrs, k.c_str(), v.c_str());
+    }
+    // set_http_headers takes ownership of `hdrs`.
+    webkit_uri_scheme_response_set_http_headers(resp, hdrs);
+    webkit_uri_scheme_request_finish_with_response(d->request, resp);
+    g_object_unref(resp);
+    g_object_unref(stream);
+    g_object_unref(d->request);
+    delete d;
+    return G_SOURCE_REMOVE;
+  }
+
+  WebKitURISchemeRequest* request_;
+  int read_fd_ = -1;
+  int write_fd_ = -1;
+  std::atomic<bool> failed_{false};
+};
+
+void OnAppSchemeRequest(WebKitURISchemeRequest* request, gpointer) {
+  const char* uri = webkit_uri_scheme_request_get_uri(request);
+  const char* method = webkit_uri_scheme_request_get_http_method(request);
+  std::vector<std::pair<std::string, std::string>> headers;
+  SoupMessageHeaders* req_headers =
+      webkit_uri_scheme_request_get_http_headers(request);
+  if (req_headers) {
+    SoupMessageHeadersIter it;
+    soup_message_headers_iter_init(&it, req_headers);
+    const char* name;
+    const char* value;
+    while (soup_message_headers_iter_next(&it, &name, &value)) {
+      headers.emplace_back(name, value);
+    }
+  }
+  std::string flat = LaufeyFlattenHeaders(headers);
+  // window_id is unused by the desktop bridge (it serves a single named
+  // channel), so 0 is fine.
+  auto* exchange = new LinuxSchemeExchange(request);
+  RuntimeLoader::GetInstance()->DispatchSchemeRequest(
+      0, exchange, method ? method : "GET", uri ? uri : "", flat);
+}
+
+}  // namespace
+
+void WebKitGTKBackend::RegisterSchemeHandler(const std::string& scheme) {
+  // Register on the default web context (shared by all webviews). Must run on
+  // the GTK main thread; the runtime calls this from its own thread.
+  char* scheme_dup = g_strdup(scheme.c_str());
+  g_idle_add(
+      [](gpointer data) -> gboolean {
+        char* s = static_cast<char*>(data);
+        static std::atomic<bool> registered{false};
+        bool expected = false;
+        if (registered.compare_exchange_strong(expected, true)) {
+          WebKitWebContext* ctx = webkit_web_context_get_default();
+          webkit_web_context_register_uri_scheme(ctx, s, OnAppSchemeRequest,
+                                                 nullptr, nullptr);
+          WebKitSecurityManager* sm =
+              webkit_web_context_get_security_manager(ctx);
+          webkit_security_manager_register_uri_scheme_as_secure(sm, s);
+          webkit_security_manager_register_uri_scheme_as_cors_enabled(sm, s);
+        }
+        g_free(s);
+        return G_SOURCE_REMOVE;
+      },
+      scheme_dup);
 }
 
 // ============================================================================

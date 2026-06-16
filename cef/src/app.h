@@ -132,6 +132,12 @@ class LaufeyApp : public CefApp, public CefBrowserProcessHandler {
 
   void OnContextInitialized() override;
 
+  // Register the custom "app" scheme (standard, secure, fetch/CORS-enabled) so
+  // the in-process scheme handler can serve pages over app:// like an https
+  // origin. Called early in every process.
+  void OnRegisterCustomSchemes(
+      CefRawPtr<CefSchemeRegistrar> registrar) override;
+
 #if defined(__APPLE__)
   // Drive CefDoMessageLoopWork from the main run loop (external_message_pump)
   // so the libdispatch main queue keeps draining — tray/status-item creation

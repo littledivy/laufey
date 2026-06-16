@@ -61,6 +61,8 @@ if(OS_MAC)
   set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
+    src/scheme_handler.cc
+    src/scheme_handler.h
     src/runtime_loader.cc
     src/runtime_loader_mac.mm
     src/runtime_loader.h
@@ -172,6 +174,8 @@ elseif(OS_WINDOWS)
   set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
+    src/scheme_handler.cc
+    src/scheme_handler.h
     src/runtime_loader.cc
     src/runtime_loader.h
   )
@@ -224,6 +228,8 @@ elseif(OS_LINUX)
   set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
+    src/scheme_handler.cc
+    src/scheme_handler.h
     src/runtime_loader.cc
     src/runtime_loader.h
   )
