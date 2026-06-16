@@ -594,9 +594,10 @@ static void Backend_JsCallRespond(void* data, uint64_t call_id,
 
 // --- Custom URL scheme handling ---
 
-static void Backend_RegisterSchemeHandler(
-    void* data, const char* scheme, laufey_scheme_request_fn handler,
-    laufey_scheme_cancel_fn on_cancel, void* user_data) {
+static void Backend_RegisterSchemeHandler(void* data, const char* scheme,
+                                          laufey_scheme_request_fn handler,
+                                          laufey_scheme_cancel_fn on_cancel,
+                                          void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetSchemeRequestHandler(scheme ? scheme : "", handler, on_cancel,
                                   user_data);
@@ -1659,9 +1660,10 @@ void RuntimeLoader::PollPendingJsCalls() {
   }
 }
 
-void RuntimeLoader::SetSchemeRequestHandler(
-    const std::string& scheme, laufey_scheme_request_fn handler,
-    laufey_scheme_cancel_fn on_cancel, void* user_data) {
+void RuntimeLoader::SetSchemeRequestHandler(const std::string& scheme,
+                                            laufey_scheme_request_fn handler,
+                                            laufey_scheme_cancel_fn on_cancel,
+                                            void* user_data) {
   bool need_register = false;
   std::string scheme_to_register;
   {

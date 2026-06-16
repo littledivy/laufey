@@ -188,9 +188,10 @@ static void Backend_JsCallRespond(void* data, uint64_t call_id,
 
 // --- Custom URL scheme handling ---
 
-static void Backend_RegisterSchemeHandler(
-    void* data, const char* scheme, laufey_scheme_request_fn handler,
-    laufey_scheme_cancel_fn on_cancel, void* user_data) {
+static void Backend_RegisterSchemeHandler(void* data, const char* scheme,
+                                          laufey_scheme_request_fn handler,
+                                          laufey_scheme_cancel_fn on_cancel,
+                                          void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetSchemeRequestHandler(scheme ? scheme : "", handler, on_cancel,
                                   user_data);
@@ -782,9 +783,10 @@ void RuntimeLoader::Shutdown() {
   }
 }
 
-void RuntimeLoader::SetSchemeRequestHandler(
-    const std::string& scheme, laufey_scheme_request_fn handler,
-    laufey_scheme_cancel_fn on_cancel, void* user_data) {
+void RuntimeLoader::SetSchemeRequestHandler(const std::string& scheme,
+                                            laufey_scheme_request_fn handler,
+                                            laufey_scheme_cancel_fn on_cancel,
+                                            void* user_data) {
   {
     std::lock_guard<std::mutex> lock(scheme_mutex_);
     scheme_request_handler_ = handler;

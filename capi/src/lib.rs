@@ -582,10 +582,7 @@ unsafe fn parse_flat_headers(
   let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
   let mut out = Vec::new();
   let mut parts = bytes.split(|&b| b == 0);
-  loop {
-    let (Some(name), Some(value)) = (parts.next(), parts.next()) else {
-      break;
-    };
+  while let (Some(name), Some(value)) = (parts.next(), parts.next()) {
     if name.is_empty() && value.is_empty() {
       break;
     }

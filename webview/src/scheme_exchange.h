@@ -53,8 +53,9 @@ inline std::vector<std::pair<std::string, std::string>> LaufeyParseFlatHeaders(
       value_end++;
     if (value_end > len)
       break;
-    out.emplace_back(std::string(headers + i, name_end - i),
-                     std::string(headers + value_start, value_end - value_start));
+    out.emplace_back(
+        std::string(headers + i, name_end - i),
+        std::string(headers + value_start, value_end - value_start));
     i = value_end + 1;
   }
   return out;

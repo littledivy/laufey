@@ -297,7 +297,9 @@ class MacSchemeExchange : public SchemeExchangeBase {
     });
   }
 
-  void MarkStopped() { stopped_.store(true); }
+  void MarkStopped() {
+    stopped_.store(true);
+  }
 
  private:
   id<WKURLSchemeTask> task_;

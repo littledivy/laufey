@@ -1154,7 +1154,9 @@ class LinuxSchemeExchange : public SchemeExchangeBase {
   }
 
   // WebKitURISchemeRequest does not expose the request body.
-  intptr_t ReadRequestBody(uint8_t*, size_t) override { return 0; }
+  intptr_t ReadRequestBody(uint8_t*, size_t) override {
+    return 0;
+  }
 
   void Begin(int status, const char* headers, size_t headers_len) override {
     int fds[2];

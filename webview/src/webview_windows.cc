@@ -128,8 +128,8 @@ namespace {
 std::wstring SchemeUtf8ToWide(const std::string& s) {
   if (s.empty())
     return std::wstring();
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(),
-                              static_cast<int>(s.size()), nullptr, 0);
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                              nullptr, 0);
   std::wstring w(n, L'\0');
   MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), &w[0],
                       n);
@@ -151,11 +151,10 @@ std::string SchemeWideToUtf8(LPCWSTR s) {
 // WebResourceResponse is created and the deferral completed on the UI thread.
 class WinSchemeExchange : public SchemeExchangeBase {
  public:
-  WinSchemeExchange(
-      ComPtr<ICoreWebView2Environment> env,
-      ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args,
-      ComPtr<ICoreWebView2Deferral> deferral,
-      std::vector<uint8_t> request_body)
+  WinSchemeExchange(ComPtr<ICoreWebView2Environment> env,
+                    ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args,
+                    ComPtr<ICoreWebView2Deferral> deferral,
+                    std::vector<uint8_t> request_body)
       : env_(std::move(env)),
         args_(std::move(args)),
         deferral_(std::move(deferral)),
@@ -167,7 +166,7 @@ class WinSchemeExchange : public SchemeExchangeBase {
     size_t remaining = request_body_.size() - req_cursor_;
     if (remaining == 0)
       return 0;
-    size_t n = std::min(cap, remaining);
+    size_t n = (std::min)(cap, remaining);
     memcpy(buf, request_body_.data() + req_cursor_, n);
     req_cursor_ += n;
     return static_cast<intptr_t>(n);
@@ -203,8 +202,7 @@ class WinSchemeExchange : public SchemeExchangeBase {
         static_cast<UINT>(response_body_.size())));
     std::wstring headers_w;
     for (const auto& [k, v] : headers_) {
-      headers_w +=
-          SchemeUtf8ToWide(k) + L": " + SchemeUtf8ToWide(v) + L"\r\n";
+      headers_w += SchemeUtf8ToWide(k) + L": " + SchemeUtf8ToWide(v) + L"\r\n";
     }
     ComPtr<ICoreWebView2WebResourceResponse> response;
     if (env_) {
@@ -250,8 +248,7 @@ HRESULT HandleAppResourceRequested(
     ComPtr<ICoreWebView2HttpHeadersCollectionIterator> it;
     if (SUCCEEDED(req_headers->GetIterator(&it)) && it) {
       BOOL has_current = FALSE;
-      while (SUCCEEDED(it->get_HasCurrentHeader(&has_current)) &&
-             has_current) {
+      while (SUCCEEDED(it->get_HasCurrentHeader(&has_current)) && has_current) {
         LPWSTR name = nullptr;
         LPWSTR value = nullptr;
         if (SUCCEEDED(it->GetCurrentHeader(&name, &value))) {
@@ -283,8 +280,7 @@ HRESULT HandleAppResourceRequested(
 
   std::string flat = LaufeyFlattenHeaders(headers);
   // window_id is unused by the desktop bridge (single named channel).
-  auto* exchange =
-      new WinSchemeExchange(env, args, deferral, std::move(body));
+  auto* exchange = new WinSchemeExchange(env, args, deferral, std::move(body));
   RuntimeLoader::GetInstance()->DispatchSchemeRequest(0, exchange, method, url,
                                                       flat);
   return S_OK;
@@ -646,7 +642,7 @@ void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
                 hwnd,
                 Callback<
                     ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                    [this, window_id, hwnd](
+                    [this, window_id, hwnd, env](
                         HRESULT result,
                         ICoreWebView2Controller* controller) -> HRESULT {
                       if (FAILED(result) || !controller) {

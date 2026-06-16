@@ -67,9 +67,14 @@ class LaufeySchemeHandler : public CefResourceHandler {
   bool finished_ = false;
   bool cancelled_ = false;
 
-  // Deferred CEF continuations.
+  // Deferred CEF continuations. When a Read arrives with no body buffered, the
+  // caller's output buffer (`pending_data_` / `pending_cap_`, valid until the
+  // callback fires) and `read_callback_` are stashed and satisfied once
+  // WriteResponse/FinishResponse provides data.
   CefRefPtr<CefCallback> open_callback_;
   CefRefPtr<CefResourceReadCallback> read_callback_;
+  void* pending_data_ = nullptr;
+  int pending_cap_ = 0;
 
   IMPLEMENT_REFCOUNTING(LaufeySchemeHandler);
 };

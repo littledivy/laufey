@@ -62,8 +62,8 @@ bool LaufeySchemeHandler::Open(CefRefPtr<CefRequest> request,
   // Hand ownership of an extra reference to the runtime. Released in
   // FinishResponse(). Keeps the handler alive while the runtime streams.
   this->AddRef();
-  RuntimeLoader::GetInstance()->DispatchSchemeRequest(
-      window_id_, this, method_, url_, flat_headers);
+  RuntimeLoader::GetInstance()->DispatchSchemeRequest(window_id_, this, method_,
+                                                      url_, flat_headers);
   return true;
 }
 
@@ -98,8 +98,8 @@ bool LaufeySchemeHandler::Read(void* data_out, int bytes_to_read,
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (!response_body_.empty()) {
-    size_t n = std::min(static_cast<size_t>(bytes_to_read),
-                        response_body_.size());
+    size_t n =
+        std::min(static_cast<size_t>(bytes_to_read), response_body_.size());
     std::copy(response_body_.begin(), response_body_.begin() + n,
               static_cast<uint8_t*>(data_out));
     response_body_.erase(response_body_.begin(), response_body_.begin() + n);
@@ -112,21 +112,27 @@ bool LaufeySchemeHandler::Read(void* data_out, int bytes_to_read,
     return false;  // EOF
   }
 
-  // No data yet: park the read and resume when WriteResponse/FinishResponse
-  // calls Continue(), at which point CEF re-invokes Read.
+  // No data yet: keep the output buffer + callback, fill them when
+  // WriteResponse/FinishResponse arrives and resume via Continue(n).
+  pending_data_ = data_out;
+  pending_cap_ = bytes_to_read;
   read_callback_ = callback;
   bytes_read = 0;
   return true;
 }
 
 void LaufeySchemeHandler::Cancel() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  cancelled_ = true;
-  // Wake any parked read so it observes the cancel and reports EOF.
-  if (read_callback_) {
-    read_callback_->Continue();
+  CefRefPtr<CefResourceReadCallback> to_continue;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cancelled_ = true;
+    to_continue = read_callback_;
     read_callback_ = nullptr;
+    pending_data_ = nullptr;
   }
+  // Wake any parked read so it reports EOF.
+  if (to_continue)
+    to_continue->Continue(0);
 }
 
 intptr_t LaufeySchemeHandler::ReadRequestBody(uint8_t* buf, size_t cap) {
@@ -177,16 +183,27 @@ void LaufeySchemeHandler::Begin(int status, const char* headers,
 
 intptr_t LaufeySchemeHandler::WriteResponse(const uint8_t* buf, size_t len) {
   CefRefPtr<CefResourceReadCallback> to_continue;
+  int to_report = 0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (cancelled_)
       return -1;
     response_body_.insert(response_body_.end(), buf, buf + len);
-    to_continue = read_callback_;
-    read_callback_ = nullptr;
+    // Satisfy a parked Read by copying into its output buffer.
+    if (read_callback_ && pending_data_ && !response_body_.empty()) {
+      size_t n =
+          std::min(static_cast<size_t>(pending_cap_), response_body_.size());
+      std::copy(response_body_.begin(), response_body_.begin() + n,
+                static_cast<uint8_t*>(pending_data_));
+      response_body_.erase(response_body_.begin(), response_body_.begin() + n);
+      to_report = static_cast<int>(n);
+      to_continue = read_callback_;
+      read_callback_ = nullptr;
+      pending_data_ = nullptr;
+    }
   }
   if (to_continue)
-    to_continue->Continue();
+    to_continue->Continue(to_report);
   return static_cast<intptr_t>(len);
 }
 
@@ -197,9 +214,11 @@ void LaufeySchemeHandler::FinishResponse() {
     finished_ = true;
     to_continue = read_callback_;
     read_callback_ = nullptr;
+    pending_data_ = nullptr;
   }
+  // A parked read with no remaining body: report EOF.
   if (to_continue)
-    to_continue->Continue();
+    to_continue->Continue(0);
   // Release the reference taken in Open(); may destroy this handler.
   this->Release();
 }
