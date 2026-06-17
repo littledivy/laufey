@@ -211,8 +211,6 @@ impl App {
     window_id: u32,
   ) {
     eprintln!("[Servo][diag] create_window window_id={window_id}");
-    self.ensure_servo();
-    eprintln!("[Servo][diag] ensure_servo done for window_id={window_id}");
 
     let backend_state =
       BackendState::get().expect("BackendState not initialized");
@@ -246,6 +244,14 @@ impl App {
     );
 
     let _ = rendering_context.make_current();
+
+    // Build Servo only after a window's GL context is current. WebRender
+    // allocates its GL resources (textures, FBOs) when Servo is built, so
+    // building it with no current context leaves them "unloadable" and the
+    // compositor present()s a zero (transparent) texture. The winit_minimal
+    // example builds Servo right after make_current() for this reason.
+    self.ensure_servo();
+    eprintln!("[Servo][diag] ensure_servo done for window_id={window_id}");
 
     backend_state.common.with_window(window_id, |ws| {
       laufey_backend_winit_common::apply_pending_post_create(ws, &window);
@@ -296,6 +302,7 @@ impl App {
 
 impl servo::WebViewDelegate for ServoWindowState {
   fn notify_new_frame_ready(&self, _webview: WebView) {
+    eprintln!("[Servo][diag] notify_new_frame_ready -> request_redraw");
     self.window.request_redraw();
   }
 }
@@ -521,10 +528,44 @@ impl ApplicationHandler<UserEvent> for App {
         }
       }
       WindowEvent::RedrawRequested => {
+        eprintln!("[Servo][diag] RedrawRequested -> paint + present");
         if let Some(webview) = win_state.webviews.borrow().last() {
           webview.paint();
         }
         win_state.rendering_context.present();
+        {
+          use webrender_api::units::{
+            DeviceIntPoint, DeviceIntRect, DeviceIntSize,
+          };
+          let _ = win_state.rendering_context.make_current();
+          let sz = win_state.rendering_context.size();
+          let rect = DeviceIntRect::from_origin_and_size(
+            DeviceIntPoint::zero(),
+            DeviceIntSize::new(sz.width as i32, sz.height as i32),
+          );
+          match win_state.rendering_context.read_to_image(rect) {
+            Some(img) => {
+              let (mut opaque, mut nonwhite) = (0usize, 0usize);
+              for p in img.pixels() {
+                let [r, g, b, a] = p.0;
+                if a != 0 {
+                  opaque += 1;
+                }
+                if !(r > 250 && g > 250 && b > 250) {
+                  nonwhite += 1;
+                }
+              }
+              eprintln!(
+                "[Servo][diag] readback {}x{}: opaque(a!=0)={} nonwhite={}",
+                img.width(),
+                img.height(),
+                opaque,
+                nonwhite
+              );
+            }
+            None => eprintln!("[Servo][diag] readback returned None"),
+          }
+        }
       }
       WindowEvent::MouseWheel { delta, .. } => {
         if let Some(webview) = win_state.webviews.borrow().last() {
@@ -713,6 +754,7 @@ impl embedder_traits::EventLoopWaker for Waker {
   }
 
   fn wake(&self) {
+    eprintln!("[Servo][diag] Waker::wake -> UserEvent::Waker");
     if let Err(error) = self.0.send_event(UserEvent::Waker) {
       warn!(?error, "Failed to wake event loop");
     }

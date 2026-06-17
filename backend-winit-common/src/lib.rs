@@ -1300,28 +1300,44 @@ pub fn register_menu_callbacks(
     Some(cb) => cb,
     None => return,
   };
+  // Lock the store exactly once, then recurse over the parsed tree while
+  // holding the lock. The previous version recursed by calling this public
+  // function again for each submenu, which re-acquired `MENU_CLICK_STORE` on
+  // the same thread — and `std::sync::Mutex` is not reentrant, so any menu
+  // containing a submenu deadlocked the calling (main/UI) thread.
   let mut store = MENU_CLICK_STORE.lock().unwrap();
   let store = store.get_or_insert_with(HashMap::new);
-  for item in items {
-    match item {
-      ParsedMenuItem::Item { id, .. } => {
-        store.insert(
-          id.clone(),
-          MenuCallbackInfo {
-            callback: cb,
-            callback_data,
-            window_id,
-          },
-        );
+
+  fn collect(
+    items: &[ParsedMenuItem],
+    store: &mut HashMap<String, MenuCallbackInfo>,
+    cb: LaufeyMenuClickFn,
+    callback_data: usize,
+    window_id: u32,
+  ) {
+    for item in items {
+      match item {
+        ParsedMenuItem::Item { id, .. } => {
+          store.insert(
+            id.clone(),
+            MenuCallbackInfo {
+              callback: cb,
+              callback_data,
+              window_id,
+            },
+          );
+        }
+        ParsedMenuItem::Submenu {
+          items: children, ..
+        } => {
+          collect(children, store, cb, callback_data, window_id);
+        }
+        _ => {}
       }
-      ParsedMenuItem::Submenu {
-        items: children, ..
-      } => {
-        register_menu_callbacks(children, callback, callback_data, window_id);
-      }
-      _ => {}
     }
   }
+
+  collect(items, store, cb, callback_data, window_id);
 }
 
 /// Build a muda Menu bar from parsed items.
