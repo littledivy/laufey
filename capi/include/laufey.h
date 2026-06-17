@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 25
+#define LAUFEY_API_VERSION 26
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -223,6 +223,39 @@ typedef void (*laufey_keyboard_event_fn)(
 
 // Callback for window close requested events.
 typedef void (*laufey_close_requested_fn)(void* user_data, uint32_t window_id);
+
+// --- Custom URL scheme handler (in-process app transport, API >= 26) --------
+//
+// A custom scheme handler lets the embedder service webview requests for a
+// registered URL scheme (e.g. "app://...") entirely in-process, with no network
+// socket. The backend delivers each request to a laufey_scheme_request_fn and
+// the embedder streams a response back through the scheme_response_* vtable
+// functions. Both request and response bodies are streamed.
+//
+// Header lists are encoded as a flat buffer of NUL-terminated strings laid out
+// as name, value, name, value, ... -- `headers_len` is the total byte length
+// including every terminating NUL. Header names are lowercase.
+
+// Opaque handle for one in-flight scheme exchange. Valid from the moment the
+// request callback fires until scheme_response_finish releases it.
+typedef struct laufey_scheme_exchange laufey_scheme_exchange_t;
+
+// Invoked when the webview issues a request for a registered scheme. Runs on a
+// backend-internal thread; the embedder must not block it. `exchange` is used
+// for every subsequent streaming call and is owned by the embedder, which must
+// eventually call scheme_response_finish to release it. The request body (if
+// any) is pulled via scheme_request_read_body.
+typedef void (*laufey_scheme_request_fn)(void* user_data, uint32_t window_id,
+                                         laufey_scheme_exchange_t* exchange,
+                                         const char* method, const char* url,
+                                         const char* headers,
+                                         size_t headers_len);
+
+// Invoked if the webview cancels the request (navigation away, window closed)
+// before the response is finished. After this fires the embedder must stop
+// writing and call scheme_response_finish to release `exchange`. Optional.
+typedef void (*laufey_scheme_cancel_fn)(void* user_data,
+                                        laufey_scheme_exchange_t* exchange);
 
 struct laufey_backend_api {
   uint32_t version;
@@ -582,6 +615,46 @@ struct laufey_backend_api {
   // UNSUPPORTED.
   void (*request_permission)(void* backend_data, int kind,
                              laufey_permission_callback_fn cb, void* user_data);
+
+  // --- Custom URL scheme handler (API >= 26) ---------------------------------
+  //
+  // Register `handler` to service every request for `scheme` (the scheme name
+  // only, e.g. "app", without "://"). Must be called before any window
+  // navigates to that scheme. A NULL handler unregisters. `on_cancel` may be
+  // NULL. Backends added before API version 26 leave these four pointers NULL;
+  // callers must null-check and fall back to a socket transport.
+  void (*register_scheme_handler)(void* backend_data, const char* scheme,
+                                  laufey_scheme_request_fn handler,
+                                  laufey_scheme_cancel_fn on_cancel,
+                                  void* user_data);
+
+  // Pull up to `cap` bytes of the request body into `buf`. Returns the number
+  // of bytes read (>0), 0 at end of body, or -1 on error. May block until body
+  // data is available, so the embedder should call it off the critical path of
+  // its async runtime (a request with no body returns 0 immediately).
+  intptr_t (*scheme_request_read_body)(void* backend_data,
+                                       laufey_scheme_exchange_t* exchange,
+                                       uint8_t* buf, size_t cap);
+
+  // Send the response status code and headers. Must be called exactly once,
+  // before the first scheme_response_write. `headers` uses the flat encoding
+  // documented above; pass NULL/0 for none.
+  void (*scheme_response_begin)(void* backend_data,
+                                laufey_scheme_exchange_t* exchange, int status,
+                                const char* headers, size_t headers_len);
+
+  // Append `len` bytes to the response body. May be called repeatedly after
+  // scheme_response_begin. Returns the bytes accepted, or -1 if the consumer
+  // has gone away (the embedder should then stop and call
+  // scheme_response_finish).
+  intptr_t (*scheme_response_write)(void* backend_data,
+                                    laufey_scheme_exchange_t* exchange,
+                                    const uint8_t* buf, size_t len);
+
+  // Complete the response and release `exchange`. After this returns the handle
+  // is invalid. Call exactly once per exchange (including after a cancel).
+  void (*scheme_response_finish)(void* backend_data,
+                                 laufey_scheme_exchange_t* exchange);
 };
 
 #ifdef __cplusplus

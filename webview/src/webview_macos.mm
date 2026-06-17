@@ -220,6 +220,140 @@ static void UnregisterNSWindow(NSWindow* win) {
 
 @end
 
+// --- Custom app:// scheme handling (in-process transport) ---
+
+// Exchange wrapping a WKURLSchemeTask. WKURLSchemeTask methods must be invoked
+// on the main thread, so each response step hops there; a `stopped_` flag
+// (set from -stopURLSchemeTask:) prevents messaging an already-cancelled task.
+class MacSchemeExchange : public SchemeExchangeBase {
+ public:
+  MacSchemeExchange(id<WKURLSchemeTask> task, NSData* body)
+      : task_(task), body_(body) {}
+
+  intptr_t ReadRequestBody(uint8_t* buf, size_t cap) override {
+    if (cap == 0 || !body_)
+      return 0;
+    size_t total = body_.length;
+    if (cursor_ >= total)
+      return 0;
+    size_t n = std::min(cap, total - cursor_);
+    memcpy(buf, static_cast<const uint8_t*>(body_.bytes) + cursor_, n);
+    cursor_ += n;
+    return static_cast<intptr_t>(n);
+  }
+
+  void Begin(int status, const char* headers, size_t headers_len) override {
+    auto pairs = LaufeyParseFlatHeaders(headers, headers_len);
+    NSMutableDictionary* hdr = [NSMutableDictionary dictionary];
+    for (const auto& [k, v] : pairs)
+      hdr[@(k.c_str())] = @(v.c_str());
+    NSURL* url = task_.request.URL;
+    id<WKURLSchemeTask> task = task_;
+    std::atomic<bool>* stopped = &stopped_;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (stopped->load())
+        return;
+      NSHTTPURLResponse* resp =
+          [[NSHTTPURLResponse alloc] initWithURL:url
+                                      statusCode:status
+                                     HTTPVersion:@"HTTP/1.1"
+                                    headerFields:hdr];
+      @try {
+        [task didReceiveResponse:resp];
+      } @catch (...) {
+      }
+    });
+  }
+
+  intptr_t WriteResponse(const uint8_t* buf, size_t len) override {
+    if (stopped_.load())
+      return -1;
+    NSData* data = [NSData dataWithBytes:buf length:len];
+    id<WKURLSchemeTask> task = task_;
+    std::atomic<bool>* stopped = &stopped_;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (stopped->load())
+        return;
+      @try {
+        [task didReceiveData:data];
+      } @catch (...) {
+      }
+    });
+    return static_cast<intptr_t>(len);
+  }
+
+  void Finish() override {
+    id<WKURLSchemeTask> task = task_;
+    std::atomic<bool>* stopped = &stopped_;
+    MacSchemeExchange* self = this;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (!stopped->load()) {
+        @try {
+          [task didFinish];
+        } @catch (...) {
+        }
+      }
+      delete self;
+    });
+  }
+
+  void MarkStopped() {
+    stopped_.store(true);
+  }
+
+ private:
+  id<WKURLSchemeTask> task_;
+  NSData* body_;
+  size_t cursor_ = 0;
+  std::atomic<bool> stopped_{false};
+};
+
+@interface LaufeyURLSchemeHandler : NSObject <WKURLSchemeHandler>
+@property(nonatomic, assign) uint32_t windowId;
+@end
+
+@implementation LaufeyURLSchemeHandler {
+  std::map<void*, MacSchemeExchange*> _tasks;
+  std::mutex _mutex;
+}
+
+- (void)webView:(WKWebView*)webView
+    startURLSchemeTask:(id<WKURLSchemeTask>)task {
+  NSURLRequest* req = task.request;
+  std::string method =
+      req.HTTPMethod ? std::string(req.HTTPMethod.UTF8String) : "GET";
+  std::string url = req.URL.absoluteString.UTF8String;
+  std::vector<std::pair<std::string, std::string>> headers;
+  NSDictionary<NSString*, NSString*>* fields = req.allHTTPHeaderFields;
+  for (NSString* key in fields) {
+    headers.emplace_back(key.UTF8String, fields[key].UTF8String);
+  }
+  std::string flat = LaufeyFlattenHeaders(headers);
+
+  // Note: WKURLSchemeHandler does not expose the request body for all request
+  // kinds (a long-standing WebKit limitation); HTTPBody is forwarded when
+  // present.
+  MacSchemeExchange* exchange = new MacSchemeExchange(task, req.HTTPBody);
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _tasks[(__bridge void*)task] = exchange;
+  }
+  RuntimeLoader::GetInstance()->DispatchSchemeRequest(self.windowId, exchange,
+                                                      method, url, flat);
+}
+
+- (void)webView:(WKWebView*)webView
+    stopURLSchemeTask:(id<WKURLSchemeTask>)task {
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _tasks.find((__bridge void*)task);
+  if (it != _tasks.end()) {
+    it->second->MarkStopped();
+    _tasks.erase(it);
+  }
+}
+
+@end
+
 @interface LaufeyUIDelegate : NSObject <WKUIDelegate>
 @end
 
@@ -626,6 +760,16 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
       [config.userContentController addScriptMessageHandler:handler
                                                        name:@"laufey"];
+
+      // Install the in-process app:// scheme handler (must be set on the
+      // configuration before the WKWebView is created). Requests are bridged
+      // into the runtime's memory transport; if no runtime handler is
+      // registered the exchange is finished immediately.
+      LaufeyURLSchemeHandler* schemeHandler =
+          [[LaufeyURLSchemeHandler alloc] init];
+      schemeHandler.windowId = window_id;
+      [config setURLSchemeHandler:schemeHandler
+                     forURLScheme:@(LAUFEY_APP_SCHEME)];
 
       std::string initScript =
           BuildInitScript(RuntimeLoader::GetInstance()->GetJsNamespace(),

@@ -295,6 +295,21 @@ class RuntimeLoader {
     }
   }
 
+  // --- Custom URL scheme handler (API >= 26) ---
+  // Store the runtime's scheme request handler and lazily install the CEF
+  // scheme handler factory (on the UI thread) the first time a scheme is
+  // registered.
+  void SetSchemeRequestHandler(const std::string& scheme,
+                               laufey_scheme_request_fn handler,
+                               laufey_scheme_cancel_fn on_cancel,
+                               void* user_data);
+
+  // Invoke the registered scheme request handler. Called from a CEF IO thread
+  // by the scheme handler factory; `exchange` is the LaufeySchemeHandler.
+  void DispatchSchemeRequest(uint32_t window_id, void* exchange,
+                             const std::string& method, const std::string& url,
+                             const std::string& flat_headers);
+
   void SetJsCallNotify(void (*notify_fn)(void*), void* notify_data) {
     std::lock_guard<std::mutex> lock(notify_mutex_);
     js_call_notify_fn_ = notify_fn;
@@ -392,6 +407,13 @@ class RuntimeLoader {
   void (*js_call_notify_fn_)(void*) = nullptr;
   void* js_call_notify_data_ = nullptr;
   std::mutex notify_mutex_;
+
+  laufey_scheme_request_fn scheme_request_handler_ = nullptr;
+  laufey_scheme_cancel_fn scheme_cancel_handler_ = nullptr;
+  void* scheme_user_data_ = nullptr;
+  std::string scheme_name_;
+  bool scheme_factory_registered_ = false;
+  std::mutex scheme_mutex_;
 
   std::string js_namespace_ = "Laufey";
   mutable std::mutex js_namespace_mutex_;

@@ -6,7 +6,7 @@ It defines the boundary between a **backend** (a native executable embedding a
 browser engine) and a **runtime** (a shared library holding the application
 logic). The backend implements the ABI; the runtime consumes it.
 
-`LAUFEY_API_VERSION` (currently `25`) versions the contract. The `version` field
+`LAUFEY_API_VERSION` (currently `26`) versions the contract. The `version` field
 on the API table lets a runtime detect the backend's vintage and avoid calling
 function pointers a backend predates (older backends leave new pointers `NULL`).
 
@@ -65,6 +65,9 @@ The pointers group into:
   `set_tray_tooltip`, `set_tray_menu`, click handlers, `get_tray_icon_bounds`.
 - **Notifications** — `show_notification`, `close_notification`.
 - **Permissions** — `query_permission`, `request_permission`.
+- **Custom URL scheme handler** (API ≥ 26) — `register_scheme_handler`,
+  `scheme_request_read_body`, `scheme_response_begin`, `scheme_response_write`,
+  `scheme_response_finish`.
 
 See [the feature pages](window-management.md) for behavior and per-platform
 differences.
@@ -113,6 +116,33 @@ and free it with `release_js_callback(id)`.
 `laufey_js_result_fn`. When the runtime services calls off the UI thread, the
 backend signals readiness via `set_js_call_notify` and the runtime drains the
 queue with `poll_js_calls`.
+
+## Custom URL scheme handler (API ≥ 26)
+
+A custom scheme handler lets the runtime service webview requests for a
+registered URL scheme (e.g. `app://`) entirely in-process — no network socket,
+port, or `localhost` exposure. This is how the Deno desktop runtime serves an
+embedded browser over an in-memory byte channel instead of a TCP loopback.
+
+1. The runtime calls
+   `register_scheme_handler(scheme, handler, on_cancel,
+   user_data)` with the
+   scheme name (e.g. `"app"`, no `://`). The backend registers it as a standard,
+   secure, fetch/CORS-enabled scheme and installs a handler factory.
+2. When the webview requests `<scheme>://…`, the backend invokes `handler` with
+   request metadata (method, URL, headers) and an opaque
+   `laufey_scheme_exchange_t*`. Headers use a flat `name\0value\0…\0` encoding
+   (`headers_len` counts every terminating NUL).
+3. The runtime pulls the request body (if any) with `scheme_request_read_body`
+   (returns >0 bytes, 0 at EOF, <0 on error), then streams the response:
+   `scheme_response_begin(status, headers)` once, `scheme_response_write(bytes)`
+   any number of times, and `scheme_response_finish` to release the exchange.
+
+If the webview cancels (navigation away, window closed) before the response
+finishes, `scheme_response_write` / `scheme_request_read_body` return negative;
+the runtime should stop and call `scheme_response_finish`. Backends predating
+API version 26 leave these pointers `NULL`; the runtime must null-check and fall
+back to a socket transport.
 
 ## Threading
 

@@ -22,11 +22,15 @@
 
 // WebView2 headers
 #include "WebView2.h"
+#include "WebView2EnvironmentOptions.h"
+
+#include <shlwapi.h>
 
 #include <iostream>
 #include <string>
 #include <map>
 #include <mutex>
+#include <vector>
 
 using namespace Microsoft::WRL;
 
@@ -114,6 +118,175 @@ struct UiTaskData {
   void (*task)(void*);
   void* data;
 };
+
+// ============================================================================
+// Custom app:// scheme handling (in-process transport)
+// ============================================================================
+
+namespace {
+
+std::wstring SchemeUtf8ToWide(const std::string& s) {
+  if (s.empty())
+    return std::wstring();
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                              nullptr, 0);
+  std::wstring w(n, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), &w[0],
+                      n);
+  return w;
+}
+
+std::string SchemeWideToUtf8(LPCWSTR s) {
+  if (!s)
+    return std::string();
+  int n = WideCharToMultiByte(CP_UTF8, 0, s, -1, nullptr, 0, nullptr, nullptr);
+  if (n <= 0)
+    return std::string();
+  std::string out(n - 1, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, s, -1, &out[0], n, nullptr, nullptr);
+  return out;
+}
+
+// Buffered exchange: the response is collected, then a single
+// WebResourceResponse is created and the deferral completed on the UI thread.
+class WinSchemeExchange : public SchemeExchangeBase {
+ public:
+  WinSchemeExchange(ComPtr<ICoreWebView2Environment> env,
+                    ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args,
+                    ComPtr<ICoreWebView2Deferral> deferral,
+                    std::vector<uint8_t> request_body)
+      : env_(std::move(env)),
+        args_(std::move(args)),
+        deferral_(std::move(deferral)),
+        request_body_(std::move(request_body)) {}
+
+  intptr_t ReadRequestBody(uint8_t* buf, size_t cap) override {
+    if (cap == 0)
+      return 0;
+    size_t remaining = request_body_.size() - req_cursor_;
+    if (remaining == 0)
+      return 0;
+    size_t n = (std::min)(cap, remaining);
+    memcpy(buf, request_body_.data() + req_cursor_, n);
+    req_cursor_ += n;
+    return static_cast<intptr_t>(n);
+  }
+
+  void Begin(int status, const char* headers, size_t headers_len) override {
+    status_ = status;
+    headers_ = LaufeyParseFlatHeaders(headers, headers_len);
+  }
+
+  intptr_t WriteResponse(const uint8_t* buf, size_t len) override {
+    response_body_.insert(response_body_.end(), buf, buf + len);
+    return static_cast<intptr_t>(len);
+  }
+
+  void Finish() override {
+    // WebView2 objects are single-threaded; complete on the UI thread.
+    RuntimeLoader::GetInstance()->GetBackend()->PostUiTask(
+        &WinSchemeExchange::CompleteOnUi, this);
+  }
+
+ private:
+  static void CompleteOnUi(void* data) {
+    auto* self = static_cast<WinSchemeExchange*>(data);
+    self->Complete();
+    delete self;
+  }
+
+  void Complete() {
+    ComPtr<IStream> stream;
+    stream.Attach(SHCreateMemStream(
+        response_body_.empty() ? nullptr : response_body_.data(),
+        static_cast<UINT>(response_body_.size())));
+    std::wstring headers_w;
+    for (const auto& [k, v] : headers_) {
+      headers_w += SchemeUtf8ToWide(k) + L": " + SchemeUtf8ToWide(v) + L"\r\n";
+    }
+    ComPtr<ICoreWebView2WebResourceResponse> response;
+    if (env_) {
+      env_->CreateWebResourceResponse(stream.Get(), status_, L"OK",
+                                      headers_w.c_str(), &response);
+      if (response)
+        args_->put_Response(response.Get());
+    }
+    deferral_->Complete();
+  }
+
+  ComPtr<ICoreWebView2Environment> env_;
+  ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args_;
+  ComPtr<ICoreWebView2Deferral> deferral_;
+  std::vector<uint8_t> request_body_;
+  size_t req_cursor_ = 0;
+  int status_ = 200;
+  std::vector<std::pair<std::string, std::string>> headers_;
+  std::vector<uint8_t> response_body_;
+};
+
+HRESULT HandleAppResourceRequested(
+    ComPtr<ICoreWebView2Environment> env,
+    ICoreWebView2WebResourceRequestedEventArgs* args) {
+  ComPtr<ICoreWebView2WebResourceRequest> request;
+  if (FAILED(args->get_Request(&request)) || !request)
+    return S_OK;
+
+  LPWSTR uri_raw = nullptr;
+  request->get_Uri(&uri_raw);
+  LPWSTR method_raw = nullptr;
+  request->get_Method(&method_raw);
+  std::string url = SchemeWideToUtf8(uri_raw);
+  std::string method = method_raw ? SchemeWideToUtf8(method_raw) : "GET";
+  if (uri_raw)
+    CoTaskMemFree(uri_raw);
+  if (method_raw)
+    CoTaskMemFree(method_raw);
+
+  std::vector<std::pair<std::string, std::string>> headers;
+  ComPtr<ICoreWebView2HttpRequestHeaders> req_headers;
+  if (SUCCEEDED(request->get_Headers(&req_headers)) && req_headers) {
+    ComPtr<ICoreWebView2HttpHeadersCollectionIterator> it;
+    if (SUCCEEDED(req_headers->GetIterator(&it)) && it) {
+      BOOL has_current = FALSE;
+      while (SUCCEEDED(it->get_HasCurrentHeader(&has_current)) && has_current) {
+        LPWSTR name = nullptr;
+        LPWSTR value = nullptr;
+        if (SUCCEEDED(it->GetCurrentHeader(&name, &value))) {
+          headers.emplace_back(SchemeWideToUtf8(name), SchemeWideToUtf8(value));
+          if (name)
+            CoTaskMemFree(name);
+          if (value)
+            CoTaskMemFree(value);
+        }
+        BOOL has_next = FALSE;
+        if (FAILED(it->MoveNext(&has_next)) || !has_next)
+          break;
+      }
+    }
+  }
+
+  std::vector<uint8_t> body;
+  ComPtr<IStream> content;
+  if (SUCCEEDED(request->get_Content(&content)) && content) {
+    uint8_t chunk[16 * 1024];
+    ULONG read = 0;
+    while (SUCCEEDED(content->Read(chunk, sizeof(chunk), &read)) && read > 0) {
+      body.insert(body.end(), chunk, chunk + read);
+    }
+  }
+
+  ComPtr<ICoreWebView2Deferral> deferral;
+  args->GetDeferral(&deferral);
+
+  std::string flat = LaufeyFlattenHeaders(headers);
+  // window_id is unused by the desktop bridge (single named channel).
+  auto* exchange = new WinSchemeExchange(env, args, deferral, std::move(body));
+  RuntimeLoader::GetInstance()->DispatchSchemeRequest(0, exchange, method, url,
+                                                      flat);
+  return S_OK;
+}
+
+}  // namespace
 
 // ============================================================================
 // WebView2 Backend
@@ -443,8 +616,20 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
 
 void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
                                                  HWND hwnd) {
+  // Register "app" as a secure custom scheme so the in-process scheme handler
+  // can serve top-level navigations to app:// like a normal origin.
+  auto options = Make<CoreWebView2EnvironmentOptions>();
+  ComPtr<ICoreWebView2EnvironmentOptions4> options4;
+  if (SUCCEEDED(options.As(&options4)) && options4) {
+    auto appScheme = Make<CoreWebView2CustomSchemeRegistration>(L"app");
+    appScheme->put_TreatAsSecure(TRUE);
+    appScheme->put_HasAuthorityComponent(TRUE);
+    ICoreWebView2CustomSchemeRegistration* registrations[] = {appScheme.Get()};
+    options4->SetCustomSchemeRegistrations(1, registrations);
+  }
+
   CreateCoreWebView2EnvironmentWithOptions(
-      nullptr, nullptr, nullptr,
+      nullptr, nullptr, options.Get(),
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
           [this, window_id, hwnd](HRESULT result,
                                   ICoreWebView2Environment* env) -> HRESULT {
@@ -457,7 +642,7 @@ void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
                 hwnd,
                 Callback<
                     ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                    [this, window_id, hwnd](
+                    [this, window_id, hwnd, env](
                         HRESULT result,
                         ICoreWebView2Controller* controller) -> HRESULT {
                       if (FAILED(result) || !controller) {
@@ -507,6 +692,27 @@ void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
                               })
                               .Get(),
                           nullptr);
+
+                      // In-process app:// scheme: intercept requests and
+                      // bridge them to the runtime's memory transport.
+                      {
+                        ComPtr<ICoreWebView2Environment> envPtr = env;
+                        state->webview->AddWebResourceRequestedFilter(
+                            L"app://*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+                        EventRegistrationToken schemeToken;
+                        state->webview->add_WebResourceRequested(
+                            Callback<
+                                ICoreWebView2WebResourceRequestedEventHandler>(
+                                [envPtr](
+                                    ICoreWebView2* sender,
+                                    ICoreWebView2WebResourceRequestedEventArgs*
+                                        args) -> HRESULT {
+                                  return HandleAppResourceRequested(envPtr,
+                                                                    args);
+                                })
+                                .Get(),
+                            &schemeToken);
+                      }
 
                       state->webview->add_ScriptDialogOpening(
                           Callback<

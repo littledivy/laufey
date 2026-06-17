@@ -186,6 +186,44 @@ static void Backend_JsCallRespond(void* data, uint64_t call_id,
   loader->JsCallRespond(window_id, call_id, resultPtr, errorPtr);
 }
 
+// --- Custom URL scheme handling ---
+
+static void Backend_RegisterSchemeHandler(void* data, const char* scheme,
+                                          laufey_scheme_request_fn handler,
+                                          laufey_scheme_cancel_fn on_cancel,
+                                          void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  loader->SetSchemeRequestHandler(scheme ? scheme : "", handler, on_cancel,
+                                  user_data);
+}
+
+static intptr_t Backend_SchemeRequestReadBody(
+    void* /*data*/, laufey_scheme_exchange_t* exchange, uint8_t* buf,
+    size_t cap) {
+  return reinterpret_cast<SchemeExchangeBase*>(exchange)->ReadRequestBody(buf,
+                                                                          cap);
+}
+
+static void Backend_SchemeResponseBegin(void* /*data*/,
+                                        laufey_scheme_exchange_t* exchange,
+                                        int status, const char* headers,
+                                        size_t headers_len) {
+  reinterpret_cast<SchemeExchangeBase*>(exchange)->Begin(status, headers,
+                                                         headers_len);
+}
+
+static intptr_t Backend_SchemeResponseWrite(void* /*data*/,
+                                            laufey_scheme_exchange_t* exchange,
+                                            const uint8_t* buf, size_t len) {
+  return reinterpret_cast<SchemeExchangeBase*>(exchange)->WriteResponse(buf,
+                                                                        len);
+}
+
+static void Backend_SchemeResponseFinish(void* /*data*/,
+                                         laufey_scheme_exchange_t* exchange) {
+  reinterpret_cast<SchemeExchangeBase*>(exchange)->Finish();
+}
+
 static void Backend_InvokeJsCallback(void* data, uint64_t callback_id,
                                      laufey_value_t* args) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
@@ -550,6 +588,12 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_js_call_handler = Backend_SetJsCallHandler;
   backend_api_.js_call_respond = Backend_JsCallRespond;
 
+  backend_api_.register_scheme_handler = Backend_RegisterSchemeHandler;
+  backend_api_.scheme_request_read_body = Backend_SchemeRequestReadBody;
+  backend_api_.scheme_response_begin = Backend_SchemeResponseBegin;
+  backend_api_.scheme_response_write = Backend_SchemeResponseWrite;
+  backend_api_.scheme_response_finish = Backend_SchemeResponseFinish;
+
   backend_api_.invoke_js_callback = Backend_InvokeJsCallback;
   backend_api_.release_js_callback = Backend_ReleaseJsCallback;
 
@@ -736,6 +780,44 @@ void RuntimeLoader::Shutdown() {
 
   if (runtime_thread_.joinable()) {
     runtime_thread_.join();
+  }
+}
+
+void RuntimeLoader::SetSchemeRequestHandler(const std::string& scheme,
+                                            laufey_scheme_request_fn handler,
+                                            laufey_scheme_cancel_fn on_cancel,
+                                            void* user_data) {
+  {
+    std::lock_guard<std::mutex> lock(scheme_mutex_);
+    scheme_request_handler_ = handler;
+    scheme_cancel_handler_ = on_cancel;
+    scheme_user_data_ = user_data;
+  }
+  if (handler && backend_) {
+    backend_->RegisterSchemeHandler(scheme);
+  }
+}
+
+void RuntimeLoader::DispatchSchemeRequest(uint32_t window_id,
+                                          SchemeExchangeBase* exchange,
+                                          const std::string& method,
+                                          const std::string& url,
+                                          const std::string& flat_headers) {
+  laufey_scheme_request_fn handler;
+  void* user_data;
+  {
+    std::lock_guard<std::mutex> lock(scheme_mutex_);
+    handler = scheme_request_handler_;
+    user_data = scheme_user_data_;
+  }
+  if (handler) {
+    handler(user_data, window_id,
+            reinterpret_cast<laufey_scheme_exchange_t*>(exchange),
+            method.c_str(), url.c_str(), flat_headers.data(),
+            flat_headers.size());
+  } else {
+    // No handler registered: finish so the request doesn't hang.
+    exchange->Finish();
   }
 }
 

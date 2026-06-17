@@ -11,6 +11,7 @@
 #include <map>
 
 #include "laufey.h"
+#include "scheme_exchange.h"
 #include "webview_value.h"
 
 #ifdef _WIN32
@@ -76,6 +77,20 @@ class RuntimeLoader {
     js_call_handler_ = handler;
     js_call_user_data_ = user_data;
   }
+
+  // --- Custom URL scheme handler (API >= 26) ---
+  // Store the runtime's scheme request handler and ask the platform backend to
+  // install its native handler for `scheme`.
+  void SetSchemeRequestHandler(const std::string& scheme,
+                               laufey_scheme_request_fn handler,
+                               laufey_scheme_cancel_fn on_cancel,
+                               void* user_data);
+
+  // Invoke the registered scheme request handler. Called by the platform
+  // backend when the webview issues a request for the registered scheme.
+  void DispatchSchemeRequest(uint32_t window_id, SchemeExchangeBase* exchange,
+                             const std::string& method, const std::string& url,
+                             const std::string& flat_headers);
 
   void SetKeyboardEventHandler(laufey_keyboard_event_fn handler,
                                void* user_data) {
@@ -246,6 +261,11 @@ class RuntimeLoader {
   void* js_call_user_data_ = nullptr;
   std::mutex handler_mutex_;
 
+  laufey_scheme_request_fn scheme_request_handler_ = nullptr;
+  laufey_scheme_cancel_fn scheme_cancel_handler_ = nullptr;
+  void* scheme_user_data_ = nullptr;
+  std::mutex scheme_mutex_;
+
   laufey_keyboard_event_fn keyboard_handler_ = nullptr;
   void* keyboard_user_data_ = nullptr;
   std::mutex keyboard_mutex_;
@@ -364,6 +384,12 @@ class LaufeyBackend {
                                void* on_click_data) = 0;
 
   virtual void OpenDevTools(uint32_t window_id) = 0;
+
+  // --- Custom URL scheme handler (API >= 26) ---
+  // Install a native handler for `scheme` so requests to <scheme>://… are
+  // delivered to RuntimeLoader::DispatchSchemeRequest. Default no-op: backends
+  // that don't implement it leave the scheme unhandled.
+  virtual void RegisterSchemeHandler(const std::string& /*scheme*/) {}
 
   // Show a modal dialog and BLOCK until the user dismisses it. Backends
   // run the platform's native modal loop (`runModal` / `MessageBoxW` /

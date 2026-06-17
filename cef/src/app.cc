@@ -3,6 +3,7 @@
 #include "app.h"
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
+#include "scheme_handler.h"
 
 #include <iostream>
 
@@ -373,6 +374,14 @@ bool LaufeyHandler::OnProcessMessageReceived(
   }
 
   return false;
+}
+
+void LaufeyApp::OnRegisterCustomSchemes(
+    CefRawPtr<CefSchemeRegistrar> registrar) {
+  registrar->AddCustomScheme(
+      LAUFEY_APP_SCHEME, CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                             CEF_SCHEME_OPTION_CORS_ENABLED |
+                             CEF_SCHEME_OPTION_FETCH_ENABLED);
 }
 
 void LaufeyApp::OnContextInitialized() {
