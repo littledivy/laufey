@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "capi",
     "winit",
+    "servo",
     "backend-winit-common",
     "examples/hello",
     "examples/binding_test",

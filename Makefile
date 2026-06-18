@@ -63,7 +63,7 @@ BUILD_DIR := $(CURDIR)/build
 
 .PHONY: all clean check-deps help
 .PHONY: runtimes hello-runtime ddcore-runtime
-.PHONY: winit webview cef
+.PHONY: winit webview cef servo
 .PHONY: cef-deps
 .PHONY: fmt fmt-check lint
 
@@ -71,7 +71,7 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-all: runtimes winit webview cef ## Build all backends
+all: runtimes winit webview cef servo ## Build all backends
 
 check-deps: ## Check that required build tools are installed
 	@echo "Checking build dependencies..."
@@ -135,6 +135,13 @@ cef: check-deps cef-deps ## Build the CEF backend
 		-DCEF_ROOT=$(CEF_ROOT) \
 		-DPROJECT_ARCH=$(PROJ_ARCH)
 	ninja -C cef/build
+
+# ─── Servo Backend ──────────────────────────────────────────────────
+
+servo: check-deps ## Build the Servo backend
+	cd servo && cargo build --release
+
+# ─── Formatting & Linting ────────────────────────────────────────────
 
 CPP_SOURCES := $(shell find capi cef/src webview/src -name '*.cc' -o -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.mm' 2>/dev/null)
 

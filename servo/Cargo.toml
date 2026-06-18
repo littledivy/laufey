@@ -1,0 +1,22 @@
+[package]
+name = "laufey-servo"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91.0"
+license = "MIT"
+
+[[bin]]
+name = "laufey_servo"
+path = "src/main.rs"
+
+[dependencies]
+laufey-backend-winit-common = { path = "../backend-winit-common" }
+servo = "0.3.0"
+servo-embedder-traits = "0.3.0"
+webrender_api = "0.68.0"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
+euclid = "0.22"
+url = "2"
+tracing = "0.1"
+keyboard-types = "0.8.3"
+libc = "0.2"

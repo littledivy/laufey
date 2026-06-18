@@ -1,17 +1,18 @@
 # Backends
 
 A backend is the native executable that hosts a browser (or windowing) engine
-and implements the [C ABI](c-abi.md). laufey ships three; a fourth is on a
-branch. All implement the same `laufey_backend_api_t`, so a runtime is portable
-across them — the differences are in engine, process model, size, and a few
-features that a given engine can't express on a given OS (see
-[the feature pages](window-management.md)).
+and implements the [C ABI](c-abi.md). laufey ships three mainline backends plus
+an experimental Servo backend on this branch. All implement the same
+`laufey_backend_api_t`, so a runtime is portable across them — the differences
+are in engine, process model, size, and a few features that a given engine can't
+express on a given OS (see [the feature pages](window-management.md)).
 
 | Backend                                                           | Engine        | Process model | Bundled | JS bridge |
 | ----------------------------------------------------------------- | ------------- | ------------- | ------- | --------- |
 | [CEF](https://github.com/littledivy/laufey/tree/main/cef)         | Chromium 144  | multi-process | yes     | yes       |
 | [WebView](https://github.com/littledivy/laufey/tree/main/webview) | system native | single        | no      | yes       |
 | [Winit](https://github.com/littledivy/laufey/tree/main/winit)     | none          | single        | n/a     | no        |
+| [Servo](https://github.com/littledivy/laufey/tree/servo/servo)    | Servo         | multi-process | yes     | partial   |
 
 Platform support is x86_64 + aarch64 on macOS and Linux, x86_64 on Windows.
 Android is not supported.
@@ -57,9 +58,19 @@ handles needed to create a rendering surface. Sources in
 
 ## Servo (experimental)
 
-A [Servo](https://servo.org)-based backend is preserved on the
-[`servo`](https://github.com/littledivy/laufey/tree/servo) branch for future
-work and is not part of the mainline build.
+Embeds [Servo](https://servo.org) through [`libservo`](https://github.com/servo/servo),
+the independent Rust web engine. Like CEF it bundles its engine and runs
+multi-process (a constellation plus content processes), but it is built in Rust
+as a Cargo workspace member ([`servo/`](https://github.com/littledivy/laufey/tree/servo/servo))
+rather than via CMake. It shares its non-engine pieces (menus, tray, dock,
+dialogs, notifications) through `backend-winit-common`, the same crate the Winit
+backend uses.
+
+This backend is experimental and lives only on the
+[`servo`](https://github.com/littledivy/laufey/tree/servo) branch, not in the
+mainline build. The JS bridge is partial: native→JS evaluation works, but
+marshalling JS results and JS→native binding calls back into `laufey_value_t`
+is not yet wired up. Build it with `make servo`.
 
 ## backend-common
 

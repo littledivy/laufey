@@ -22,9 +22,11 @@ defined in `capi/include/laufey.h`.
 | `cef/`     | Chromium Embedded Framework                       | C++                | CEF Views (internal) |
 | `webview/` | System webview (WKWebView / WebView2 / WebKitGTK) | C++ (per-platform) | Created directly     |
 | `winit/`   | None (winit only, no web content)                 | Rust (winit)       | Created directly     |
+| `servo/`   | Servo (libservo)                                  | Rust (libservo)    | Created directly     |
 
-An experimental Servo backend lives on the
-[`servo`](https://github.com/littledivy/laufey/tree/servo) branch.
+The Servo backend is experimental and lives on the
+[`servo`](https://github.com/littledivy/laufey/tree/servo) branch; it is not
+part of the mainline build.
 
 ### Runtime (capi)
 

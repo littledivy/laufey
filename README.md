@@ -6,11 +6,10 @@ technologies with your choice of browser engine.
 ### How it works
 
 laufey is built around a C ABI that separates browser engines (backends) from
-application logic (runtimes). Prebuilt backends for [CEF](./cef) and the system
-[WebView](./webview) implement the `laufey_backend_api_t` interface defined in
-[`capi/include/laufey.h`](capi/include/laufey.h), and a [Winit](./winit) backend
-handles windowing without a web engine. (A Servo-based backend lives on the
-[`servo`](https://github.com/littledivy/laufey/tree/servo) branch.)
+application logic (runtimes). Prebuilt backends for [CEF](./cef), the system
+[WebView](./webview), and [Servo](./servo) implement the `laufey_backend_api_t`
+interface defined in [`capi/include/laufey.h`](capi/include/laufey.h), and a
+[Winit](./winit) backend handles windowing without a web engine.
 
 Runtimes are shared libraries compiled with user application logic. When the
 backend starts, it loads the runtime dylib and hands control to the runtime. The
@@ -46,7 +45,7 @@ laufey::main!(main);
 - [architecture.md](docs/architecture.md) — backend/runtime split
 - [c-abi.md](docs/c-abi.md) — the `laufey.h` C ABI: runtime entry points, the
   API table, the value model, and the JS call flow
-- [backends.md](docs/backends.md) — CEF, WebView, and Winit
+- [backends.md](docs/backends.md) — CEF, WebView, Servo, and Winit
 - [features/](docs/features/) — one page per feature, with a usage example and
   the per-platform support matrix
 - [building.md](docs/building.md) — `make` targets and prerequisites

@@ -1300,28 +1300,44 @@ pub fn register_menu_callbacks(
     Some(cb) => cb,
     None => return,
   };
+  // Lock the store exactly once, then recurse over the parsed tree while
+  // holding the lock. The previous version recursed by calling this public
+  // function again for each submenu, which re-acquired `MENU_CLICK_STORE` on
+  // the same thread — and `std::sync::Mutex` is not reentrant, so any menu
+  // containing a submenu deadlocked the calling (main/UI) thread.
   let mut store = MENU_CLICK_STORE.lock().unwrap();
   let store = store.get_or_insert_with(HashMap::new);
-  for item in items {
-    match item {
-      ParsedMenuItem::Item { id, .. } => {
-        store.insert(
-          id.clone(),
-          MenuCallbackInfo {
-            callback: cb,
-            callback_data,
-            window_id,
-          },
-        );
+
+  fn collect(
+    items: &[ParsedMenuItem],
+    store: &mut HashMap<String, MenuCallbackInfo>,
+    cb: LaufeyMenuClickFn,
+    callback_data: usize,
+    window_id: u32,
+  ) {
+    for item in items {
+      match item {
+        ParsedMenuItem::Item { id, .. } => {
+          store.insert(
+            id.clone(),
+            MenuCallbackInfo {
+              callback: cb,
+              callback_data,
+              window_id,
+            },
+          );
+        }
+        ParsedMenuItem::Submenu {
+          items: children, ..
+        } => {
+          collect(children, store, cb, callback_data, window_id);
+        }
+        _ => {}
       }
-      ParsedMenuItem::Submenu {
-        items: children, ..
-      } => {
-        register_menu_callbacks(children, callback, callback_data, window_id);
-      }
-      _ => {}
     }
   }
+
+  collect(items, store, cb, callback_data, window_id);
 }
 
 /// Build a muda Menu bar from parsed items.
@@ -3327,6 +3343,14 @@ pub fn load_and_start_runtime(api: LaufeyBackendApi) {
         if result != 0 {
           eprintln!("Runtime start failed with code: {}", result);
         }
+        // Diagnostic: the runtime thread returning here is normal (the UI
+        // event loop keeps the process alive), but if the process dies
+        // around this point it tells us the runtime, not the UI, drove the
+        // shutdown.
+        eprintln!(
+          "[backend] laufey_runtime_start returned (code {}); runtime thread exiting",
+          result
+        );
 
         std::mem::forget(lib);
       });
