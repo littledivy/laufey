@@ -1,7 +1,13 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@std/yaml@1": "1.1.0",
     "npm:js-yaml@4.1.0": "4.1.0"
+  },
+  "jsr": {
+    "@std/yaml@1.1.0": {
+      "integrity": "fc1c5c63e05c4c5eb6118355f557958035d41940d6c29d35b306ef7155d6edb0"
+    }
   },
   "npm": {
     "argparse@2.0.1": {

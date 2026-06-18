@@ -81,6 +81,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: winit
+          # rust-cache keys on runner.os+arch only ("Linux-x64"), not the
+          # image version, so a cache built on the old ubuntu-latest (24.04)
+          # restores as a full match onto ubuntu-22.04 and poisons the target
+          # dir (stale fingerprints, missing dep rlibs -> E0463). Pin per image.
+          key: ${{ matrix.os }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
