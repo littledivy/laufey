@@ -32,7 +32,8 @@ fn main() {
                 .args
                 .first()
                 .and_then(|v| v.as_string())
-                .unwrap_or("World");
+                .unwrap_or("World")
+                .to_string();
             call.resolve(Value::String(format!("Hello, {name}!")));
         })
         .load("index.html");
