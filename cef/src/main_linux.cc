@@ -607,17 +607,21 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
       const CefString& process_type,
       CefRefPtr<CefCommandLine> command_line) override {
     // Native Wayland support. By default CEF/Chromium uses the X11 Ozone
-    // backend and runs through XWayland on Wayland sessions. Select the
-    // Wayland backend when a Wayland display is present so we render natively;
-    // otherwise leave the X11 default. We resolve from WAYLAND_DISPLAY rather
-    // than rely on --ozone-platform-hint=auto, which keys off
-    // XDG_SESSION_TYPE and misses sessions that export WAYLAND_DISPLAY only.
+    // backend and runs through XWayland on Wayland sessions. Mirror the
+    // approach Electron/Chrome standardized on: --ozone-platform-hint=auto,
+    // which selects Wayland on a Wayland session and X11 otherwise. `auto`
+    // keys off XDG_SESSION_TYPE, so it misses sessions that export only
+    // WAYLAND_DISPLAY (sandboxed / nested / misconfigured); cover that gap by
+    // hard-selecting Wayland when WAYLAND_DISPLAY is present. The explicit
+    // --ozone-platform wins over the hint, so the result is: Wayland whenever a
+    // Wayland display exists, auto-detect (X11 in practice) otherwise.
     // Only the browser process (empty process_type) needs the switch; CEF
-    // propagates the resolved --ozone-platform to its subprocesses. Respect an
-    // explicit override.
+    // propagates the resolved platform to its subprocesses. Respect an explicit
+    // override.
     if (process_type.empty() &&
         !command_line->HasSwitch("ozone-platform-hint") &&
         !command_line->HasSwitch("ozone-platform")) {
+      command_line->AppendSwitchWithValue("ozone-platform-hint", "auto");
       const char* wayland_display = getenv("WAYLAND_DISPLAY");
       if (wayland_display && *wayland_display) {
         command_line->AppendSwitchWithValue("ozone-platform", "wayland");
