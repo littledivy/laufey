@@ -477,4 +477,10 @@ class LaufeyBackend {
 
 LaufeyBackend* CreateLaufeyBackend();
 
+// Returns the path to a runtime library co-located with the running executable
+// and sharing its base name (e.g. example.exe -> example.dll, ./foo -> foo.so),
+// or "" if none exists. Lets a renamed single-exe auto-load its runtime without
+// a --runtime flag or wrapper script.
+std::string LaufeyFindColocatedRuntime();
+
 #endif  // LAUFEY_RUNTIME_LOADER_H_

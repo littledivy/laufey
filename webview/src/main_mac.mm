@@ -100,6 +100,10 @@ void EnsureEditMenu(NSMenu* menubar) {
     if (envPath) {
       runtimePath = envPath;
     }
+
+    if (runtimePath.empty()) {
+      runtimePath = LaufeyFindColocatedRuntime();
+    }
   }
 
   if (runtimePath.empty()) {
@@ -164,6 +168,9 @@ static int run_headless(const char* runtimePath) {
     const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       path = envPath;
+    }
+    if (path.empty()) {
+      path = LaufeyFindColocatedRuntime();
     }
   }
 
