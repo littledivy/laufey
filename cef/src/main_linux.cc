@@ -605,7 +605,25 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
 
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
-      CefRefPtr<CefCommandLine> command_line) override {}
+      CefRefPtr<CefCommandLine> command_line) override {
+    // Native Wayland support. By default CEF/Chromium uses the X11 Ozone
+    // backend and runs through XWayland on Wayland sessions. Select the
+    // Wayland backend when a Wayland display is present so we render natively;
+    // otherwise leave the X11 default. We resolve from WAYLAND_DISPLAY rather
+    // than rely on --ozone-platform-hint=auto, which keys off
+    // XDG_SESSION_TYPE and misses sessions that export WAYLAND_DISPLAY only.
+    // Only the browser process (empty process_type) needs the switch; CEF
+    // propagates the resolved --ozone-platform to its subprocesses. Respect an
+    // explicit override.
+    if (process_type.empty() &&
+        !command_line->HasSwitch("ozone-platform-hint") &&
+        !command_line->HasSwitch("ozone-platform")) {
+      const char* wayland_display = getenv("WAYLAND_DISPLAY");
+      if (wayland_display && *wayland_display) {
+        command_line->AppendSwitchWithValue("ozone-platform", "wayland");
+      }
+    }
+  }
 
   void OnContextInitialized() override {
     CEF_REQUIRE_UI_THREAD();
