@@ -527,7 +527,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     if (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) {
       // Treat as a utility/panel window: out of taskbar & pager, and don't
       // grab focus when shown (the GTK equivalent of a non-activating panel).
-      gtk_window_set_type_hint(GTK_WINDOW(window), GDK_WINDOW_TYPE_HINT_UTILITY);
+      gtk_window_set_type_hint(GTK_WINDOW(window),
+                               GDK_WINDOW_TYPE_HINT_UTILITY);
       gtk_window_set_skip_taskbar_hint(GTK_WINDOW(window), TRUE);
       gtk_window_set_skip_pager_hint(GTK_WINDOW(window), TRUE);
       gtk_window_set_focus_on_map(GTK_WINDOW(window), FALSE);
@@ -540,8 +541,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                      nullptr);
     g_signal_connect(window, "button-press-event", G_CALLBACK(on_button_event),
                      nullptr);
-    g_signal_connect(window, "button-release-event", G_CALLBACK(on_button_event),
-                     nullptr);
+    g_signal_connect(window, "button-release-event",
+                     G_CALLBACK(on_button_event), nullptr);
     gtk_widget_add_events(window, GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK |
                                       GDK_SMOOTH_SCROLL_MASK |
                                       GDK_ENTER_NOTIFY_MASK |
@@ -563,7 +564,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
     RegisterWidget(window, window_id);
 
-    WebKitUserContentManager* content_manager = webkit_user_content_manager_new();
+    WebKitUserContentManager* content_manager =
+        webkit_user_content_manager_new();
     g_signal_connect(content_manager, "script-message-received::laufey",
                      G_CALLBACK(on_script_message), nullptr);
     webkit_user_content_manager_register_script_message_handler(content_manager,
