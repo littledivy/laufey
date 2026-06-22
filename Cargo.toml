@@ -5,6 +5,7 @@ members = [
     "winit",
     "backend-winit-common",
     "examples/hello",
+    "examples/native_ui",
     "examples/binding_test",
     "examples/ddcore",
     "examples/presentation",

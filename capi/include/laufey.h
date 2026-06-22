@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 26
+#define LAUFEY_API_VERSION 27
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -256,6 +256,23 @@ typedef void (*laufey_scheme_request_fn)(void* user_data, uint32_t window_id,
 // writing and call scheme_response_finish to release `exchange`. Optional.
 typedef void (*laufey_scheme_cancel_fn)(void* user_data,
                                         laufey_scheme_exchange_t* exchange);
+
+// --- Native widgets (engine-free native UI, API >= 27) ---------------------
+//
+// A retained tree of platform-native widgets hosted directly in a window's
+// content view, for backends with no web engine (the winit backend). Each
+// node is created with widget_create (returning an opaque widget_id), wired
+// into the tree with widget_add_child, and a window's root node is set with
+// widget_set_root. On macOS the kinds map to AppKit: VSTACK/HSTACK ->
+// NSStackView, LABEL -> NSTextField, BUTTON -> NSButton. Backends without
+// native-widget support (CEF, WebView, pre-27) leave these pointers NULL.
+#define LAUFEY_WIDGET_VSTACK 0
+#define LAUFEY_WIDGET_HSTACK 1
+#define LAUFEY_WIDGET_LABEL 2
+#define LAUFEY_WIDGET_BUTTON 3
+
+// Callback fired when a native widget (e.g. a BUTTON) is activated.
+typedef void (*laufey_widget_click_fn)(void* user_data, uint32_t widget_id);
 
 struct laufey_backend_api {
   uint32_t version;
@@ -655,6 +672,35 @@ struct laufey_backend_api {
   // is invalid. Call exactly once per exchange (including after a cancel).
   void (*scheme_response_finish)(void* backend_data,
                                  laufey_scheme_exchange_t* exchange);
+
+  // --- Native widgets (API >= 27) --------------------------------------------
+  //
+  // Create a native widget of the given LAUFEY_WIDGET_* kind, owned by
+  // `window_id`. Returns an opaque widget_id > 0, or 0 on failure / when the
+  // backend has no native-widget support. The widget is not visible until it
+  // is added to the tree (widget_add_child) and the tree's root is mounted
+  // with widget_set_root.
+  uint32_t (*widget_create)(void* backend_data, uint32_t window_id, int kind);
+
+  // Set the text of a widget (LABEL string value, BUTTON title). No-op for
+  // kinds without text. `text` is UTF-8.
+  void (*widget_set_text)(void* backend_data, uint32_t widget_id,
+                          const char* text);
+
+  // Append `child_id` to `parent_id`. For stack containers the child is added
+  // as an arranged subview (laid out in order); otherwise as a plain subview.
+  void (*widget_add_child)(void* backend_data, uint32_t parent_id,
+                           uint32_t child_id);
+
+  // Mount `widget_id` as the root widget filling `window_id`'s content view.
+  void (*widget_set_root)(void* backend_data, uint32_t window_id,
+                          uint32_t widget_id);
+
+  // Register the global handler invoked when any widget is activated (e.g. a
+  // button click). The callback receives the activated widget's id.
+  void (*set_widget_click_handler)(void* backend_data,
+                                   laufey_widget_click_fn handler,
+                                   void* user_data);
 };
 
 #ifdef __cplusplus

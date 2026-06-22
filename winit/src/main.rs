@@ -74,6 +74,80 @@ unsafe extern "C" fn backend_execute_js(
   // no-op — no web engine
 }
 
+// --- Native widgets ---
+
+use laufey_backend_winit_common::widget;
+
+/// Wake the event loop so queued widget ops get applied on the UI thread.
+fn wake_widget() {
+  if let Some(state) = BackendState::get() {
+    let _ = state.event_proxy.send_event(UserEvent::WidgetTask);
+  }
+}
+
+unsafe extern "C" fn backend_widget_create(
+  _data: *mut c_void,
+  window_id: u32,
+  kind: std::ffi::c_int,
+) -> u32 {
+  let widget_id = widget::allocate_widget_id();
+  widget::queue_op(widget::WidgetOp::Create {
+    widget_id,
+    window_id,
+    kind,
+  });
+  wake_widget();
+  widget_id
+}
+
+unsafe extern "C" fn backend_widget_set_text(
+  _data: *mut c_void,
+  widget_id: u32,
+  text: *const std::ffi::c_char,
+) {
+  let text = if text.is_null() {
+    String::new()
+  } else {
+    std::ffi::CStr::from_ptr(text)
+      .to_string_lossy()
+      .into_owned()
+  };
+  widget::queue_op(widget::WidgetOp::SetText { widget_id, text });
+  wake_widget();
+}
+
+unsafe extern "C" fn backend_widget_add_child(
+  _data: *mut c_void,
+  parent_id: u32,
+  child_id: u32,
+) {
+  widget::queue_op(widget::WidgetOp::AddChild {
+    parent_id,
+    child_id,
+  });
+  wake_widget();
+}
+
+unsafe extern "C" fn backend_widget_set_root(
+  _data: *mut c_void,
+  window_id: u32,
+  widget_id: u32,
+) {
+  widget::queue_op(widget::WidgetOp::SetRoot {
+    window_id,
+    widget_id,
+  });
+  wake_widget();
+}
+
+unsafe extern "C" fn backend_set_widget_click_handler(
+  _data: *mut c_void,
+  handler: Option<widget::LaufeyWidgetClickFn>,
+  user_data: *mut c_void,
+) {
+  widget::set_click_handler(handler, user_data as usize);
+}
+
 // --- API construction ---
 
 fn create_backend_api() -> LaufeyBackendApi {
@@ -81,6 +155,11 @@ fn create_backend_api() -> LaufeyBackendApi {
   fill_common_api!(api);
   api.navigate = Some(backend_navigate);
   api.execute_js = Some(backend_execute_js);
+  api.widget_create = Some(backend_widget_create);
+  api.widget_set_text = Some(backend_widget_set_text);
+  api.widget_add_child = Some(backend_widget_add_child);
+  api.widget_set_root = Some(backend_widget_set_root);
+  api.set_widget_click_handler = Some(backend_set_widget_click_handler);
   api
 }
 
@@ -89,6 +168,8 @@ fn create_backend_api() -> LaufeyBackendApi {
 #[derive(Debug)]
 enum UserEvent {
   Common(CommonEvent),
+  /// Wake the loop to drain queued native-widget operations on the UI thread.
+  WidgetTask,
 }
 
 struct WindowInfo {
@@ -183,6 +264,9 @@ impl ApplicationHandler<UserEvent> for App {
     event: UserEvent,
   ) {
     match event {
+      UserEvent::WidgetTask => {
+        widget::drain_and_apply();
+      }
       UserEvent::Common(ref common) => match common {
         CommonEvent::Quit => {
           event_loop.exit();

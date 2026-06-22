@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 26;
+pub const LAUFEY_API_VERSION: u32 = 27;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -78,6 +78,10 @@ static TRAY_DBLCLICK_HANDLERS: OnceLock<
 static NOTIFICATION_HANDLERS: OnceLock<
   Mutex<HashMap<u32, Arc<dyn Fn(NotificationEvent) + Send + Sync>>>,
 > = OnceLock::new();
+static WIDGET_CLICK_HANDLERS: OnceLock<
+  Mutex<HashMap<u32, Box<dyn Fn() + Send + Sync>>>,
+> = OnceLock::new();
+static WIDGET_CLICK_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 enum BindingHandler {
   Sync(Box<dyn Fn(JsCall) + Send + Sync>),
@@ -657,6 +661,117 @@ pub fn quit() {
   }
 }
 
+// --- Native widgets ---
+
+/// Kind of native widget. Maps to the platform toolkit (AppKit on macOS).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WidgetKind {
+  /// Vertical stack container.
+  VStack,
+  /// Horizontal stack container.
+  HStack,
+  /// Static text label.
+  Label,
+  /// Push button. Use [`Widget::on_click`] for the activation handler.
+  Button,
+}
+
+impl WidgetKind {
+  fn to_raw(self) -> c_int {
+    match self {
+      WidgetKind::VStack => 0,
+      WidgetKind::HStack => 1,
+      WidgetKind::Label => 2,
+      WidgetKind::Button => 3,
+    }
+  }
+}
+
+/// A handle to a native widget created via [`Window::widget`]. Builder methods
+/// take `self` for chaining; the `set_*` / `add_child` variants take `&self`.
+pub struct Widget {
+  id: u32,
+}
+
+impl Widget {
+  /// Wrap an existing widget id (does not create a new widget). Useful for
+  /// mutating a widget from a click handler that only captured its id.
+  pub fn from_id(id: u32) -> Self {
+    Widget { id }
+  }
+
+  pub fn id(&self) -> u32 {
+    self.id
+  }
+
+  /// Set the widget's text (label string, button title).
+  pub fn text(self, text: &str) -> Self {
+    self.set_text(text);
+    self
+  }
+
+  pub fn set_text(&self, text: &str) {
+    let api = api();
+    if let Some(f) = api.widget_set_text {
+      let c_text = CString::new(text).expect("widget text contains NUL");
+      unsafe { f(api.backend_data, self.id, c_text.as_ptr()) };
+    }
+  }
+
+  /// Append a child widget (chaining form).
+  pub fn child(self, child: &Widget) -> Self {
+    self.add_child(child);
+    self
+  }
+
+  pub fn add_child(&self, child: &Widget) {
+    let api = api();
+    if let Some(f) = api.widget_add_child {
+      unsafe { f(api.backend_data, self.id, child.id) };
+    }
+  }
+
+  /// Register a handler invoked when this widget is activated (button click).
+  pub fn on_click<F>(self, handler: F) -> Self
+  where
+    F: Fn() + Send + Sync + 'static,
+  {
+    widget_click_handlers()
+      .lock()
+      .unwrap()
+      .insert(self.id, Box::new(handler));
+    ensure_widget_click_handler();
+    self
+  }
+}
+
+fn widget_click_handlers(
+) -> &'static Mutex<HashMap<u32, Box<dyn Fn() + Send + Sync>>> {
+  WIDGET_CLICK_HANDLERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ensure_widget_click_handler() {
+  if WIDGET_CLICK_REGISTERED.swap(true, Ordering::SeqCst) {
+    return;
+  }
+  let api = api();
+  if let Some(f) = api.set_widget_click_handler {
+    unsafe {
+      f(api.backend_data, Some(widget_click_callback), std::ptr::null_mut());
+    }
+  }
+}
+
+unsafe extern "C" fn widget_click_callback(
+  _user_data: *mut c_void,
+  widget_id: u32,
+) {
+  let handlers = widget_click_handlers().lock().unwrap();
+  if let Some(handler) = handlers.get(&widget_id) {
+    handler();
+  }
+}
+
 // --- Window ---
 
 pub struct Window {
@@ -757,6 +872,29 @@ impl Window {
     if let Some(f) = api.navigate {
       let c_url = CString::new(url).expect("Invalid URL");
       unsafe { f(api.backend_data, self.id, c_url.as_ptr()) };
+    }
+  }
+
+  /// Create a native widget owned by this window (engine-free winit backend).
+  /// Returns a [`Widget`] handle; it is not visible until added to a tree and
+  /// mounted with [`Window::set_root_widget`]. On backends without
+  /// native-widget support the returned widget's id is 0 and all operations
+  /// are no-ops.
+  pub fn widget(&self, kind: WidgetKind) -> Widget {
+    let api = api();
+    let id = if let Some(f) = api.widget_create {
+      unsafe { f(api.backend_data, self.id, kind.to_raw()) }
+    } else {
+      0
+    };
+    Widget { id }
+  }
+
+  /// Mount `root` as the window's content, filling its content view.
+  pub fn set_root_widget(&self, root: &Widget) {
+    let api = api();
+    if let Some(f) = api.widget_set_root {
+      unsafe { f(api.backend_data, self.id, root.id) };
     }
   }
 

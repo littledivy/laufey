@@ -6,6 +6,7 @@ pub mod dock;
 pub mod notification;
 pub mod permission;
 pub mod tray;
+pub mod widget;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -28,11 +29,17 @@ use winit::window::{Window, WindowLevel};
 
 // --- Constants ---
 
-pub const LAUFEY_API_VERSION: u32 = 25;
+pub const LAUFEY_API_VERSION: u32 = 27;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
 pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
+
+/// Native widget kinds (mirror `LAUFEY_WIDGET_*` in laufey.h).
+pub const LAUFEY_WIDGET_VSTACK: c_int = 0;
+pub const LAUFEY_WIDGET_HSTACK: c_int = 1;
+pub const LAUFEY_WIDGET_LABEL: c_int = 2;
+pub const LAUFEY_WIDGET_BUTTON: c_int = 3;
 
 #[allow(dead_code)]
 pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: c_int = 0;
@@ -418,6 +425,44 @@ pub struct LaufeyBackendApi {
       *mut c_void,
       c_int,
       Option<permission::LaufeyPermissionCallbackFn>,
+      *mut c_void,
+    ),
+  >,
+  // --- Custom URL scheme handler (API >= 26) ---
+  // The winit backend has no web engine and leaves all of these None; they
+  // exist only to keep this struct's layout identical to laufey.h so the
+  // fields that follow (widgets, API >= 27) sit at the correct offsets.
+  pub register_scheme_handler: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      *const c_char,
+      *mut c_void,
+      *mut c_void,
+      *mut c_void,
+    ),
+  >,
+  pub scheme_request_read_body: Option<
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut u8, usize) -> isize,
+  >,
+  pub scheme_response_begin: Option<
+    unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, *const c_char, usize),
+  >,
+  pub scheme_response_write: Option<
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize) -> isize,
+  >,
+  pub scheme_response_finish:
+    Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+  // --- Native widgets (API >= 27) ---
+  pub widget_create:
+    Option<unsafe extern "C" fn(*mut c_void, u32, c_int) -> u32>,
+  pub widget_set_text:
+    Option<unsafe extern "C" fn(*mut c_void, u32, *const c_char)>,
+  pub widget_add_child: Option<unsafe extern "C" fn(*mut c_void, u32, u32)>,
+  pub widget_set_root: Option<unsafe extern "C" fn(*mut c_void, u32, u32)>,
+  pub set_widget_click_handler: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      Option<widget::LaufeyWidgetClickFn>,
       *mut c_void,
     ),
   >,
@@ -1038,6 +1083,16 @@ pub fn create_api_base() -> LaufeyBackendApi {
     close_notification: None,
     query_permission: None,
     request_permission: None,
+    register_scheme_handler: None,
+    scheme_request_read_body: None,
+    scheme_response_begin: None,
+    scheme_response_write: None,
+    scheme_response_finish: None,
+    widget_create: None,
+    widget_set_text: None,
+    widget_add_child: None,
+    widget_set_root: None,
+    set_widget_click_handler: None,
   }
 }
 
