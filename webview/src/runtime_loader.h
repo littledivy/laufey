@@ -30,6 +30,15 @@ class RuntimeLoader {
 
   bool Load(const std::string& path);
 
+  // Static-link path (iOS): the runtime is linked into the app binary, so the
+  // entry points are resolved at link time instead of via dlopen.
+  void LoadStatic(laufey_runtime_init_fn init, laufey_runtime_start_fn start,
+                  laufey_runtime_shutdown_fn shutdown) {
+    init_fn_ = init;
+    start_fn_ = start;
+    shutdown_fn_ = shutdown;
+  }
+
   bool Start();
 
   void Shutdown();

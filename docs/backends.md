@@ -14,7 +14,8 @@ features that a given engine can't express on a given OS (see
 | [Winit](https://github.com/littledivy/laufey/tree/main/winit)     | none          | single        | n/a     | no        |
 
 Platform support is x86_64 + aarch64 on macOS and Linux, x86_64 on Windows.
-Android is not supported.
+There is also an **iOS** backend (UIKit + WKWebView, statically linked) — see
+[iOS](ios.md). Android is not supported.
 
 ## CEF
 

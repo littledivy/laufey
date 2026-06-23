@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.19)
 project(laufey_webview VERSION 1.0.0 LANGUAGES C CXX)
 
-if(APPLE)
+# Note: CMAKE_SYSTEM_NAME==iOS also has APPLE==TRUE, so detect iOS first.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  enable_language(OBJCXX)
+  set(PLATFORM_IOS TRUE)
+elseif(APPLE)
   enable_language(OBJCXX)
   set(PLATFORM_MACOS TRUE)
 elseif(UNIX AND NOT APPLE)
@@ -11,9 +15,13 @@ elseif(WIN32)
 endif()
 
 # Shared native-API implementations (notifications, tray, dock, dialogs, ...).
-# Each platform branch links laufey_backend_common below.
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend-common
-                 ${CMAKE_BINARY_DIR}/backend-common)
+# Each platform branch links laufey_backend_common below. iOS doesn't use it
+# (those are desktop-only AppKit/GTK surfaces); it compiles just the value
+# marshalling directly into the target instead.
+if(NOT PLATFORM_IOS)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend-common
+                   ${CMAKE_BINARY_DIR}/backend-common)
+endif()
 
 set(LAUFEY_SRCS_COMMON
   src/webview_value.h
@@ -21,7 +29,14 @@ set(LAUFEY_SRCS_COMMON
   src/runtime_loader.h
 )
 
-if(PLATFORM_MACOS)
+if(PLATFORM_IOS)
+  set(LAUFEY_SRCS_PLATFORM
+    src/webview_ios.mm
+    src/main_ios.mm
+    # iOS doesn't link backend-common; pull in just the value marshalling.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../backend-common/src/laufey_value.cc
+  )
+elseif(PLATFORM_MACOS)
   set(LAUFEY_SRCS_PLATFORM
     src/webview_macos.mm
     src/main_mac.mm
@@ -40,7 +55,55 @@ endif()
 
 set(LAUFEY_TARGET "laufey_webview")
 
-if(PLATFORM_MACOS)
+if(PLATFORM_IOS)
+  # The iOS app links a laufey runtime statically (no dlopen on iOS). Point
+  # this at a runtime static lib, e.g. target/aarch64-apple-ios/release/
+  # libios_hello.a (built from examples/ios_hello).
+  set(LAUFEY_IOS_RUNTIME_LIB "" CACHE FILEPATH "Path to the statically-linked laufey runtime (.a)")
+
+  add_executable(${LAUFEY_TARGET} MACOSX_BUNDLE
+    ${LAUFEY_SRCS_COMMON}
+    ${LAUFEY_SRCS_PLATFORM}
+  )
+
+  find_library(UIKIT_FRAMEWORK UIKit REQUIRED)
+  find_library(WEBKIT_FRAMEWORK WebKit REQUIRED)
+  find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+
+  target_include_directories(${LAUFEY_TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../backend-common/include
+  )
+
+  target_link_libraries(${LAUFEY_TARGET}
+    ${UIKIT_FRAMEWORK}
+    ${WEBKIT_FRAMEWORK}
+    ${FOUNDATION_FRAMEWORK}
+    "-lc++"
+  )
+
+  if(LAUFEY_IOS_RUNTIME_LIB)
+    # Force the runtime entry points (referenced only from the C++ shell) to be
+    # pulled from the static lib.
+    target_link_libraries(${LAUFEY_TARGET} "${LAUFEY_IOS_RUNTIME_LIB}")
+    target_link_options(${LAUFEY_TARGET} PRIVATE
+      "-Wl,-u,_laufey_runtime_init"
+      "-Wl,-u,_laufey_runtime_start"
+      "-Wl,-u,_laufey_runtime_shutdown"
+    )
+  endif()
+
+  target_compile_options(${LAUFEY_TARGET} PRIVATE -fobjc-arc)
+
+  set_target_properties(${LAUFEY_TARGET} PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist.in
+    MACOSX_BUNDLE_GUI_IDENTIFIER "dev.laufey.ios"
+    MACOSX_BUNDLE_BUNDLE_NAME "laufey"
+    MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+    XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1"
+  )
+
+elseif(PLATFORM_MACOS)
   add_executable(${LAUFEY_TARGET} MACOSX_BUNDLE
     ${LAUFEY_SRCS_COMMON}
     ${LAUFEY_SRCS_PLATFORM}
