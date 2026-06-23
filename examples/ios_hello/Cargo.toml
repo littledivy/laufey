@@ -1,0 +1,12 @@
+[package]
+name = "ios_hello"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# Static lib: on iOS the runtime is linked into the app binary (no dlopen).
+crate-type = ["staticlib"]
+
+[dependencies]
+laufey = { path = "../../capi" }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
