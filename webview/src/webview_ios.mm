@@ -197,17 +197,31 @@ void WKWebViewIOSBackend::CreateWindowEx(uint32_t window_id, int width,
       CGRect bounds = UIScreen.mainScreen.bounds;
       WKWebView* webview = [[WKWebView alloc] initWithFrame:bounds
                                               configuration:config];
-      webview.autoresizingMask =
-          UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+      webview.translatesAutoresizingMaskIntoConstraints = NO;
+      webview.opaque = NO;
+      webview.backgroundColor = UIColor.blackColor;
+      // Edge-to-edge: stop the scroll view from insetting content for the
+      // safe area (the page handles insets via viewport-fit=cover +
+      // env(safe-area-inset-*)). This is what makes the web content fill the
+      // whole screen instead of being padded under the status bar / home bar.
+      webview.scrollView.contentInsetAdjustmentBehavior =
+          UIScrollViewContentInsetAdjustmentNever;
       if ([webview respondsToSelector:@selector(setInspectable:)]) {
         [webview setInspectable:YES];
       }
 
       UIViewController* vc = [[UIViewController alloc] init];
+      vc.view.backgroundColor = UIColor.blackColor;
       [vc.view addSubview:webview];
 
-      vc.view.backgroundColor = UIColor.blackColor;
-      webview.frame = vc.view.bounds;
+      // Pin to the view's full bounds (not the safe area) so the webview is
+      // truly full-screen; autoresizing alone left a one-shot frame.
+      [NSLayoutConstraint activateConstraints:@[
+        [webview.topAnchor constraintEqualToAnchor:vc.view.topAnchor],
+        [webview.bottomAnchor constraintEqualToAnchor:vc.view.bottomAnchor],
+        [webview.leadingAnchor constraintEqualToAnchor:vc.view.leadingAnchor],
+        [webview.trailingAnchor constraintEqualToAnchor:vc.view.trailingAnchor],
+      ]];
 
       UIWindow* window = [[UIWindow alloc] initWithFrame:bounds];
       window.rootViewController = vc;

@@ -5,6 +5,7 @@
 - [Architecture](architecture.md)
 - [C ABI](c-abi.md)
 - [Backends](backends.md)
+- [iOS](ios.md)
 - [Window management](window-management.md)
 - [JavaScript interop](javascript-interop.md)
 - [Menus](menus.md)
