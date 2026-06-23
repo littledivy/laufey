@@ -1,4 +1,4 @@
-# laufey on iOS (experimental)
+# laufey on iOS
 
 A native iOS backend for laufey: the laufey C ABI on UIKit + WKWebView, so a
 laufey runtime (capi) can drive a native iOS app. Verified on the iOS simulator.
