@@ -20,9 +20,8 @@ fn ios_main() {
           .and_then(|v| v.as_string())
           .unwrap_or("World")
           .to_string();
-        call.resolve(Value::String(format!(
-          "Hello, {name}! — from Rust on iOS"
-        )));
+        call
+          .resolve(Value::String(format!("Hello, {name}! — from Rust on iOS")));
       })
       .bind("add", |call| {
         let a = call.args.first().and_then(|v| v.as_int()).unwrap_or(0);

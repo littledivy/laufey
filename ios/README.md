@@ -35,10 +35,10 @@ to the bound Rust handler.
 
 ## Notes / status
 
-- Simulator-verified; device builds (signing, `.ipa` packaging) are not wired
-  up here yet.
-- The backend is built via the standalone `build.sh` (direct `clang++`), not
-  yet wired into the CMake build used by the desktop backends.
+- Simulator-verified; device builds (signing, `.ipa` packaging) are not wired up
+  here yet.
+- The backend is built via the standalone `build.sh` (direct `clang++`), not yet
+  wired into the CMake build used by the desktop backends.
 - Running the **Deno** desktop runtime on iOS (instead of the lightweight
   `ios_hello` capi runtime) is a separate work-in-progress and is not part of
   this directory.

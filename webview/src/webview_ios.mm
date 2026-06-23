@@ -46,7 +46,8 @@ class WKWebViewIOSBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
-  void SetTitle(uint32_t /*window_id*/, const std::string& /*title*/) override {}
+  void SetTitle(uint32_t /*window_id*/, const std::string& /*title*/) override {
+  }
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
 
@@ -54,19 +55,29 @@ class WKWebViewIOSBackend : public LaufeyBackend {
   void SetWindowSize(uint32_t, int, int) override {}
   void GetWindowSize(uint32_t, int* w, int* h) override {
     CGRect b = UIScreen.mainScreen.bounds;
-    if (w) *w = (int)b.size.width;
-    if (h) *h = (int)b.size.height;
+    if (w)
+      *w = (int)b.size.width;
+    if (h)
+      *h = (int)b.size.height;
   }
   void SetWindowPosition(uint32_t, int, int) override {}
   void GetWindowPosition(uint32_t, int* x, int* y) override {
-    if (x) *x = 0;
-    if (y) *y = 0;
+    if (x)
+      *x = 0;
+    if (y)
+      *y = 0;
   }
   void SetResizable(uint32_t, bool) override {}
-  bool IsResizable(uint32_t) override { return false; }
+  bool IsResizable(uint32_t) override {
+    return false;
+  }
   void SetAlwaysOnTop(uint32_t, bool) override {}
-  bool IsAlwaysOnTop(uint32_t) override { return false; }
-  bool IsVisible(uint32_t) override { return true; }
+  bool IsAlwaysOnTop(uint32_t) override {
+    return false;
+  }
+  bool IsVisible(uint32_t) override {
+    return true;
+  }
   void Show(uint32_t) override {}
   void Hide(uint32_t) override {}
   void Focus(uint32_t) override {}
@@ -88,7 +99,8 @@ class WKWebViewIOSBackend : public LaufeyBackend {
     EvalOnWindow(window_id, BuildReleaseCallbackScript(callback_id));
   }
   void RespondToJsCall(uint32_t window_id, uint64_t call_id,
-                       laufey::ValuePtr result, laufey::ValuePtr error) override;
+                       laufey::ValuePtr result,
+                       laufey::ValuePtr error) override;
 
   // Desktop-only UI surfaces: not applicable on iOS.
   void SetApplicationMenu(uint32_t, laufey_value_t*,
@@ -131,13 +143,16 @@ class WKWebViewIOSBackend : public LaufeyBackend {
 @implementation LaufeyIOSMessageHandler
 - (void)userContentController:(WKUserContentController*)ucc
       didReceiveScriptMessage:(WKScriptMessage*)message {
-  if (![message.name isEqualToString:@"laufey"]) return;
-  if (![message.body isKindOfClass:[NSDictionary class]]) return;
+  if (![message.name isEqualToString:@"laufey"])
+    return;
+  if (![message.body isKindOfClass:[NSDictionary class]])
+    return;
   NSDictionary* body = (NSDictionary*)message.body;
   NSNumber* callIdNum = body[@"callId"];
   NSString* method = body[@"method"];
   id argsJson = body[@"args"];
-  if (!callIdNum || !method) return;
+  if (!callIdNum || !method)
+    return;
 
   uint64_t call_id = [callIdNum unsignedLongLongValue];
   std::string methodStr = [method UTF8String];
@@ -145,8 +160,8 @@ class WKWebViewIOSBackend : public LaufeyBackend {
   laufey::ValuePtr args = laufey::Value::List();
   if ([argsJson isKindOfClass:[NSArray class]]) {
     NSData* jsonData = [NSJSONSerialization dataWithJSONObject:argsJson
-                                                      options:0
-                                                        error:nil];
+                                                       options:0
+                                                         error:nil];
     if (jsonData) {
       NSString* jsonStr = [[NSString alloc] initWithData:jsonData
                                                 encoding:NSUTF8StringEncoding];
@@ -165,8 +180,7 @@ void WKWebViewIOSBackend::CreateWindowEx(uint32_t window_id, int width,
                                          int height, uint32_t /*flags*/) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      LaufeyIOSMessageHandler* handler =
-          [[LaufeyIOSMessageHandler alloc] init];
+      LaufeyIOSMessageHandler* handler = [[LaufeyIOSMessageHandler alloc] init];
       handler.backend = this;
       handler.windowId = window_id;
 
@@ -268,7 +282,8 @@ void WKWebViewIOSBackend::CloseWindow(uint32_t window_id) {
     @autoreleasepool {
       std::lock_guard<std::mutex> lock(windows_mutex_);
       auto it = windows_.find(window_id);
-      if (it == windows_.end()) return;
+      if (it == windows_.end())
+        return;
       it->second.window.hidden = YES;
       windows_.erase(it);
     }
@@ -281,7 +296,8 @@ void WKWebViewIOSBackend::Navigate(uint32_t window_id, const std::string& url) {
     @autoreleasepool {
       std::lock_guard<std::mutex> lock(windows_mutex_);
       auto* state = GetWindow(window_id);
-      if (!state) return;
+      if (!state)
+        return;
       if (urlCopy.rfind("data:text/html,", 0) == 0) {
         NSString* html = [NSString stringWithUTF8String:urlCopy.c_str() + 15];
         html = [html stringByRemovingPercentEncoding];
@@ -307,7 +323,8 @@ void WKWebViewIOSBackend::ExecuteJs(uint32_t window_id,
       std::lock_guard<std::mutex> lock(windows_mutex_);
       auto* state = GetWindow(window_id);
       if (!state) {
-        if (callback) callback(nullptr, nullptr, callback_data);
+        if (callback)
+          callback(nullptr, nullptr, callback_data);
         return;
       }
       NSString* js = [NSString stringWithUTF8String:scriptCopy.c_str()];
@@ -337,7 +354,8 @@ void WKWebViewIOSBackend::EvalOnWindow(uint32_t window_id,
     @autoreleasepool {
       std::lock_guard<std::mutex> lock(windows_mutex_);
       auto* state = GetWindow(window_id);
-      if (!state) return;
+      if (!state)
+        return;
       NSString* js = [NSString stringWithUTF8String:scriptCopy.c_str()];
       [state->webview evaluateJavaScript:js completionHandler:nil];
     }

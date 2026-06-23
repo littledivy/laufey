@@ -25,19 +25,20 @@ The runtime's `laufey_runtime_init` / `_start` / `_shutdown` are resolved at
 Rust-linked app.
 
 - A "window" is a `UIWindow` + root `UIViewController` hosting a `WKWebView`.
-- The JS bridge, value marshalling, and init script are shared verbatim with
-  the desktop WebView backend (`runtime_loader.cc`, `laufey_json.h`,
+- The JS bridge, value marshalling, and init script are shared verbatim with the
+  desktop WebView backend (`runtime_loader.cc`, `laufey_json.h`,
   `init_script.h`).
 - Desktop-only surfaces (menus, tray, dock) are no-ops; iOS doesn't link
   `backend-common`, only its value marshalling.
 
-Sources: [`webview/src/webview_ios.mm`](https://github.com/littledivy/laufey/blob/main/webview/src/webview_ios.mm),
+Sources:
+[`webview/src/webview_ios.mm`](https://github.com/littledivy/laufey/blob/main/webview/src/webview_ios.mm),
 [`webview/src/main_ios.mm`](https://github.com/littledivy/laufey/blob/main/webview/src/main_ios.mm).
 
 ## Build
 
-The iOS backend is wired into the webview CMake build. It needs a laufey
-runtime compiled as a **static lib** for the iOS target (e.g. the
+The iOS backend is wired into the webview CMake build. It needs a laufey runtime
+compiled as a **static lib** for the iOS target (e.g. the
 [`examples/ios_hello`](https://github.com/littledivy/laufey/tree/main/examples/ios_hello)
 runtime):
 
