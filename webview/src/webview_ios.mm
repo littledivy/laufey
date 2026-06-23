@@ -187,6 +187,22 @@ void WKWebViewIOSBackend::CreateWindowEx(uint32_t window_id, int width,
           forMainFrameOnly:YES];
       [config.userContentController addUserScript:script];
 
+      // Force a non-zoomable, edge-to-edge viewport (disables pinch / double-
+      // tap zoom regardless of the page's own viewport meta).
+      NSString* noZoom =
+          @"(function(){function f(){var m=document.querySelector("
+          @"'meta[name=viewport]')||document.createElement('meta');"
+          @"m.name='viewport';m.content='width=device-width,initial-scale=1,"
+          @"maximum-scale=1,user-scalable=no,viewport-fit=cover';"
+          @"if(!m.parentNode&&document.head)document.head.appendChild(m);}"
+          @"if(document.head){f();}else{document.addEventListener("
+          @"'DOMContentLoaded',f);}})();";
+      WKUserScript* viewport = [[WKUserScript alloc]
+            initWithSource:noZoom
+             injectionTime:WKUserScriptInjectionTimeAtDocumentStart
+          forMainFrameOnly:YES];
+      [config.userContentController addUserScript:viewport];
+
       // Explicitly enable content JavaScript (iOS may default it off
       // depending on the configuration / loadHTMLString path).
       if (@available(iOS 14.0, *)) {
@@ -206,6 +222,10 @@ void WKWebViewIOSBackend::CreateWindowEx(uint32_t window_id, int width,
       // whole screen instead of being padded under the status bar / home bar.
       webview.scrollView.contentInsetAdjustmentBehavior =
           UIScrollViewContentInsetAdjustmentNever;
+      // No pinch-zoom (app, not a zoomable document).
+      webview.scrollView.minimumZoomScale = 1.0;
+      webview.scrollView.maximumZoomScale = 1.0;
+      webview.scrollView.bouncesZoom = NO;
       if ([webview respondsToSelector:@selector(setInspectable:)]) {
         [webview setInspectable:YES];
       }

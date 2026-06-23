@@ -95,6 +95,7 @@ if(PLATFORM_IOS)
   target_compile_options(${LAUFEY_TARGET} PRIVATE -fobjc-arc)
 
   set_target_properties(${LAUFEY_TARGET} PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/ios/Info.plist.in
     MACOSX_BUNDLE_GUI_IDENTIFIER "dev.laufey.ios"
     MACOSX_BUNDLE_BUNDLE_NAME "laufey"
     MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
