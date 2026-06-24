@@ -250,6 +250,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     }
   }
 
+  if (g_runtime_path.empty()) {
+    g_runtime_path = LaufeyFindColocatedRuntime();
+  }
+
   // Check for headless / forked worker mode (skip CEF entirely)
   if (is_forked_worker() || (argv && is_cli_worker_command(argc, argv))) {
     if (argv)

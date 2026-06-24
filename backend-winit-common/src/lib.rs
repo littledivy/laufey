@@ -3257,12 +3257,57 @@ pub fn dispatch_close_requested_event(
 
 // --- Runtime loading ---
 
+// Path to a runtime library co-located with the running executable and sharing
+// its base name (e.g. example.exe -> example.dll, ./foo -> foo.so), or None.
+// Lets a renamed single-exe auto-load its runtime without --runtime or a
+// wrapper script.
+fn find_colocated_runtime() -> Option<PathBuf> {
+  let exe = env::current_exe().ok()?;
+  let dir = exe.parent()?;
+  let stem = exe.file_stem()?;
+
+  let ext = if cfg!(target_os = "windows") {
+    "dll"
+  } else if cfg!(target_os = "macos") {
+    "dylib"
+  } else {
+    "so"
+  };
+
+  let candidate = dir.join(stem).with_extension(ext);
+  if candidate.exists() && candidate != exe {
+    return Some(candidate);
+  }
+  None
+}
+
 pub fn find_runtime_library() -> Option<PathBuf> {
+  let mut args = env::args().skip(1);
+  while let Some(arg) = args.next() {
+    if arg == "--runtime" {
+      if let Some(path) = args.next() {
+        let p = PathBuf::from(path);
+        if p.exists() {
+          return Some(p);
+        }
+      }
+    } else if let Some(path) = arg.strip_prefix("--runtime=") {
+      let p = PathBuf::from(path);
+      if p.exists() {
+        return Some(p);
+      }
+    }
+  }
+
   if let Ok(path) = env::var("LAUFEY_RUNTIME_PATH") {
     let p = PathBuf::from(path);
     if p.exists() {
       return Some(p);
     }
+  }
+
+  if let Some(p) = find_colocated_runtime() {
+    return Some(p);
   }
 
   let search_paths = [

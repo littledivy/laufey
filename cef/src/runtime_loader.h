@@ -438,6 +438,12 @@ class RuntimeLoader {
   static RuntimeLoader* instance_;
 };
 
+// Returns the path to a runtime library co-located with the running executable
+// and sharing its base name (e.g. example.exe -> example.dll, ./foo -> foo.so),
+// or "" if none exists. Lets a renamed single-exe auto-load its runtime without
+// a --runtime flag or wrapper script.
+std::string LaufeyFindColocatedRuntime();
+
 // Platform-specific native event monitor hooks.
 // Implemented in the platform-specific file (e.g. runtime_loader_mac.mm).
 void InstallNativeMouseMonitor();

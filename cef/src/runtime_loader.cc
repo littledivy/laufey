@@ -7,8 +7,13 @@
 
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <unistd.h>
 #else
 #include <windows.h>
+#endif
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
 #endif
 
 #include <iostream>
@@ -27,6 +32,80 @@
 #include "include/wrapper/cef_helpers.h"
 
 RuntimeLoader* RuntimeLoader::instance_ = nullptr;
+
+namespace {
+
+// Absolute path of the running executable, or "" if it can't be determined.
+std::string GetExecutablePath() {
+#if defined(_WIN32)
+  std::vector<wchar_t> buf(MAX_PATH);
+  for (;;) {
+    DWORD len = GetModuleFileNameW(nullptr, buf.data(),
+                                   static_cast<DWORD>(buf.size()));
+    if (len == 0)
+      return "";
+    if (len < buf.size()) {
+      int size = WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, nullptr, 0,
+                                     nullptr, nullptr);
+      if (size <= 0)
+        return "";
+      std::string out(size - 1, '\0');
+      WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, &out[0], size, nullptr,
+                          nullptr);
+      return out;
+    }
+    buf.resize(buf.size() * 2);  // truncated; grow and retry
+  }
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);  // query required length
+  std::vector<char> buf(size);
+  if (_NSGetExecutablePath(buf.data(), &size) != 0)
+    return "";
+  return std::string(buf.data());
+#else
+  std::vector<char> buf(4096);
+  ssize_t len = readlink("/proc/self/exe", buf.data(), buf.size());
+  if (len <= 0)
+    return "";
+  return std::string(buf.data(), static_cast<size_t>(len));
+#endif
+}
+
+bool PathExists(const std::string& path) {
+#if defined(_WIN32)
+  return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+#else
+  return access(path.c_str(), F_OK) == 0;
+#endif
+}
+
+}  // namespace
+
+std::string LaufeyFindColocatedRuntime() {
+  std::string exe = GetExecutablePath();
+  if (exe.empty())
+    return "";
+
+  // Strip the extension from the filename component only (keep directory dots).
+  size_t slash = exe.find_last_of("/\\");
+  size_t file_start = (slash == std::string::npos) ? 0 : slash + 1;
+  size_t dot = exe.find_last_of('.');
+  std::string base =
+      (dot != std::string::npos && dot > file_start) ? exe.substr(0, dot) : exe;
+
+#if defined(_WIN32)
+  std::string candidate = base + ".dll";
+#elif defined(__APPLE__)
+  std::string candidate = base + ".dylib";
+#else
+  std::string candidate = base + ".so";
+#endif
+
+  if (PathExists(candidate))
+    return candidate;
+  return "";
+}
 
 #ifdef _WIN32
 void ConfigureWin32WindowAsPanel(void* hwnd_ptr) {

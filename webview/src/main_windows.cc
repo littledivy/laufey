@@ -42,6 +42,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   if (runtimePath.empty()) {
+    runtimePath = LaufeyFindColocatedRuntime();
+  }
+
+  if (runtimePath.empty()) {
     const char* searchPaths[] = {".\\runtime.dll",
                                  ".\\target\\debug\\hello.dll",
                                  ".\\target\\release\\hello.dll"};
