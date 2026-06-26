@@ -628,14 +628,14 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
       }
     }
 
-    // Thin, auto-hiding "Fluent" overlay scrollbars so the webview matches the
+    // Thin, auto-hiding overlay scrollbars so the webview matches the
     // GNOME/Adwaita look instead of Chromium's chunky classic Linux scrollbars
-    // (issue #21). Only the browser process needs the switch; CEF propagates
-    // resolved features to its subprocesses. Skip if the embedder already set
-    // enable-features so we don't clobber their list.
+    // with stepper arrows (issue #21). Only the browser process needs the
+    // switch; CEF propagates resolved features to its subprocesses. Skip if the
+    // embedder already set enable-features so we don't clobber their list.
     if (process_type.empty() && !command_line->HasSwitch("enable-features")) {
-      command_line->AppendSwitchWithValue(
-          "enable-features", "FluentScrollbar,FluentOverlayScrollbar");
+      command_line->AppendSwitchWithValue("enable-features",
+                                          "OverlayScrollbar");
     }
   }
 
