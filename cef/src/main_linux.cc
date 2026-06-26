@@ -627,6 +627,16 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
         command_line->AppendSwitchWithValue("ozone-platform", "wayland");
       }
     }
+
+    // Thin, auto-hiding "Fluent" overlay scrollbars so the webview matches the
+    // GNOME/Adwaita look instead of Chromium's chunky classic Linux scrollbars
+    // (issue #21). Only the browser process needs the switch; CEF propagates
+    // resolved features to its subprocesses. Skip if the embedder already set
+    // enable-features so we don't clobber their list.
+    if (process_type.empty() && !command_line->HasSwitch("enable-features")) {
+      command_line->AppendSwitchWithValue(
+          "enable-features", "FluentScrollbar,FluentOverlayScrollbar");
+    }
   }
 
   void OnContextInitialized() override {
