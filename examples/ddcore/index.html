@@ -4,219 +4,219 @@
     <meta charset="UTF-8">
     <title>System Dashboard</title>
     <style>
-      ::-webkit-scrollbar {
-        display: none;
-      }
-      body {
-        font-family: system-ui, sans-serif;
-        background: #f5f5f7;
-        color: #444;
-        padding: 40px;
-        margin: 0;
-      }
-      h1 {
-        color: #1d1d1f;
-        font-size: 22px;
-        margin: 0 0 32px;
-        font-weight: 600;
-      }
-      h1 span {
-        color: #999;
-        font-weight: 400;
-      }
-      dl {
-        display: grid;
-        grid-template-columns: 120px 1fr;
-        gap: 8px 16px;
-        margin-bottom: 32px;
-      }
-      dt {
-        color: #888;
-        font-size: 13px;
-      }
-      dd {
-        color: #1d1d1f;
-        font-size: 13px;
-        margin: 0;
-      }
+    ::-webkit-scrollbar {
+      display: none;
+    }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f7;
+      color: #444;
+      padding: 40px;
+      margin: 0;
+    }
+    h1 {
+      color: #1d1d1f;
+      font-size: 22px;
+      margin: 0 0 32px;
+      font-weight: 600;
+    }
+    h1 span {
+      color: #999;
+      font-weight: 400;
+    }
+    dl {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 8px 16px;
+      margin-bottom: 32px;
+    }
+    dt {
+      color: #888;
+      font-size: 13px;
+    }
+    dd {
+      color: #1d1d1f;
+      font-size: 13px;
+      margin: 0;
+    }
 
-      .section-label {
-        font-size: 13px;
-        color: #888;
-        margin-bottom: 10px;
-      }
-      .cpu-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 8px;
-        margin-bottom: 24px;
-      }
-      .core {
-        background: #fff;
-        border-radius: 8px;
-        padding: 10px 12px;
-        position: relative;
-        overflow: hidden;
-      }
-      .core-bg {
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        width: 0%;
-        background: linear-gradient(
-          90deg,
-          rgba(59, 130, 246, 0.18),
-          rgba(59, 130, 246, 0.35)
-        );
-        transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s;
-      }
-      .core-bg.hot {
-        background: linear-gradient(
-          90deg,
-          rgba(239, 68, 68, 0.18),
-          rgba(239, 68, 68, 0.35)
-        );
-      }
-      .core-info {
-        position: relative;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 12px;
-      }
-      .core-label {
-        color: #999;
-        font-size: 11px;
-      }
-      .core-pct {
-        color: #1d1d1f;
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-        transition: color 0.4s;
-      }
-      .core-pct.hot {
-        color: #ef4444;
-      }
+    .section-label {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    .cpu-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+    .core {
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .core-bg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: linear-gradient(
+        90deg,
+        rgba(59, 130, 246, 0.18),
+        rgba(59, 130, 246, 0.35)
+      );
+      transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s;
+    }
+    .core-bg.hot {
+      background: linear-gradient(
+        90deg,
+        rgba(239, 68, 68, 0.18),
+        rgba(239, 68, 68, 0.35)
+      );
+    }
+    .core-info {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+    .core-label {
+      color: #999;
+      font-size: 11px;
+    }
+    .core-pct {
+      color: #1d1d1f;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      transition: color 0.4s;
+    }
+    .core-pct.hot {
+      color: #ef4444;
+    }
 
-      .mem-card {
-        background: #fff;
-        border-radius: 8px;
-        padding: 10px 12px;
-        position: relative;
-        overflow: hidden;
-        margin-bottom: 24px;
-      }
-      .mem-bg {
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        width: 0%;
-        background: linear-gradient(
-          90deg,
-          rgba(239, 68, 68, 0.18),
-          rgba(239, 68, 68, 0.35)
-        );
-        transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-      }
-      .mem-info {
-        position: relative;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 12px;
-      }
-      .mem-label {
-        color: #999;
-        font-size: 11px;
-      }
-      .mem-pct {
-        color: #1d1d1f;
-        font-weight: 600;
-        font-variant-numeric: tabular-nums;
-      }
-      .mem-detail {
-        position: relative;
-        font-size: 11px;
-        color: #999;
-        margin-top: 2px;
-      }
-      .footer {
-        font-size: 11px;
-        color: #ccc;
-        margin-top: 40px;
-      }
-      #proc-search {
-        background: #fff;
-        border: 1px solid #ddd;
-        color: #333;
-        padding: 6px 10px;
-        font-size: 13px;
-        border-radius: 4px;
-        width: 240px;
-        margin-bottom: 12px;
-        outline: none;
-      }
-      #proc-search:focus {
-        border-color: #3b82f6;
-      }
-      #proc-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 12px;
-        font-variant-numeric: tabular-nums;
-        table-layout: fixed;
-      }
-      #proc-table th {
-        text-align: left;
-        color: #888;
-        font-weight: 500;
-        padding: 6px 8px;
-        border-bottom: 1px solid #ddd;
-        cursor: pointer;
-        user-select: none;
-        white-space: nowrap;
-      }
-      #proc-table th:hover {
-        color: #555;
-      }
-      #proc-table th .arrow {
-        font-size: 10px;
-        margin-left: 4px;
-      }
-      #proc-table td {
-        padding: 4px 8px;
-        border-bottom: 1px solid #eee;
-        color: #444;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #proc-table col.col-pid {
-        width: 70px;
-      }
-      #proc-table col.col-name {
-        width: auto;
-      }
-      #proc-table col.col-cpu {
-        width: 70px;
-      }
-      #proc-table col.col-mem {
-        width: 90px;
-      }
-      #proc-table tr:hover td {
-        background: #eef2ff;
-      }
-      .proc-section {
-        margin-top: 32px;
-      }
-      .proc-section h2 {
-        color: #1d1d1f;
-        font-size: 15px;
-        font-weight: 600;
-        margin: 0 0 12px;
-      }
+    .mem-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px 12px;
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .mem-bg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: linear-gradient(
+        90deg,
+        rgba(239, 68, 68, 0.18),
+        rgba(239, 68, 68, 0.35)
+      );
+      transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .mem-info {
+      position: relative;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+    .mem-label {
+      color: #999;
+      font-size: 11px;
+    }
+    .mem-pct {
+      color: #1d1d1f;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .mem-detail {
+      position: relative;
+      font-size: 11px;
+      color: #999;
+      margin-top: 2px;
+    }
+    .footer {
+      font-size: 11px;
+      color: #ccc;
+      margin-top: 40px;
+    }
+    #proc-search {
+      background: #fff;
+      border: 1px solid #ddd;
+      color: #333;
+      padding: 6px 10px;
+      font-size: 13px;
+      border-radius: 4px;
+      width: 240px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    #proc-search:focus {
+      border-color: #3b82f6;
+    }
+    #proc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      table-layout: fixed;
+    }
+    #proc-table th {
+      text-align: left;
+      color: #888;
+      font-weight: 500;
+      padding: 6px 8px;
+      border-bottom: 1px solid #ddd;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    #proc-table th:hover {
+      color: #555;
+    }
+    #proc-table th .arrow {
+      font-size: 10px;
+      margin-left: 4px;
+    }
+    #proc-table td {
+      padding: 4px 8px;
+      border-bottom: 1px solid #eee;
+      color: #444;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #proc-table col.col-pid {
+      width: 70px;
+    }
+    #proc-table col.col-name {
+      width: auto;
+    }
+    #proc-table col.col-cpu {
+      width: 70px;
+    }
+    #proc-table col.col-mem {
+      width: 90px;
+    }
+    #proc-table tr:hover td {
+      background: #eef2ff;
+    }
+    .proc-section {
+      margin-top: 32px;
+    }
+    .proc-section h2 {
+      color: #1d1d1f;
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 12px;
+    }
     </style>
   </head>
   <body>
@@ -281,141 +281,138 @@
     <div class="footer">Powered by LAUFEY</div>
 
     <script>
-      function formatUptime(s) {
-        var d = Math.floor(s / 86400),
-          h = Math.floor((s % 86400) / 3600),
-          m = Math.floor((s % 3600) / 60);
-        if (d > 0) return d + "d " + h + "h " + m + "m";
-        if (h > 0) return h + "h " + m + "m";
-        return m + "m";
-      }
-      function updateSystemInfo(i) {
-        document.getElementById("hostname").textContent = i.hostname;
-        document.getElementById("os").textContent = i.os;
-        document.getElementById("arch").textContent = i.arch;
-        document.getElementById("cpu-model").textContent = i.cpuModel;
-        document.getElementById("cores").textContent = i.cores;
-        document.getElementById("total-mem").textContent =
-          Math.round(i.totalMemoryMb).toLocaleString() + " MB";
-      }
+    function formatUptime(s) {
+      var d = Math.floor(s / 86400),
+        h = Math.floor((s % 86400) / 3600),
+        m = Math.floor((s % 3600) / 60);
+      if (d > 0) return d + "d " + h + "h " + m + "m";
+      if (h > 0) return h + "h " + m + "m";
+      return m + "m";
+    }
+    function updateSystemInfo(i) {
+      document.getElementById("hostname").textContent = i.hostname;
+      document.getElementById("os").textContent = i.os;
+      document.getElementById("arch").textContent = i.arch;
+      document.getElementById("cpu-model").textContent = i.cpuModel;
+      document.getElementById("cores").textContent = i.cores;
+      document.getElementById("total-mem").textContent =
+        Math.round(i.totalMemoryMb).toLocaleString() + " MB";
+    }
 
-      var _coreEls = [];
-      function ensureCoreEls(n) {
-        if (_coreEls.length === n) return;
-        var grid = document.getElementById("cpu-grid");
-        grid.innerHTML = "";
-        _coreEls = [];
-        for (var i = 0; i < n; i++) {
-          var div = document.createElement("div");
-          div.className = "core";
-          div.innerHTML =
-            '<div class="core-bg"></div><div class="core-info"><span class="core-label">Core ' +
-            i + '</span><span class="core-pct">0%</span></div>';
-          grid.appendChild(div);
-          _coreEls.push({
-            bg: div.querySelector(".core-bg"),
-            pct: div.querySelector(".core-pct"),
-          });
-        }
-      }
-
-      function updateLiveStats(s) {
-        // Per-core CPU
-        if (s.perCore) {
-          ensureCoreEls(s.perCore.length);
-          for (var i = 0; i < s.perCore.length; i++) {
-            var v = Math.round(s.perCore[i]);
-            var el = _coreEls[i];
-            el.bg.style.width = v + "%";
-            el.pct.textContent = v + "%";
-            var hot = v > 80;
-            el.bg.className = "core-bg" + (hot ? " hot" : "");
-            el.pct.className = "core-pct" + (hot ? " hot" : "");
-          }
-        }
-        document.getElementById("cpu-avg").textContent =
-          Math.round(s.cpuUsage) + "%";
-
-        // Memory
-        var mem = Math.round((s.memUsedMb / s.memTotalMb) * 100);
-        document.getElementById("mem-bg").style.width = mem + "%";
-        document.getElementById("mem-pct").textContent = mem + "%";
-        document.getElementById("mem-detail").textContent =
-          Math.round(s.memUsedMb).toLocaleString() + " / " +
-          Math.round(s.memTotalMb).toLocaleString() + " MB";
-        document.getElementById("uptime").textContent = formatUptime(s.uptime);
-      }
-
-      var _procs = [], _sortCol = "cpuUsage", _sortAsc = false, _filter = "";
-
-      function renderProcs() {
-        var filtered = _procs.filter(function (p) {
-          return !_filter || p.name.toLowerCase().indexOf(_filter) !== -1;
+    var _coreEls = [];
+    function ensureCoreEls(n) {
+      if (_coreEls.length === n) return;
+      var grid = document.getElementById("cpu-grid");
+      grid.innerHTML = "";
+      _coreEls = [];
+      for (var i = 0; i < n; i++) {
+        var div = document.createElement("div");
+        div.className = "core";
+        div.innerHTML =
+          '<div class="core-bg"></div><div class="core-info"><span class="core-label">Core ' +
+          i + '</span><span class="core-pct">0%</span></div>';
+        grid.appendChild(div);
+        _coreEls.push({
+          bg: div.querySelector(".core-bg"),
+          pct: div.querySelector(".core-pct"),
         });
-        filtered.sort(function (a, b) {
-          var va = a[_sortCol], vb = b[_sortCol];
-          if (typeof va === "string") {
-            va = va.toLowerCase();
-            vb = vb.toLowerCase();
-          }
-          if (va < vb) return _sortAsc ? -1 : 1;
-          if (va > vb) return _sortAsc ? 1 : -1;
-          return 0;
-        });
-        var html = "";
-        for (var i = 0; i < filtered.length; i++) {
-          var p = filtered[i];
-          html += "<tr><td>" + p.pid + "</td><td>" + p.name + "</td><td>" +
-            p.cpuUsage.toFixed(1) + "</td><td>" + p.memoryMb.toFixed(1) +
-            "</td></tr>";
-        }
-        document.getElementById("proc-body").innerHTML = html;
-        var ths = document.querySelectorAll("#proc-table th");
-        for (var j = 0; j < ths.length; j++) {
-          var col = ths[j].getAttribute("data-col");
-          var arrow = col === _sortCol
-            ? (_sortAsc ? " \u25B2" : " \u25BC")
-            : "";
-          ths[j].innerHTML = ths[j].textContent.replace(/ [\u25B2\u25BC]/, "") +
-            "<span class='arrow'>" + arrow + "</span>";
+      }
+    }
+
+    function updateLiveStats(s) {
+      // Per-core CPU
+      if (s.perCore) {
+        ensureCoreEls(s.perCore.length);
+        for (var i = 0; i < s.perCore.length; i++) {
+          var v = Math.round(s.perCore[i]);
+          var el = _coreEls[i];
+          el.bg.style.width = v + "%";
+          el.pct.textContent = v + "%";
+          var hot = v > 80;
+          el.bg.className = "core-bg" + (hot ? " hot" : "");
+          el.pct.className = "core-pct" + (hot ? " hot" : "");
         }
       }
+      document.getElementById("cpu-avg").textContent = Math.round(s.cpuUsage) + "%";
 
-      function updateProcesses(procs) {
-        _procs = procs;
-        renderProcs();
-      }
+      // Memory
+      var mem = Math.round((s.memUsedMb / s.memTotalMb) * 100);
+      document.getElementById("mem-bg").style.width = mem + "%";
+      document.getElementById("mem-pct").textContent = mem + "%";
+      document.getElementById("mem-detail").textContent =
+        Math.round(s.memUsedMb).toLocaleString() + " / " +
+        Math.round(s.memTotalMb).toLocaleString() + " MB";
+      document.getElementById("uptime").textContent = formatUptime(s.uptime);
+    }
 
-      document.addEventListener("click", function (e) {
-        var th = e.target.closest("#proc-table th");
-        if (!th) return;
-        var col = th.getAttribute("data-col");
-        if (_sortCol === col) _sortAsc = !_sortAsc;
-        else {
-          _sortCol = col;
-          _sortAsc = col === "name";
+    var _procs = [], _sortCol = "cpuUsage", _sortAsc = false, _filter = "";
+
+    function renderProcs() {
+      var filtered = _procs.filter(function (p) {
+        return !_filter || p.name.toLowerCase().indexOf(_filter) !== -1;
+      });
+      filtered.sort(function (a, b) {
+        var va = a[_sortCol], vb = b[_sortCol];
+        if (typeof va === "string") {
+          va = va.toLowerCase();
+          vb = vb.toLowerCase();
         }
+        if (va < vb) return _sortAsc ? -1 : 1;
+        if (va > vb) return _sortAsc ? 1 : -1;
+        return 0;
+      });
+      var html = "";
+      for (var i = 0; i < filtered.length; i++) {
+        var p = filtered[i];
+        html += "<tr><td>" + p.pid + "</td><td>" + p.name + "</td><td>" +
+          p.cpuUsage.toFixed(1) + "</td><td>" + p.memoryMb.toFixed(1) +
+          "</td></tr>";
+      }
+      document.getElementById("proc-body").innerHTML = html;
+      var ths = document.querySelectorAll("#proc-table th");
+      for (var j = 0; j < ths.length; j++) {
+        var col = ths[j].getAttribute("data-col");
+        var arrow = col === _sortCol ? (_sortAsc ? " \u25B2" : " \u25BC") : "";
+        ths[j].innerHTML = ths[j].textContent.replace(/ [\u25B2\u25BC]/, "") +
+          "<span class='arrow'>" + arrow + "</span>";
+      }
+    }
+
+    function updateProcesses(procs) {
+      _procs = procs;
+      renderProcs();
+    }
+
+    document.addEventListener("click", function (e) {
+      var th = e.target.closest("#proc-table th");
+      if (!th) return;
+      var col = th.getAttribute("data-col");
+      if (_sortCol === col) _sortAsc = !_sortAsc;
+      else {
+        _sortCol = col;
+        _sortAsc = col === "name";
+      }
+      renderProcs();
+    });
+    document.getElementById("proc-search").addEventListener(
+      "input",
+      function (e) {
+        _filter = e.target.value.toLowerCase();
         renderProcs();
-      });
-      document.getElementById("proc-search").addEventListener(
-        "input",
-        function (e) {
-          _filter = e.target.value.toLowerCase();
-          renderProcs();
-        },
-      );
+      },
+    );
 
-      // Pull data from the runtime via bindings.
-      Laufey.getSystemInfo().then(function (r) {
-        updateSystemInfo(JSON.parse(r));
-      });
+    // Pull data from the runtime via bindings.
+    Laufey.getSystemInfo().then(function (r) {
+      updateSystemInfo(JSON.parse(r));
+    });
 
-      setInterval(async function () {
-        var stats = JSON.parse(await Laufey.getStats());
-        updateLiveStats(stats);
-        var procs = JSON.parse(await Laufey.getProcesses());
-        updateProcesses(procs);
-      }, 1000);
+    setInterval(async function () {
+      var stats = JSON.parse(await Laufey.getStats());
+      updateLiveStats(stats);
+      var procs = JSON.parse(await Laufey.getProcesses());
+      updateProcesses(procs);
+    }, 1000);
     </script>
   </body>
 </html>
