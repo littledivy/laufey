@@ -128,6 +128,18 @@ class LaufeyApp : public CefApp, public CefBrowserProcessHandler {
       const CefString& process_type,
       CefRefPtr<CefCommandLine> command_line) override {
     command_line->AppendSwitch("use-mock-keychain");
+
+    // Silence Chromium's background networking. The GCM (Google Cloud
+    // Messaging) client tries to register on startup and logs noisy
+    // `registration_request.cc ... PHONE_REGISTRATION_ERROR` /
+    // `DEPRECATED_ENDPOINT` errors that have nothing to do with the app. A
+    // webview-embedding desktop app doesn't use GCM, the component updater,
+    // safebrowsing auto-update, etc., so disable the lot (matches what
+    // Electron/Puppeteer do). Only the browser process needs the switch; CEF
+    // propagates it to subprocesses.
+    if (process_type.empty()) {
+      command_line->AppendSwitch("disable-background-networking");
+    }
   }
 
   void OnContextInitialized() override;
