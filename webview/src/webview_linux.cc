@@ -513,6 +513,86 @@ static gboolean on_script_dialog(WebKitWebView* webview,
   return FALSE;
 }
 
+// --- System dark-mode (prefers-color-scheme) sync ---------------------------
+// WebKitGTK derives the CSS `prefers-color-scheme` media feature from the GTK
+// `gtk-application-prefer-dark-theme` setting. Plain GTK apps default to light,
+// so pages never observe the user's system preference (issue #21). Mirror the
+// xdg-desktop-portal `org.freedesktop.appearance` color-scheme into that GTK
+// setting and keep it live via the portal's SettingChanged signal.
+static void apply_color_scheme(guint32 scheme) {
+  // 0 = no preference, 1 = prefer dark, 2 = prefer light.
+  GtkSettings* settings = gtk_settings_get_default();
+  if (settings) {
+    g_object_set(settings, "gtk-application-prefer-dark-theme",
+                 scheme == 1 ? TRUE : FALSE, nullptr);
+  }
+}
+
+static void on_portal_setting_changed(GDBusConnection* /*conn*/,
+                                      const gchar* /*sender*/,
+                                      const gchar* /*object_path*/,
+                                      const gchar* /*interface*/,
+                                      const gchar* /*signal*/,
+                                      GVariant* parameters, gpointer /*data*/) {
+  const gchar* ns = nullptr;
+  const gchar* key = nullptr;
+  GVariant* value = nullptr;
+  g_variant_get(parameters, "(&s&sv)", &ns, &key, &value);
+  if (ns && key && g_strcmp0(ns, "org.freedesktop.appearance") == 0 &&
+      g_strcmp0(key, "color-scheme") == 0 && value &&
+      g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32)) {
+    apply_color_scheme(g_variant_get_uint32(value));
+  }
+  if (value) {
+    g_variant_unref(value);
+  }
+}
+
+static void init_dark_theme_sync() {
+  GError* error = nullptr;
+  GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
+  if (!bus) {
+    if (error) {
+      g_error_free(error);
+    }
+    return;
+  }
+
+  // Initial read of the current color-scheme. Returns (v); the value may be
+  // wrapped one or more times in a variant depending on the portal backend.
+  GVariant* reply = g_dbus_connection_call_sync(
+      bus, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+      "org.freedesktop.portal.Settings", "Read",
+      g_variant_new("(ss)", "org.freedesktop.appearance", "color-scheme"),
+      G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
+  if (reply) {
+    GVariant* cur = nullptr;
+    g_variant_get(reply, "(v)", &cur);
+    while (cur && g_variant_is_of_type(cur, G_VARIANT_TYPE_VARIANT)) {
+      GVariant* next = g_variant_get_variant(cur);
+      g_variant_unref(cur);
+      cur = next;
+    }
+    if (cur && g_variant_is_of_type(cur, G_VARIANT_TYPE_UINT32)) {
+      apply_color_scheme(g_variant_get_uint32(cur));
+    }
+    if (cur) {
+      g_variant_unref(cur);
+    }
+    g_variant_unref(reply);
+  } else if (error) {
+    // Portal unavailable (e.g. no xdg-desktop-portal); leave GTK default.
+    g_error_free(error);
+  }
+
+  // Live updates. `bus` is intentionally kept alive for the process lifetime so
+  // the subscription stays active.
+  g_dbus_connection_signal_subscribe(
+      bus, "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Settings",
+      "SettingChanged", "/org/freedesktop/portal/desktop", nullptr,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_portal_setting_changed, nullptr, nullptr);
+}
+
 void WebKitGTKBackend::CreateWindow(uint32_t window_id, int width, int height) {
   CreateWindowEx(window_id, width, height, 0);
 }
@@ -520,6 +600,9 @@ void WebKitGTKBackend::CreateWindow(uint32_t window_id, int width, int height) {
 void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                                       uint32_t flags) {
   gtk_invoke_sync([&] {
+    static std::once_flag dark_theme_once;
+    std::call_once(dark_theme_once, init_dark_theme_sync);
+
     GtkWidget* window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
       gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
