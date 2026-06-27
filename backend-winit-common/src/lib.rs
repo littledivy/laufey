@@ -28,7 +28,11 @@ use winit::window::{Window, WindowLevel};
 
 // --- Constants ---
 
-pub const LAUFEY_API_VERSION: u32 = 25;
+// Must match `LAUFEY_API_VERSION` in capi/include/laufey.h (and capi/src/lib.rs).
+// Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
+// rejects any backend whose reported `version` differs, and the vtable layout
+// below must match the v26 `laufey_backend_api`.
+pub const LAUFEY_API_VERSION: u32 = 26;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -126,6 +130,29 @@ pub type LaufeyCloseRequestedFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
 );
+
+// --- Custom URL scheme handler (in-process app transport, API >= 26) --------
+//
+// Mirrors `laufey_scheme_request_fn` / `laufey_scheme_cancel_fn` in laufey.h.
+// The winit backend does not implement an in-process scheme transport, so it
+// never invokes these; the typedefs exist only so the vtable fields below have
+// the correct signatures and the struct layout matches the v26
+// `laufey_backend_api` the capi reads through the backend's pointer. The
+// opaque exchange handle is represented as `*mut c_void`.
+pub type LaufeySchemeRequestFn = unsafe extern "C" fn(
+  *mut c_void,   // user_data
+  u32,           // window_id
+  *mut c_void,   // exchange (opaque laufey_scheme_exchange_t*)
+  *const c_char, // method
+  *const c_char, // url
+  *const c_char, // headers (flat NUL-terminated name/value pairs)
+  usize,         // headers_len
+);
+pub type LaufeySchemeCancelFn = unsafe extern "C" fn(
+  *mut c_void, // user_data
+  *mut c_void, // exchange
+);
+
 pub const LAUFEY_DIALOG_ALERT: i32 = 0;
 pub const LAUFEY_DIALOG_CONFIRM: i32 = 1;
 pub const LAUFEY_DIALOG_PROMPT: i32 = 2;
@@ -419,6 +446,54 @@ pub struct LaufeyBackendApi {
       c_int,
       Option<permission::LaufeyPermissionCallbackFn>,
       *mut c_void,
+    ),
+  >,
+
+  // --- Custom URL scheme handler (API >= 26) ---------------------------------
+  //
+  // The winit backend has no in-process scheme transport, so it leaves all
+  // five pointers None (NULL) and the embedder falls back to a socket
+  // transport. They MUST still be declared: the capi reads the v26
+  // `laufey_backend_api` through the backend's pointer, so a struct missing
+  // these trailing fields would make the capi read past its end.
+  pub register_scheme_handler: Option<
+    unsafe extern "C" fn(
+      *mut c_void,                   // backend_data
+      *const c_char,                 // scheme
+      Option<LaufeySchemeRequestFn>, // handler
+      Option<LaufeySchemeCancelFn>,  // on_cancel
+      *mut c_void,                   // user_data
+    ),
+  >,
+  pub scheme_request_read_body: Option<
+    unsafe extern "C" fn(
+      *mut c_void, // backend_data
+      *mut c_void, // exchange
+      *mut u8,     // buf
+      usize,       // cap
+    ) -> isize,
+  >,
+  pub scheme_response_begin: Option<
+    unsafe extern "C" fn(
+      *mut c_void,   // backend_data
+      *mut c_void,   // exchange
+      c_int,         // status
+      *const c_char, // headers
+      usize,         // headers_len
+    ),
+  >,
+  pub scheme_response_write: Option<
+    unsafe extern "C" fn(
+      *mut c_void, // backend_data
+      *mut c_void, // exchange
+      *const u8,   // buf
+      usize,       // len
+    ) -> isize,
+  >,
+  pub scheme_response_finish: Option<
+    unsafe extern "C" fn(
+      *mut c_void, // backend_data
+      *mut c_void, // exchange
     ),
   >,
 }
@@ -1038,6 +1113,12 @@ pub fn create_api_base() -> LaufeyBackendApi {
     close_notification: None,
     query_permission: None,
     request_permission: None,
+    // Scheme handler vtable (API >= 26): unsupported by the winit backend.
+    register_scheme_handler: None,
+    scheme_request_read_body: None,
+    scheme_response_begin: None,
+    scheme_response_write: None,
+    scheme_response_finish: None,
   }
 }
 
