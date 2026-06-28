@@ -224,6 +224,36 @@ NSMenu* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* ap
     } else {
       [nsItem setEnabled:YES];
     }
+
+    // checked -> NSMenuItem.state (checkmark).
+    laufey_value_t* checkedVal = api->value_dict_get(itemVal, "checked");
+    if (checkedVal && api->value_is_bool(checkedVal) &&
+        api->value_get_bool(checkedVal)) {
+      [nsItem setState:NSControlStateValueOn];
+    }
+
+    // tooltip -> NSMenuItem.toolTip (macOS only, matches Electron).
+    std::string tooltipStr = DictString(api, itemVal, "tooltip");
+    if (!tooltipStr.empty()) {
+      [nsItem setToolTip:[NSString stringWithUTF8String:tooltipStr.c_str()]];
+    }
+
+    // icon -> NSMenuItem.image, loaded from a file path. Marked as a template
+    // image so a monochrome (black + alpha) icon tints correctly: black in the
+    // normal state, white when the item is highlighted/selected. (A full-color
+    // icon is flattened to its alpha mask under this default, matching the
+    // tray-icon behavior.)
+    std::string iconStr = DictString(api, itemVal, "icon");
+    if (!iconStr.empty()) {
+      NSImage* iconImg = [[NSImage alloc]
+          initWithContentsOfFile:[NSString stringWithUTF8String:iconStr.c_str()]];
+      if (iconImg) {
+        [iconImg setSize:NSMakeSize(16, 16)];
+        [iconImg setTemplate:YES];
+        [nsItem setImage:iconImg];
+      }
+    }
+
     [menu addItem:nsItem];
   }
   return menu;

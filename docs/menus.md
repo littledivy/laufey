@@ -7,6 +7,12 @@ roles such as quit, copy, and paste. Items may carry a keyboard accelerator.
 When the user clicks an item that has an identifier, your callback is invoked
 with that identifier.
 
+Regular items also support a few visual properties, mirroring Electron's
+`MenuItem`: `checked` (a checkmark, all platforms), `icon` (a file path to an
+image; a monochrome black+alpha PNG is treated as a template and tints to white
+on selection — macOS for now, Windows planned, unsupported on Linux), and
+`tooltip` (hover text — macOS only).
+
 ```rust
 use laufey::MenuItem;
 
@@ -18,6 +24,9 @@ let menu = [MenuItem::Submenu {
       id: Some("open".into()),
       accelerator: Some("CmdOrCtrl+O".into()),
       enabled: true,
+      checked: false,
+      icon: Some("icons/open.png".into()), // file path to a template PNG
+      tooltip: Some("Open a file".into()),
     },
     MenuItem::Separator,
     MenuItem::Role { role: "quit".into() },

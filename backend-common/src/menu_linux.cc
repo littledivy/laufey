@@ -114,7 +114,16 @@ GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t
     }
 
     std::string itemId = DictString(api, itemVal, "id");
-    GtkWidget* gtkItem = gtk_menu_item_new_with_label(label.c_str());
+    // checked -> GtkCheckMenuItem with an active checkmark.
+    laufey_value_t* checkedVal = api->value_dict_get(itemVal, "checked");
+    GtkWidget* gtkItem;
+    if (checkedVal && api->value_is_bool(checkedVal) &&
+        api->value_get_bool(checkedVal)) {
+      gtkItem = gtk_check_menu_item_new_with_label(label.c_str());
+      gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(gtkItem), TRUE);
+    } else {
+      gtkItem = gtk_menu_item_new_with_label(label.c_str());
+    }
     auto* cb_data = new GtkMenuCallbackData{on_click, on_click_data, window_id,
                                              itemId.empty() ? label : itemId};
     g_signal_connect_data(gtkItem, "activate",

@@ -67,6 +67,9 @@ fn hello_main() {
             id: Some("hello".into()),
             accelerator: None,
             enabled: true,
+            checked: false,
+            icon: None,
+            tooltip: None,
           },
           MenuItem::Separator,
           MenuItem::Item {
@@ -74,6 +77,9 @@ fn hello_main() {
             id: Some("noise".into()),
             accelerator: None,
             enabled: true,
+            checked: false,
+            icon: None,
+            tooltip: None,
           },
         ];
         laufey::set_dock_menu(&items, |id| {
@@ -173,6 +179,37 @@ fn hello_main() {
 </body>
 </html>"#,
       );
+
+    // App menu bar (real NSMenu — shows item icons, unlike the Dock menu).
+    // Look for the "Demo" menu in the top menu bar.
+    _win.set_menu(
+      &[MenuItem::Submenu {
+        label: "Demo".into(),
+        items: vec![
+          // checked: a checkmark next to the item.
+          MenuItem::Item {
+            label: "Say hello".into(),
+            id: Some("hello".into()),
+            accelerator: None,
+            enabled: true,
+            checked: true,
+            icon: None,
+            tooltip: None,
+          },
+          // icon (a template PNG that tints on selection) + tooltip.
+          MenuItem::Item {
+            label: "Make noise".into(),
+            id: Some("noise".into()),
+            accelerator: None,
+            enabled: true,
+            checked: false,
+            icon: Some("examples/hello/icons/bell.png".into()),
+            tooltip: Some("Play a sound".into()),
+          },
+        ],
+      }],
+      |id| println!("menu: {id}"),
+    );
 
     laufey::run().await;
   });

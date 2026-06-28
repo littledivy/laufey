@@ -232,6 +232,14 @@ inline HMENU BuildMenuFromValue(laufey_value_t* val,
     }
     FreeVal(api, enabledVal);
 
+    // checked -> MF_CHECKED checkmark.
+    laufey_value_t* checkedVal = api->value_dict_get(itemVal, "checked");
+    if (checkedVal && api->value_is_bool(checkedVal) &&
+        api->value_get_bool(checkedVal)) {
+      flags |= MF_CHECKED;
+    }
+    FreeVal(api, checkedVal);
+
     AppendMenuA(menu, flags, cmdId, label.c_str());
     FreeVal(api, itemVal);
   }
