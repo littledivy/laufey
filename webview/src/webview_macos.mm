@@ -523,6 +523,8 @@ void WKWebViewBackend::RemoveWindowState(uint32_t window_id) {
     if (state.webview)
       [state.webview.configuration.userContentController
           removeScriptMessageHandlerForName:@"laufey"];
+    if (state.window)
+      [state.window setDelegate:nil];
     UnregisterNSWindow(state.window);
   }
   windows_.erase(it);
@@ -876,13 +878,18 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 void WKWebViewBackend::CloseWindow(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto it = windows_.find(window_id);
-      if (it != windows_.end()) {
-        NSWindow* win = it->second.window;
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto it = windows_.find(window_id);
+        if (it == windows_.end())
+          return;
+        win = it->second.window;
         RemoveWindowState(window_id);
-        [win close];
       }
+      if (!win)
+        return;
+      [win close];
     }
   });
 }
@@ -1174,11 +1181,17 @@ bool WKWebViewBackend::IsVisible(uint32_t window_id) {
 void WKWebViewBackend::Show(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (state) {
-        [state->window makeKeyAndOrderFront:nil];
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state) {
+          win = state->window;
+        }
       }
+      if (!win)
+        return;
+      [win makeKeyAndOrderFront:nil];
     }
   });
 }
@@ -1186,11 +1199,17 @@ void WKWebViewBackend::Show(uint32_t window_id) {
 void WKWebViewBackend::Hide(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (state) {
-        [state->window orderOut:nil];
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state) {
+          win = state->window;
+        }
       }
+      if (!win)
+        return;
+      [win orderOut:nil];
     }
   });
 }
@@ -1198,11 +1217,17 @@ void WKWebViewBackend::Hide(uint32_t window_id) {
 void WKWebViewBackend::Focus(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (state) {
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state) {
+          win = state->window;
+        }
+      }
+      if (win) {
         [NSApp activateIgnoringOtherApps:YES];
-        [state->window makeKeyAndOrderFront:nil];
+        [win makeKeyAndOrderFront:nil];
       }
     }
   });
