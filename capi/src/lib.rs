@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 26;
+pub const LAUFEY_API_VERSION: u32 = 27;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
