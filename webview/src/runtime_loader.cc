@@ -413,6 +413,19 @@ static void Backend_StringFree(void* /*backend_data*/, char* s) {
     free(s);
 }
 
+static char* Backend_ReadClipboardText(void* data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (LaufeyBackend* backend = loader->GetBackend())
+    return backend->ReadClipboardText();
+  return nullptr;
+}
+
+static void Backend_WriteClipboardText(void* data, const char* text) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (LaufeyBackend* backend = loader->GetBackend())
+    backend->WriteClipboardText(text ? text : "");
+}
+
 // --- Dock / taskbar ---
 
 static void Backend_SetDockBadge(void* data, const char* badge_or_null) {
@@ -628,6 +641,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;
+  backend_api_.read_clipboard_text = Backend_ReadClipboardText;
+  backend_api_.write_clipboard_text = Backend_WriteClipboardText;
 
   backend_api_.set_dock_badge = Backend_SetDockBadge;
   backend_api_.bounce_dock = Backend_BounceDock;

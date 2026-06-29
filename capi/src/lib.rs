@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 26;
+pub const LAUFEY_API_VERSION: u32 = 27;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -1256,6 +1256,45 @@ fn show_dialog_blocking(
     None
   };
   (confirmed, input)
+}
+
+/// Read the system clipboard's plain-text content.
+///
+/// Returns `None` if the clipboard is empty, holds no text representation, or
+/// the backend does not support clipboard access. Mirrors the web
+/// `navigator.clipboard.readText()` API. Must be called on the UI thread.
+pub fn read_clipboard_text() -> Option<String> {
+  let api = api();
+  let f = api.read_clipboard_text?;
+  // SAFETY: backend returns either NULL or a heap-allocated NUL-terminated
+  // UTF-8 string owned by us; we copy it out and hand the pointer back to the
+  // backend's matching deallocator (`string_free`).
+  let ptr = unsafe { f(api.backend_data) };
+  if ptr.is_null() {
+    return None;
+  }
+  let text = unsafe { CStr::from_ptr(ptr) }
+    .to_string_lossy()
+    .into_owned();
+  if let Some(free) = api.string_free {
+    unsafe { free(api.backend_data, ptr) };
+  }
+  Some(text)
+}
+
+/// Replace the system clipboard's content with `text`.
+///
+/// Passing an empty string clears the clipboard. Mirrors the web
+/// `navigator.clipboard.writeText()` API. No-op if the backend does not
+/// support clipboard access. Must be called on the UI thread.
+pub fn write_clipboard_text(text: &str) {
+  let api = api();
+  if let Some(f) = api.write_clipboard_text {
+    let c_text =
+      CString::new(text).expect("clipboard text contained a NUL byte");
+    // SAFETY: `c_text` outlives the call; the backend copies the bytes.
+    unsafe { f(api.backend_data, c_text.as_ptr()) };
+  }
 }
 
 /// A menu item in an application menu template.

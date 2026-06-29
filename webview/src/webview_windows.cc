@@ -350,6 +350,13 @@ class WebView2Backend : public LaufeyBackend {
                  const std::string& message, const std::string& default_value,
                  char** out_input_value) override;
 
+  char* ReadClipboardText() override {
+    return laufey_common::ClipboardReadTextWin();
+  }
+  void WriteClipboardText(const std::string& text) override {
+    laufey_common::ClipboardWriteTextWin(text);
+  }
+
   void BounceDock(int type) override;
   void SetDockBadge(const char* badge_or_null) override;
 

@@ -1261,6 +1261,31 @@ static void Backend_StringFree(void* /*data*/, char* s) {
     free(s);
 }
 
+static char* Backend_ReadClipboardText(void* /*data*/) {
+#ifdef __APPLE__
+  return laufey_common::ClipboardReadTextMac();
+#elif defined(__linux__)
+  return laufey_common::ClipboardReadTextLinux();
+#elif defined(_WIN32)
+  return laufey_common::ClipboardReadTextWin();
+#else
+  return nullptr;
+#endif
+}
+
+static void Backend_WriteClipboardText(void* /*data*/, const char* text) {
+  std::string text_str = text ? text : "";
+#ifdef __APPLE__
+  laufey_common::ClipboardWriteTextMac(text_str);
+#elif defined(__linux__)
+  laufey_common::ClipboardWriteTextLinux(text_str);
+#elif defined(_WIN32)
+  laufey_common::ClipboardWriteTextWin(text_str);
+#else
+  (void)text_str;
+#endif
+}
+
 void RuntimeLoader::InitializeBackendApi() {
   memset(&backend_api_, 0, sizeof(backend_api_));
   backend_api_.version = LAUFEY_API_VERSION;
@@ -1367,6 +1392,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_js_namespace = Backend_SetJsNamespace;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;
+  backend_api_.read_clipboard_text = Backend_ReadClipboardText;
+  backend_api_.write_clipboard_text = Backend_WriteClipboardText;
 
   // --- Dock / taskbar ---
 #if defined(__APPLE__)

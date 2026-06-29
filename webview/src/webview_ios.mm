@@ -9,6 +9,7 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <string>
@@ -113,6 +114,18 @@ class WKWebViewIOSBackend : public LaufeyBackend {
   int ShowDialog(uint32_t, int, const std::string&, const std::string&,
                  const std::string&, char**) override {
     return 0;
+  }
+
+  char* ReadClipboardText() override {
+    NSString* str = [UIPasteboard generalPasteboard].string;
+    if (!str)
+      return nullptr;
+    const char* utf8 = [str UTF8String];
+    return utf8 ? strdup(utf8) : nullptr;
+  }
+  void WriteClipboardText(const std::string& text) override {
+    NSString* str = [NSString stringWithUTF8String:text.c_str()];
+    [UIPasteboard generalPasteboard].string = str ? str : @"";
   }
 
   // Called from the script-message handler on the main thread.

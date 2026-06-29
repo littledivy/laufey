@@ -412,6 +412,17 @@ class LaufeyBackend {
                          const std::string& default_value,
                          char** out_input_value) = 0;
 
+  // --- Clipboard (system) ---
+  // Plain-text access to the system clipboard. `ReadClipboardText` returns a
+  // `malloc`'d / `strdup`'d UTF-8 string the caller frees with `free()` (via
+  // BackendStringFree), or NULL when the clipboard is empty or holds no text.
+  // Default implementations are inert so platforms without support inherit
+  // silently.
+  virtual char* ReadClipboardText() {
+    return nullptr;
+  }
+  virtual void WriteClipboardText(const std::string& /*text*/) {}
+
   // --- Dock / taskbar ---
   // Default implementations are no-ops so platforms that don't support a
   // given operation inherit silently. The canonical macOS implementation is

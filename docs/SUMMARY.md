@@ -16,6 +16,7 @@
 - [Dock / taskbar](dock-taskbar.md)
 - [Tray / status bar](tray.md)
 - [Notifications](notifications.md)
+- [Clipboard](clipboard.md)
 - [Permissions](permissions.md)
 - [Packaging & distribution](distribution.md)
 - [Building](building.md)
