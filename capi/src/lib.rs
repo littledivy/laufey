@@ -36,6 +36,7 @@ pub const LAUFEY_API_VERSION: u32 = 26;
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
 pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
 pub const LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR: u32 = 1 << 2;
+pub const LAUFEY_WINDOW_FLAG_HIDDEN: u32 = 1 << 3;
 
 pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: i32 = 0;
 pub const LAUFEY_WINDOW_HANDLE_APPKIT: i32 = 1;
@@ -679,6 +680,11 @@ pub struct WindowOptions {
   /// bar transparent and let the web content extend under it (Electron
   /// `titleBarStyle: 'hidden'`). macOS only; ignored elsewhere.
   pub transparent_titlebar: bool,
+  /// Create the window without showing it. It stays hidden until [`Window::show`]
+  /// (or [`Window::focus`]) is called — typically from a [`crate::on_page_load`]
+  /// handler so the first reveal happens only once content has painted, avoiding
+  /// the empty/black initial frame (most visible on Wayland).
+  pub hidden: bool,
 }
 
 impl WindowOptions {
@@ -692,6 +698,9 @@ impl WindowOptions {
     }
     if self.transparent_titlebar {
       flags |= LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR;
+    }
+    if self.hidden {
+      flags |= LAUFEY_WINDOW_FLAG_HIDDEN;
     }
     flags
   }
@@ -1036,6 +1045,14 @@ impl Window {
     F: Fn(CloseRequestedEvent) + Send + Sync + 'static,
   {
     on_close_requested(self.id, handler);
+    self
+  }
+
+  pub fn on_page_load<F>(self, handler: F) -> Self
+  where
+    F: Fn(PageLoadEvent) + Send + Sync + 'static,
+  {
+    on_page_load(self.id, handler);
     self
   }
 

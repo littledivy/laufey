@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 26
+#define LAUFEY_API_VERSION 27
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -36,9 +36,17 @@ extern "C" {
 // can then draw its own toolbar in that strip, with the system buttons
 // overlaid. The app is responsible for insetting its UI to clear the
 // traffic-light buttons. macOS only for now; ignored by other backends.
+//
+// HIDDEN creates the OS window without mapping/showing it. The window stays
+// invisible until the embedder calls `show` (or `focus`). This lets an app
+// defer the first reveal until content has painted (see set_page_load_handler)
+// so the user never sees the empty/black initial webview frame — particularly
+// important on Wayland, where the compositor only ever presents committed
+// buffers and the pre-load frame shows as solid black. API >= 27.
 #define LAUFEY_WINDOW_FLAG_FRAMELESS (1u << 0)
 #define LAUFEY_WINDOW_FLAG_NO_ACTIVATE (1u << 1)
 #define LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR (1u << 2)
+#define LAUFEY_WINDOW_FLAG_HIDDEN (1u << 3)
 
 typedef struct laufey_backend_api laufey_backend_api_t;
 
@@ -223,6 +231,13 @@ typedef void (*laufey_keyboard_event_fn)(
 
 // Callback for window close requested events.
 typedef void (*laufey_close_requested_fn)(void* user_data, uint32_t window_id);
+
+// Callback fired when a window finishes loading a navigation (the document and
+// its subresources have loaded and the first content frame has been produced).
+// Embedders use this to reveal a window created with LAUFEY_WINDOW_FLAG_HIDDEN
+// only once there is real content to show. Fires once per completed navigation,
+// so it may be called again on subsequent in-app navigations. API >= 27.
+typedef void (*laufey_page_load_fn)(void* user_data, uint32_t window_id);
 
 // --- Custom URL scheme handler (in-process app transport, API >= 26) --------
 //
@@ -409,6 +424,12 @@ struct laufey_backend_api {
   void (*set_close_requested_handler)(void* backend_data,
                                       laufey_close_requested_fn handler,
                                       void* user_data);
+
+  // Register a handler for page load-finished events (API >= 27). May be NULL
+  // on older backends, in which case windows created hidden must be revealed by
+  // the embedder through some other signal.
+  void (*set_page_load_handler)(void* backend_data, laufey_page_load_fn handler,
+                                void* user_data);
 
   void (*poll_js_calls)(void* backend_data);
 

@@ -233,6 +233,19 @@ class RuntimeLoader {
     }
   }
 
+  void SetPageLoadHandler(laufey_page_load_fn handler, void* user_data) {
+    std::lock_guard<std::mutex> lock(page_load_mutex_);
+    page_load_handler_ = handler;
+    page_load_user_data_ = user_data;
+  }
+
+  void DispatchPageLoadEvent(uint32_t window_id) {
+    std::lock_guard<std::mutex> lock(page_load_mutex_);
+    if (page_load_handler_) {
+      page_load_handler_(page_load_user_data_, window_id);
+    }
+  }
+
   void SetJsCallNotify(void (*notify_fn)(void*), void* notify_data) {
     std::lock_guard<std::mutex> lock(notify_mutex_);
     js_call_notify_fn_ = notify_fn;
@@ -310,6 +323,10 @@ class RuntimeLoader {
   laufey_close_requested_fn close_requested_handler_ = nullptr;
   void* close_requested_user_data_ = nullptr;
   std::mutex close_requested_mutex_;
+
+  laufey_page_load_fn page_load_handler_ = nullptr;
+  void* page_load_user_data_ = nullptr;
+  std::mutex page_load_mutex_;
 
   std::atomic<uint32_t> next_window_id_{1};
   std::map<uint64_t, uint32_t> call_to_window_;
