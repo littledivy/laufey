@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 28
+#define LAUFEY_API_VERSION 29
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -651,6 +651,22 @@ struct laufey_backend_api {
   // UNSUPPORTED.
   void (*request_permission)(void* backend_data, int kind,
                              laufey_permission_callback_fn cb, void* user_data);
+
+  // --- Clipboard (system, API >= 27) -----------------------------------------
+  //
+  // App-scoped access to the system clipboard's plain-text content, mirroring
+  // the Web `navigator.clipboard.readText()` / `writeText()` surface. Backends
+  // added before API version 27 leave these two pointers NULL; callers must
+  // null-check.
+
+  // Read the clipboard's text content. Returns a heap-allocated UTF-8 string
+  // the caller must free via `string_free`, or NULL if the clipboard is empty
+  // or holds no text representation. Must be called on the UI thread.
+  char* (*read_clipboard_text)(void* backend_data);
+
+  // Replace the clipboard's content with `text` (UTF-8). Pass NULL or "" to
+  // clear the clipboard. Must be called on the UI thread.
+  void (*write_clipboard_text)(void* backend_data, const char* text);
 
   // --- Custom URL scheme handler (API >= 26) ---------------------------------
   //

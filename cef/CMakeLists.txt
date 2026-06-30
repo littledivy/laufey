@@ -8,7 +8,10 @@ else()
   project(laufey VERSION 1.0.0 LANGUAGES C CXX)
 endif()
 
-set(CMAKE_CXX_STANDARD 17)
+# CEF 149 (Chromium 149) ships headers that use C++20 library concepts
+# (std::same_as / std::derived_from / requires-clauses in cef_scoped_refptr.h),
+# so the backend must be built as C++20.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # CEF 149's headers (e.g. base/cef_scoped_refptr.h) use C++20 concepts such as

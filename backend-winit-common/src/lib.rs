@@ -31,8 +31,8 @@ use winit::window::{Window, WindowLevel};
 // Must match `LAUFEY_API_VERSION` in capi/include/laufey.h (and capi/src/lib.rs).
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
-// below must match the v28 `laufey_backend_api`.
-pub const LAUFEY_API_VERSION: u32 = 28;
+// below must match the v29 `laufey_backend_api`.
+pub const LAUFEY_API_VERSION: u32 = 29;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -461,6 +461,12 @@ pub struct LaufeyBackendApi {
       *mut c_void,
     ),
   >,
+  // Mirrors laufey.h: the clipboard pair (API >= 27) sits between
+  // request_permission and the scheme-handler section.
+  pub read_clipboard_text:
+    Option<unsafe extern "C" fn(*mut c_void) -> *mut c_char>,
+  pub write_clipboard_text:
+    Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
 
   // --- Custom URL scheme handler (API >= 26) ---------------------------------
   //
@@ -1135,6 +1141,8 @@ pub fn create_api_base() -> LaufeyBackendApi {
     close_notification: None,
     query_permission: None,
     request_permission: None,
+    read_clipboard_text: None,
+    write_clipboard_text: None,
     // Scheme handler vtable (API >= 26): unsupported by the winit backend.
     register_scheme_handler: None,
     scheme_request_read_body: None,
@@ -2277,10 +2285,37 @@ macro_rules! define_common_backend_fns {
     ) {
       if !s.is_null() {
         // SAFETY: pointer originated from `CString::into_raw` in
-        // `backend_show_dialog`; reclaiming the allocation is the
-        // matching deallocator.
+        // `backend_show_dialog` or `backend_read_clipboard_text`; reclaiming
+        // the allocation is the matching deallocator.
         let _ = unsafe { ::std::ffi::CString::from_raw(s) };
       }
+    }
+
+    unsafe extern "C" fn backend_read_clipboard_text(
+      _data: *mut ::std::ffi::c_void,
+    ) -> *mut ::std::ffi::c_char {
+      match $crate::read_clipboard_text_native() {
+        Some(text) => match ::std::ffi::CString::new(text) {
+          // Freed by the runtime via the backend's `string_free`.
+          Ok(c_str) => c_str.into_raw(),
+          Err(_) => ::std::ptr::null_mut(),
+        },
+        None => ::std::ptr::null_mut(),
+      }
+    }
+
+    unsafe extern "C" fn backend_write_clipboard_text(
+      _data: *mut ::std::ffi::c_void,
+      text: *const ::std::ffi::c_char,
+    ) {
+      let text_str = if text.is_null() {
+        String::new()
+      } else {
+        unsafe { ::std::ffi::CStr::from_ptr(text) }
+          .to_string_lossy()
+          .into_owned()
+      };
+      $crate::write_clipboard_text_native(&text_str);
     }
 
     unsafe extern "C" fn backend_set_application_menu(
@@ -2710,6 +2745,8 @@ macro_rules! fill_common_api {
     $api.close_notification = Some(backend_close_notification);
     $api.query_permission = Some(backend_query_permission);
     $api.request_permission = Some(backend_request_permission);
+    $api.read_clipboard_text = Some(backend_read_clipboard_text);
+    $api.write_clipboard_text = Some(backend_write_clipboard_text);
   };
 }
 
@@ -3066,6 +3103,119 @@ fn show_prompt_dialog(
 ) -> (bool, Option<String>) {
   (true, Some(default_value.to_string()))
 }
+
+// --- Native clipboard implementation ---
+//
+// The winit/servo backends have no web engine, so clipboard access goes
+// through each platform's standard command-line clipboard tools, mirroring the
+// subprocess approach used for native dialogs above. These tools
+// (pbcopy/pbpaste, clip/PowerShell, wl-clipboard/xclip) ship with — or are
+// conventional on — a default desktop install of each platform.
+
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn pipe_to_command(
+  program: &str,
+  args: &[&str],
+  input: &str,
+) -> std::io::Result<bool> {
+  use std::io::Write;
+  use std::process::{Command, Stdio};
+  let mut child = Command::new(program)
+    .args(args)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()?;
+  if let Some(mut stdin) = child.stdin.take() {
+    stdin.write_all(input.as_bytes())?;
+    // Drop `stdin` to signal EOF before waiting.
+  }
+  Ok(child.wait()?.success())
+}
+
+#[cfg(target_os = "macos")]
+pub fn read_clipboard_text_native() -> Option<String> {
+  let out = std::process::Command::new("pbpaste").output().ok()?;
+  out
+    .status
+    .success()
+    .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(target_os = "macos")]
+pub fn write_clipboard_text_native(text: &str) {
+  let _ = pipe_to_command("pbcopy", &[], text);
+}
+
+#[cfg(target_os = "windows")]
+pub fn read_clipboard_text_native() -> Option<String> {
+  let out = std::process::Command::new("powershell")
+    .args(["-NoProfile", "-Command", "Get-Clipboard -Raw"])
+    .output()
+    .ok()?;
+  if !out.status.success() {
+    return None;
+  }
+  let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
+  // `Get-Clipboard -Raw` appends a single trailing CRLF; strip it.
+  if s.ends_with("\r\n") {
+    s.truncate(s.len() - 2);
+  } else if s.ends_with('\n') {
+    s.truncate(s.len() - 1);
+  }
+  Some(s)
+}
+
+#[cfg(target_os = "windows")]
+pub fn write_clipboard_text_native(text: &str) {
+  // clip.exe reads stdin and sets the clipboard contents verbatim.
+  let _ = pipe_to_command("clip", &[], text);
+}
+
+#[cfg(target_os = "linux")]
+pub fn read_clipboard_text_native() -> Option<String> {
+  // Prefer Wayland (wl-clipboard); fall back to X11 (xclip).
+  if let Ok(out) = std::process::Command::new("wl-paste")
+    .arg("--no-newline")
+    .output()
+  {
+    if out.status.success() {
+      return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+    }
+  }
+  let out = std::process::Command::new("xclip")
+    .args(["-selection", "clipboard", "-o"])
+    .output()
+    .ok()?;
+  out
+    .status
+    .success()
+    .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(target_os = "linux")]
+pub fn write_clipboard_text_native(text: &str) {
+  if pipe_to_command("wl-copy", &[], text).unwrap_or(false) {
+    return;
+  }
+  let _ = pipe_to_command("xclip", &["-selection", "clipboard"], text);
+}
+
+#[cfg(not(any(
+  target_os = "macos",
+  target_os = "windows",
+  target_os = "linux"
+)))]
+pub fn read_clipboard_text_native() -> Option<String> {
+  None
+}
+
+#[cfg(not(any(
+  target_os = "macos",
+  target_os = "windows",
+  target_os = "linux"
+)))]
+pub fn write_clipboard_text_native(_text: &str) {}
 
 // --- Keyboard modifier flags ---
 

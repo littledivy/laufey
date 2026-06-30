@@ -42,6 +42,7 @@ if(APPLE)
   list(APPEND LAUFEY_COMMON_SRCS
     src/notifications_mac.mm
     src/dialog_mac.mm
+    src/clipboard_mac.mm
     src/permissions_mac.mm
     src/keymap_mac.mm
     src/dock_mac.mm
@@ -52,6 +53,7 @@ elseif(UNIX)
   list(APPEND LAUFEY_COMMON_SRCS
     src/notifications_linux.cc
     src/dialog_linux.cc
+    src/clipboard_linux.cc
     src/permissions_stub.cc
     src/keymap_gdk.cc
     src/menu_linux.cc
@@ -61,6 +63,7 @@ elseif(WIN32)
   list(APPEND LAUFEY_COMMON_SRCS
     src/notifications_win.cc
     src/dialog_win.cc
+    src/clipboard_win.cc
     src/permissions_stub.cc
     src/tray_win.cc
   )

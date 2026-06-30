@@ -110,12 +110,13 @@ void SetTrayIconWin(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayIconDarkWin(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayTooltipWin(uint32_t tray_id, const char* tooltip_or_null);
 void SetTrayMenuWin(uint32_t tray_id, laufey_value_t* menu_template,
-                     const laufey_backend_api_t* api,
-                     laufey_menu_click_fn on_click, void* on_click_data);
+                    const laufey_backend_api_t* api,
+                    laufey_menu_click_fn on_click, void* on_click_data);
 void SetTrayClickHandlerWin(uint32_t tray_id, laufey_tray_click_fn handler,
-                              void* user_data);
-void SetTrayDoubleClickHandlerWin(uint32_t tray_id, laufey_tray_click_fn handler,
-                                    void* user_data);
+                            void* user_data);
+void SetTrayDoubleClickHandlerWin(uint32_t tray_id,
+                                  laufey_tray_click_fn handler,
+                                  void* user_data);
 // Writes the tray icon's screen rectangle (top-left origin, DIP) into the
 // out-params (any may be NULL) and returns true, or false if the id is
 // unknown or the shell can't report the position.
@@ -147,8 +148,8 @@ bool GetTrayIconBoundsWin(uint32_t tray_id, int* x, int* y, int* width,
 //     saved title.
 //   - badge empty, no saved title: return `current_title` unchanged.
 std::string ApplyTitlePrefixBadge(uint64_t window_key,
-                                   const std::string& current_title,
-                                   const std::string& badge);
+                                  const std::string& current_title,
+                                  const std::string& badge);
 
 // Forget the saved title for a window (call when a window closes so
 // the map doesn't grow unbounded).
@@ -168,20 +169,45 @@ void ForgetTitlePrefixBadge(uint64_t window_key);
 
 #ifdef __APPLE__
 int ShowDialogMac(int dialog_type, const std::string& title,
-                  const std::string& message,
-                  const std::string& default_value, char** out_input_value);
+                  const std::string& message, const std::string& default_value,
+                  char** out_input_value);
 #endif
 
 #ifdef _WIN32
 int ShowDialogWin(int dialog_type, const std::string& title,
-                  const std::string& message,
-                  const std::string& default_value, char** out_input_value);
+                  const std::string& message, const std::string& default_value,
+                  char** out_input_value);
 #endif
 
 #ifdef __linux__
 int ShowDialogLinux(int dialog_type, const std::string& title,
                     const std::string& message,
                     const std::string& default_value, char** out_input_value);
+#endif
+
+// ---------------------------------------------------------------------------
+// Clipboard (system)
+// ---------------------------------------------------------------------------
+//
+// Plain-text access to the system clipboard, backing the `read_clipboard_text`
+// / `write_clipboard_text` entries of laufey_backend_api. `ClipboardReadText*`
+// returns a `strdup`'d / `malloc`'d UTF-8 string the caller frees with
+// `free()`, or NULL when the clipboard is empty or holds no text. Must be
+// called on the UI thread.
+
+#ifdef __APPLE__
+char* ClipboardReadTextMac();
+void ClipboardWriteTextMac(const std::string& text);
+#endif
+
+#ifdef _WIN32
+char* ClipboardReadTextWin();
+void ClipboardWriteTextWin(const std::string& text);
+#endif
+
+#ifdef __linux__
+char* ClipboardReadTextLinux();
+void ClipboardWriteTextLinux(const std::string& text);
 #endif
 
 // ---------------------------------------------------------------------------
@@ -228,8 +254,7 @@ void RequestPermissionStub(int kind, laufey_permission_callback_fn cb,
 //   `shift_held` / `caps_on`: Windows shift/caps state for case
 //                determination when `character` is 0 (matches webview
 //                Windows behavior). Pass false on non-Windows callers.
-std::string VkToKey(int vk, uint32_t character, bool shift_held,
-                    bool caps_on);
+std::string VkToKey(int vk, uint32_t character, bool shift_held, bool caps_on);
 
 // Windows VK → "code" (physical).
 //   `is_extended`: WM_KEYDOWN lParam bit 24, distinguishes NumpadEnter
@@ -257,7 +282,8 @@ std::string NSEventKeyToCode(unsigned short key_code);
 // Sets the application dock badge. nullptr or "" clears it.
 void SetDockBadgeMac(const char* badge_or_null);
 
-// `type` is one of LAUFEY_DOCK_BOUNCE_INFORMATIONAL / LAUFEY_DOCK_BOUNCE_CRITICAL.
+// `type` is one of LAUFEY_DOCK_BOUNCE_INFORMATIONAL /
+// LAUFEY_DOCK_BOUNCE_CRITICAL.
 void BounceDockMac(int type);
 
 // true → NSApplicationActivationPolicyRegular (dock + menu bar)
@@ -292,7 +318,8 @@ void FireDockReopenMac(bool has_visible_windows);
 // flows through .mm files without forcing AppKit on plain .cc.
 // (NSMenu is forward-declared at the top of this header.)
 #ifdef __OBJC__
-NSMenu* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
+NSMenu* BuildNSMenuFromValue(laufey_value_t* val,
+                             const laufey_backend_api_t* api,
                              laufey_menu_click_fn on_click, void* on_click_data,
                              uint32_t window_id);
 #else
@@ -311,12 +338,13 @@ void SetTrayIconMac(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayIconDarkMac(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayTooltipMac(uint32_t tray_id, const char* tooltip_or_null);
 void SetTrayMenuMac(uint32_t tray_id, laufey_value_t* menu_template,
-                     const laufey_backend_api_t* api,
-                     laufey_menu_click_fn on_click, void* on_click_data);
+                    const laufey_backend_api_t* api,
+                    laufey_menu_click_fn on_click, void* on_click_data);
 void SetTrayClickHandlerMac(uint32_t tray_id, laufey_tray_click_fn handler,
-                             void* user_data);
+                            void* user_data);
 void SetTrayDoubleClickHandlerMac(uint32_t tray_id,
-                                   laufey_tray_click_fn handler, void* user_data);
+                                  laufey_tray_click_fn handler,
+                                  void* user_data);
 // Writes the tray icon's screen rectangle (top-left origin, points/DIP) into
 // the out-params (any may be NULL) and returns true. Returns false if the id
 // is unknown or the icon has no on-screen button yet.
@@ -326,8 +354,8 @@ bool GetTrayIconBoundsMac(uint32_t tray_id, int* x, int* y, int* width,
 
 #ifdef __linux__
 // GDK keyval → W3C "key". `keyval` is a GDK keyval (gdk_event_key.keyval).
-// `evdev_keycode` is GDK's evdev hardware keycode (gdk_event_key.hardware_keycode),
-// used for "code" mapping.
+// `evdev_keycode` is GDK's evdev hardware keycode
+// (gdk_event_key.hardware_keycode), used for "code" mapping.
 std::string GdkKeyvalToKey(unsigned int keyval);
 std::string GdkKeycodeToCode(unsigned int evdev_keycode);
 
@@ -342,14 +370,15 @@ std::string GdkKeycodeToCode(unsigned int evdev_keycode);
 // typed form).
 #ifdef __GTK_H__
 GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val,
-                                  const laufey_backend_api_t* api,
-                                  uint32_t window_id,
-                                  laufey_menu_click_fn on_click,
-                                  void* on_click_data, bool is_menu_bar);
+                                 const laufey_backend_api_t* api,
+                                 uint32_t window_id,
+                                 laufey_menu_click_fn on_click,
+                                 void* on_click_data, bool is_menu_bar);
 #else
-void* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
-                            uint32_t window_id, laufey_menu_click_fn on_click,
-                            void* on_click_data, bool is_menu_bar);
+void* BuildGtkMenuFromValue(laufey_value_t* val,
+                            const laufey_backend_api_t* api, uint32_t window_id,
+                            laufey_menu_click_fn on_click, void* on_click_data,
+                            bool is_menu_bar);
 #endif
 
 // ---------------------------------------------------------------------------
@@ -372,13 +401,13 @@ void SetTrayIconLinux(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayIconDarkLinux(uint32_t tray_id, const void* png_bytes, size_t len);
 void SetTrayTooltipLinux(uint32_t tray_id, const char* tooltip_or_null);
 void SetTrayMenuLinux(uint32_t tray_id, laufey_value_t* menu_template,
-                       const laufey_backend_api_t* api,
-                       laufey_menu_click_fn on_click, void* on_click_data);
+                      const laufey_backend_api_t* api,
+                      laufey_menu_click_fn on_click, void* on_click_data);
 void SetTrayClickHandlerLinux(uint32_t tray_id, laufey_tray_click_fn handler,
-                                void* user_data);
+                              void* user_data);
 void SetTrayDoubleClickHandlerLinux(uint32_t tray_id,
-                                      laufey_tray_click_fn handler,
-                                      void* user_data);
+                                    laufey_tray_click_fn handler,
+                                    void* user_data);
 #endif
 
 }  // namespace laufey_common

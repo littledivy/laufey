@@ -37,8 +37,9 @@ laufey::main!(main);
 - [Backends](backends.md) — CEF, WebView, and Winit, and how they differ.
 - The feature pages — [windows](window-management.md),
   [JavaScript interop](javascript-interop.md), [menus](menus.md),
-  [dialogs](dialogs.md), [tray](tray.md), [notifications](notifications.md), and
-  more — each with a usage example and its per-platform notes.
+  [dialogs](dialogs.md), [tray](tray.md), [notifications](notifications.md),
+  [clipboard](clipboard.md), and more — each with a usage example and its
+  per-platform notes.
 - [Packaging & distribution](distribution.md) — bundling, signing, and updates.
 - [Building](building.md) — prerequisites and `make` targets.
 

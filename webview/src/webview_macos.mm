@@ -98,6 +98,13 @@ class WKWebViewBackend : public LaufeyBackend {
                  const std::string& message, const std::string& default_value,
                  char** out_input_value) override;
 
+  char* ReadClipboardText() override {
+    return laufey_common::ClipboardReadTextMac();
+  }
+  void WriteClipboardText(const std::string& text) override {
+    laufey_common::ClipboardWriteTextMac(text);
+  }
+
   void SetDockBadge(const char* badge_or_null) override;
   void BounceDock(int type) override;
   void SetDockMenu(laufey_value_t* menu_template,
