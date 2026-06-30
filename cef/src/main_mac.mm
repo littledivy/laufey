@@ -221,6 +221,9 @@ static int run_headless(const char* runtimePath) {
     if (envPath) {
       path = envPath;
     }
+    if (path.empty()) {
+      path = LaufeyFindColocatedRuntime();
+    }
   }
 
   if (path.empty()) {
@@ -273,6 +276,22 @@ int main(int argc, char* argv[]) {
       g_runtime_path = argv[i] + 10;
       runtimePathArg = [NSString stringWithUTF8String:argv[i] + 10];
       break;
+    }
+  }
+
+  if (g_runtime_path.empty()) {
+    const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
+    if (envPath) {
+      g_runtime_path = envPath;
+      runtimePathArg = [NSString stringWithUTF8String:envPath];
+    }
+  }
+
+  if (g_runtime_path.empty()) {
+    std::string colocated = LaufeyFindColocatedRuntime();
+    if (!colocated.empty()) {
+      g_runtime_path = colocated;
+      runtimePathArg = [NSString stringWithUTF8String:colocated.c_str()];
     }
   }
 

@@ -29,6 +29,10 @@ int main(int argc, char* argv[]) {
   }
 
   if (runtimePath.empty()) {
+    runtimePath = LaufeyFindColocatedRuntime();
+  }
+
+  if (runtimePath.empty()) {
     const char* searchPaths[] = {
         "./libruntime.so", "./target/debug/libhello.so",
         "./target/release/libhello.so", "/usr/lib/laufey/libruntime.so",

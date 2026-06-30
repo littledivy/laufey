@@ -717,6 +717,10 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  if (g_runtime_path.empty()) {
+    g_runtime_path = LaufeyFindColocatedRuntime();
+  }
+
   // Check for headless / forked worker mode (skip CEF entirely)
   if (is_forked_worker() || is_cli_worker_command(argc, argv)) {
     return run_headless(g_runtime_path);
