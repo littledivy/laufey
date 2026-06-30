@@ -5,9 +5,11 @@
 #define LAUFEY_WIN32_MENU_H_
 
 #include <windows.h>
+#include <wincodec.h>
 #include <string>
 #include <vector>
 #include <map>
+#include <utility>
 #include <laufey.h>
 
 namespace win32_menu {
@@ -15,6 +17,9 @@ namespace win32_menu {
 // Per-window menu state — maps command IDs to item string IDs.
 struct MenuState {
   std::map<UINT, std::string> command_to_id;
+  // GDI bitmaps for item icons (hbmpItem). Owned here so they outlive the menu
+  // and are freed when the menu is rebuilt/destroyed.
+  std::vector<HBITMAP> bitmaps;
   laufey_menu_click_fn on_click = nullptr;
   void* on_click_data = nullptr;
   uint32_t window_id = 0;
@@ -116,6 +121,88 @@ inline bool CreateRoleMenuItem(HMENU menu, const std::string& role,
 inline void FreeVal(const laufey_backend_api_t* api, laufey_value_t* v) {
   if (v)
     api->value_free(v);
+}
+
+// Decode a PNG file into a 32bpp premultiplied-alpha top-down DIB section
+// suitable for a menu item bitmap (hbmpItem). Scaled to the small-icon metric
+// so it lines up with the menu gutter. Returns nullptr on any failure; the
+// caller owns the returned HBITMAP and must DeleteObject it. Unlike macOS,
+// the image is rendered as-is — there is no template tinting on selection.
+inline HBITMAP LoadMenuIconBitmap(const std::string& path) {
+  if (path.empty())
+    return nullptr;
+
+  int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+  if (wlen <= 0)
+    return nullptr;
+  std::wstring wpath(static_cast<size_t>(wlen - 1), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &wpath[0], wlen);
+
+  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  IWICImagingFactory* factory = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                              CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
+    return nullptr;
+  }
+
+  IWICBitmapDecoder* decoder = nullptr;
+  factory->CreateDecoderFromFilename(wpath.c_str(), nullptr, GENERIC_READ,
+                                     WICDecodeMetadataCacheOnLoad, &decoder);
+  IWICBitmapFrameDecode* frame = nullptr;
+  if (decoder)
+    decoder->GetFrame(0, &frame);
+  IWICFormatConverter* conv = nullptr;
+  factory->CreateFormatConverter(&conv);
+  if (frame && conv) {
+    conv->Initialize(frame, GUID_WICPixelFormat32bppPBGRA,
+                     WICBitmapDitherTypeNone, nullptr, 0.0,
+                     WICBitmapPaletteTypeCustom);
+  }
+
+  int metric = GetSystemMetrics(SM_CXSMICON);
+  UINT side = metric > 0 ? static_cast<UINT>(metric) : 16;
+  IWICBitmapScaler* scaler = nullptr;
+  factory->CreateBitmapScaler(&scaler);
+  if (conv && scaler) {
+    scaler->Initialize(conv, side, side,
+                       WICBitmapInterpolationModeHighQualityCubic);
+  }
+
+  HBITMAP hbmp = nullptr;
+  if (scaler) {
+    BITMAPINFO bi = {};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = static_cast<LONG>(side);
+    bi.bmiHeader.biHeight = -static_cast<LONG>(side);  // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HDC hdc = GetDC(nullptr);
+    hbmp = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    ReleaseDC(nullptr, hdc);
+    UINT stride = side * 4;
+    if (hbmp && bits &&
+        FAILED(scaler->CopyPixels(nullptr, stride, stride * side,
+                                  static_cast<BYTE*>(bits)))) {
+      DeleteObject(hbmp);
+      hbmp = nullptr;
+    } else if (hbmp && !bits) {
+      DeleteObject(hbmp);
+      hbmp = nullptr;
+    }
+  }
+
+  if (scaler)
+    scaler->Release();
+  if (conv)
+    conv->Release();
+  if (frame)
+    frame->Release();
+  if (decoder)
+    decoder->Release();
+  factory->Release();
+  return hbmp;
 }
 
 // Recursively build an HMENU from a laufey_value_t list.
@@ -240,7 +327,34 @@ inline HMENU BuildMenuFromValue(laufey_value_t* val,
     }
     FreeVal(api, checkedVal);
 
+    // icon -> menu item bitmap (a PNG file path), loaded below after the item
+    // exists so it can be attached by command id.
+    std::string iconPath;
+    laufey_value_t* iconVal = api->value_dict_get(itemVal, "icon");
+    if (iconVal && api->value_is_string(iconVal)) {
+      size_t iconLen = 0;
+      char* iconStr = api->value_get_string(iconVal, &iconLen);
+      if (iconStr) {
+        iconPath = iconStr;
+        api->value_free_string(iconStr);
+      }
+    }
+    FreeVal(api, iconVal);
+
     AppendMenuA(menu, flags, cmdId, label.c_str());
+
+    if (!iconPath.empty()) {
+      HBITMAP hbmp = LoadMenuIconBitmap(iconPath);
+      if (hbmp) {
+        MENUITEMINFOA mii = {};
+        mii.cbSize = sizeof(mii);
+        mii.fMask = MIIM_BITMAP;
+        mii.hbmpItem = hbmp;
+        SetMenuItemInfoA(menu, cmdId, FALSE, &mii);
+        state.bitmaps.push_back(hbmp);
+      }
+    }
+
     FreeVal(api, itemVal);
   }
 
@@ -258,6 +372,10 @@ inline void SetApplicationMenu(HWND hwnd, laufey_value_t* menu_template,
 
   MenuState& state = GetMenuStates()[hwnd];
   state.command_to_id.clear();
+  // The previously built menu still references its bitmaps until DestroyMenu
+  // below, so hold them aside and free them only after the old menu is gone.
+  std::vector<HBITMAP> oldBitmaps = std::move(state.bitmaps);
+  state.bitmaps.clear();
   state.next_command_id = 0x8000;
   state.on_click = on_click;
   state.on_click_data = on_click_data;
@@ -274,6 +392,10 @@ inline void SetApplicationMenu(HWND hwnd, laufey_value_t* menu_template,
 
   if (oldMenu) {
     DestroyMenu(oldMenu);
+  }
+  for (HBITMAP bmp : oldBitmaps) {
+    if (bmp)
+      DeleteObject(bmp);
   }
 }
 
@@ -326,6 +448,10 @@ inline void ShowContextMenu(HWND hwnd, int x, int y,
   }
 
   DestroyMenu(popup);
+  for (HBITMAP bmp : state.bitmaps) {
+    if (bmp)
+      DeleteObject(bmp);
+  }
 }
 
 }  // namespace win32_menu

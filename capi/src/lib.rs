@@ -1270,10 +1270,10 @@ pub enum MenuItem {
     /// Checkmark next to the item (`NSMenuItem.state` / `MFS_CHECKED` /
     /// `GtkCheckMenuItem`). All platforms.
     checked: bool,
-    /// Item icon: a file path to an image (a monochrome black+alpha PNG is
-    /// rendered as a template so it tints to white on selection). macOS only
-    /// for now (Windows planned; Linux unsupported — GtkMenuItem has no image
-    /// slot).
+    /// Item icon: a file path to a PNG image. macOS and Windows (Linux
+    /// unsupported — GtkMenuItem has no image slot). On macOS a monochrome
+    /// black+alpha PNG is rendered as a template so it tints to white on
+    /// selection; Windows renders the image as-is.
     icon: Option<String>,
     /// Tooltip shown on hover. macOS only (matches Electron's `toolTip`).
     tooltip: Option<String>,

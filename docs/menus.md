@@ -8,10 +8,10 @@ When the user clicks an item that has an identifier, your callback is invoked
 with that identifier.
 
 Regular items also support a few visual properties, mirroring Electron's
-`MenuItem`: `checked` (a checkmark, all platforms), `icon` (a file path to an
-image; a monochrome black+alpha PNG is treated as a template and tints to white
-on selection — macOS for now, Windows planned, unsupported on Linux), and
-`tooltip` (hover text — macOS only).
+`MenuItem`: `checked` (a checkmark, all platforms), `icon` (a file path to a PNG
+image — macOS and Windows, unsupported on Linux; on macOS a monochrome
+black+alpha PNG is treated as a template and tints to white on selection, while
+Windows renders it as-is), and `tooltip` (hover text — macOS only).
 
 ```rust
 use laufey::MenuItem;
