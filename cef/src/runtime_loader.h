@@ -456,6 +456,9 @@ void RegisterNSWindowForCefHandle(void* cef_handle, uint32_t window_id);
 void UnregisterNSWindowForCefHandle(void* cef_handle);
 void SetNSWindowResizable(void* cef_handle, bool resizable);
 bool IsNSWindowResizable(void* cef_handle);
+// Overall window opacity in [0.0, 1.0] via NSWindow.alphaValue.
+void SetNSWindowOpacity(void* cef_handle, double opacity);
+double GetNSWindowOpacity(void* cef_handle);
 // Reconfigure the window backing a CEF handle to behave as a floating,
 // non-activating utility panel (used for tray popovers): floats above
 // normal windows, joins all spaces, and doesn't steal focus from the
@@ -481,6 +484,10 @@ void ConfigureWin32WindowAsPanel(void* hwnd);
 void MonitorLinuxWindowEvents(unsigned long xid);
 void SetLinuxWindowResizable(unsigned long xid, bool resizable);
 bool IsLinuxWindowResizable(unsigned long xid);
+// Overall window opacity in [0.0, 1.0] via the _NET_WM_WINDOW_OPACITY hint
+// (honored by compositing window managers). Implemented in main_linux.cc.
+void SetLinuxWindowOpacity(unsigned long xid, double opacity);
+double GetLinuxWindowOpacity(unsigned long xid);
 // Mark the X11 window as a utility/panel window (_NET_WM_WINDOW_TYPE_UTILITY,
 // skip taskbar/pager) so the WM treats it as an auxiliary panel that doesn't
 // take part in normal focus/taskbar handling. Implemented in main_linux.cc.

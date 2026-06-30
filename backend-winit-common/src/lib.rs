@@ -31,12 +31,13 @@ use winit::window::{Window, WindowLevel};
 // Must match `LAUFEY_API_VERSION` in capi/include/laufey.h (and capi/src/lib.rs).
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
-// below must match the v26 `laufey_backend_api`.
-pub const LAUFEY_API_VERSION: u32 = 26;
+// below must match the v28 `laufey_backend_api`.
+pub const LAUFEY_API_VERSION: u32 = 28;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
 pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
+pub const LAUFEY_WINDOW_FLAG_TRANSPARENT: u32 = 1 << 4;
 
 #[allow(dead_code)]
 pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: c_int = 0;
@@ -127,6 +128,13 @@ pub type LaufeyMoveFn = unsafe extern "C" fn(
   c_int,       // y
 );
 pub type LaufeyCloseRequestedFn = unsafe extern "C" fn(
+  *mut c_void, // user_data
+  u32,         // window_id
+);
+// Mirrors `laufey_page_load_fn` (API >= 27). The winit backend has no web
+// engine and never fires page-load events; the typedef exists only so the
+// `set_page_load_handler` vtable slot has the right signature.
+pub type LaufeyPageLoadFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
 );
@@ -317,6 +325,11 @@ pub struct LaufeyBackendApi {
       *mut c_void,
     ),
   >,
+  // Mirrors laufey.h: set_page_load_handler (API >= 27) sits between
+  // set_close_requested_handler and poll_js_calls.
+  pub set_page_load_handler: Option<
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyPageLoadFn>, *mut c_void),
+  >,
   pub poll_js_calls: Option<unsafe extern "C" fn(*mut c_void)>,
   pub set_js_call_notify: Option<
     unsafe extern "C" fn(
@@ -496,6 +509,14 @@ pub struct LaufeyBackendApi {
       *mut c_void, // exchange
     ),
   >,
+
+  // --- Window opacity (API >= 28) ---
+  // winit exposes no runtime window-opacity API, so both pointers stay None;
+  // the embedder's set_opacity/get_opacity become no-ops (get returns 1.0).
+  // The fields MUST still be declared to keep the struct layout in sync with
+  // the v28 `laufey_backend_api` the capi reads through the backend's pointer.
+  pub set_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32, f64)>,
+  pub get_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32) -> f64>,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1087,6 +1108,7 @@ pub fn create_api_base() -> LaufeyBackendApi {
     set_resize_handler: None,
     set_move_handler: None,
     set_close_requested_handler: None,
+    set_page_load_handler: None,
     poll_js_calls: None,
     set_js_call_notify: None,
     set_application_menu: None,
@@ -1119,6 +1141,9 @@ pub fn create_api_base() -> LaufeyBackendApi {
     scheme_response_begin: None,
     scheme_response_write: None,
     scheme_response_finish: None,
+    // Window opacity (API >= 28): winit has no runtime opacity API.
+    set_window_opacity: None,
+    get_window_opacity: None,
   }
 }
 
@@ -2897,6 +2922,13 @@ pub fn apply_pending_attrs(
   if flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE != 0 {
     // Don't activate / take focus when first shown.
     attrs = attrs.with_active(false);
+  }
+  if flags & LAUFEY_WINDOW_FLAG_TRANSPARENT != 0 {
+    // Transparent background so anything the window draws with alpha < 1
+    // composites against the desktop. (winit has no web engine of its own,
+    // but the flag is honored so embedders driving their own surface get a
+    // transparent framebuffer.)
+    attrs = attrs.with_transparent(true);
   }
   attrs
 }

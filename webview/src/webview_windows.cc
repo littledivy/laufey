@@ -332,6 +332,8 @@ class WebView2Backend : public LaufeyBackend {
   bool IsResizable(uint32_t window_id) override;
   void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) override;
   bool IsAlwaysOnTop(uint32_t window_id) override;
+  void SetWindowOpacity(uint32_t window_id, double opacity) override;
+  double GetWindowOpacity(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -1150,6 +1152,49 @@ bool WebView2Backend::IsAlwaysOnTop(uint32_t window_id) {
   auto* state = GetWindow(window_id);
   return state ? (GetWindowLong(state->hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0
                : false;
+}
+
+void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return;
+  LONG ex = GetWindowLong(state->hwnd, GWL_EXSTYLE);
+  if (opacity >= 1.0) {
+    // Fully opaque: drop the layered style so the window renders on the normal
+    // (non-redirected) path with no per-window alpha overhead.
+    if (ex & WS_EX_LAYERED) {
+      SetWindowLong(state->hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+      RedrawWindow(state->hwnd, nullptr, nullptr,
+                   RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+    }
+    return;
+  }
+  if (!(ex & WS_EX_LAYERED)) {
+    SetWindowLong(state->hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+  }
+  SetLayeredWindowAttributes(state->hwnd, 0, (BYTE)(opacity * 255.0 + 0.5),
+                             LWA_ALPHA);
+}
+
+double WebView2Backend::GetWindowOpacity(uint32_t window_id) {
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return 1.0;
+  if (!(GetWindowLong(state->hwnd, GWL_EXSTYLE) & WS_EX_LAYERED))
+    return 1.0;
+  BYTE alpha = 255;
+  DWORD flags = 0;
+  if (GetLayeredWindowAttributes(state->hwnd, nullptr, &alpha, &flags) &&
+      (flags & LWA_ALPHA)) {
+    return alpha / 255.0;
+  }
+  return 1.0;
 }
 
 bool WebView2Backend::IsVisible(uint32_t window_id) {

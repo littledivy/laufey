@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 27
+#define LAUFEY_API_VERSION 28
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -43,10 +43,25 @@ extern "C" {
 // so the user never sees the empty/black initial webview frame — particularly
 // important on Wayland, where the compositor only ever presents committed
 // buffers and the pre-load frame shows as solid black. API >= 27.
+//
+// TRANSPARENT creates the window with a transparent background so the alpha
+// channel of the web content composites against whatever is behind the window
+// (Electron `transparent: true`, Tauri `transparent: true`). The OS window is
+// made non-opaque and the web engine is told not to paint an opaque backdrop,
+// so any page region the document leaves transparent (e.g. `background:
+// transparent` on the root) shows the desktop / windows underneath. Pair it
+// with FRAMELESS for the common borderless-translucent look. This is distinct
+// from `set_window_opacity`, which fades the whole window (chrome included) by
+// a uniform factor; TRANSPARENT instead honors the page's own per-pixel alpha.
+// Must be decided at creation time. Supported by the system-WebView backend on
+// macOS and Linux (WebKitGTK) and by the Winit backend. The Windows WebView2
+// and CEF backends paint an opaque window background in windowed mode and
+// ignore this flag. API >= 28.
 #define LAUFEY_WINDOW_FLAG_FRAMELESS (1u << 0)
 #define LAUFEY_WINDOW_FLAG_NO_ACTIVATE (1u << 1)
 #define LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR (1u << 2)
 #define LAUFEY_WINDOW_FLAG_HIDDEN (1u << 3)
+#define LAUFEY_WINDOW_FLAG_TRANSPARENT (1u << 4)
 
 typedef struct laufey_backend_api laufey_backend_api_t;
 
@@ -676,6 +691,25 @@ struct laufey_backend_api {
   // is invalid. Call exactly once per exchange (including after a cancel).
   void (*scheme_response_finish)(void* backend_data,
                                  laufey_scheme_exchange_t* exchange);
+
+  // --- Window opacity (API >= 28) --------------------------------------------
+  //
+  // Set the window's overall opacity as a uniform factor in [0.0, 1.0], where
+  // 1.0 is fully opaque (the default) and 0.0 is fully transparent. Unlike
+  // LAUFEY_WINDOW_FLAG_TRANSPARENT (which honors the page's per-pixel alpha),
+  // this fades the *entire* window — web content and native chrome alike — by
+  // the same amount, like CSS `opacity` on the whole window. Values are clamped
+  // to [0.0, 1.0]. macOS: NSWindow.alphaValue. Windows: a layered window with
+  // SetLayeredWindowAttributes(LWA_ALPHA). Linux: gtk_widget_set_opacity. The
+  // Winit backend has no window-opacity API and leaves this NULL. Backends
+  // added before API version 28 also leave it NULL; callers must null-check.
+  void (*set_window_opacity)(void* backend_data, uint32_t window_id,
+                             double opacity);
+
+  // Return the window's current opacity in [0.0, 1.0]. Returns 1.0 if the id is
+  // unknown or the backend can't report it. NULL on backends older than API
+  // version 28.
+  double (*get_window_opacity)(void* backend_data, uint32_t window_id);
 };
 
 #ifdef __cplusplus

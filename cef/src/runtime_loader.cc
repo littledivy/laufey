@@ -412,6 +412,82 @@ static bool Backend_IsAlwaysOnTop(void* data, uint32_t window_id) {
   return result;
 }
 
+static void Backend_SetWindowOpacity(void* data, uint32_t window_id,
+                                     double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  if (browser) {
+    CefPostTask(TID_UI,
+                base::BindOnce(
+                    [](CefRefPtr<CefBrowser> b, double o) {
+                      auto browser_view = CefBrowserView::GetForBrowser(b);
+                      if (!browser_view)
+                        return;
+                      auto window = browser_view->GetWindow();
+                      if (!window)
+                        return;
+#ifdef _WIN32
+                      HWND hwnd = window->GetWindowHandle();
+                      LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+                      if (o >= 1.0) {
+                        if (ex & WS_EX_LAYERED) {
+                          SetWindowLong(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+                          RedrawWindow(hwnd, nullptr, nullptr,
+                                       RDW_ERASE | RDW_INVALIDATE | RDW_FRAME |
+                                           RDW_ALLCHILDREN);
+                        }
+                      } else {
+                        if (!(ex & WS_EX_LAYERED))
+                          SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+                        SetLayeredWindowAttributes(
+                            hwnd, 0, (BYTE)(o * 255.0 + 0.5), LWA_ALPHA);
+                      }
+#elif defined(__APPLE__)
+                      SetNSWindowOpacity(window->GetWindowHandle(), o);
+#elif defined(__linux__)
+                      SetLinuxWindowOpacity(window->GetWindowHandle(), o);
+#endif
+                    },
+                    browser, opacity));
+  }
+}
+
+static double Backend_GetWindowOpacity(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  double result = 1.0;
+  if (browser) {
+    cef_invoke_sync([&] {
+      auto browser_view = CefBrowserView::GetForBrowser(browser);
+      if (!browser_view)
+        return;
+      auto window = browser_view->GetWindow();
+      if (!window)
+        return;
+#ifdef _WIN32
+      HWND hwnd = window->GetWindowHandle();
+      if (!(GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED))
+        return;
+      BYTE alpha = 255;
+      DWORD flags = 0;
+      if (GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags) &&
+          (flags & LWA_ALPHA)) {
+        result = alpha / 255.0;
+      }
+#elif defined(__APPLE__)
+      result = GetNSWindowOpacity(window->GetWindowHandle());
+#elif defined(__linux__)
+      result = GetLinuxWindowOpacity(window->GetWindowHandle());
+#endif
+    });
+  }
+  return result;
+}
+
 static bool Backend_IsVisible(void* data, uint32_t window_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
@@ -1361,6 +1437,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.is_resizable = Backend_IsResizable;
   backend_api_.set_always_on_top = Backend_SetAlwaysOnTop;
   backend_api_.is_always_on_top = Backend_IsAlwaysOnTop;
+  backend_api_.set_window_opacity = Backend_SetWindowOpacity;
+  backend_api_.get_window_opacity = Backend_GetWindowOpacity;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;
