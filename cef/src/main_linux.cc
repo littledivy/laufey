@@ -727,6 +727,22 @@ int main(int argc, char* argv[]) {
     g_runtime_path = LaufeyFindColocatedRuntime();
   }
 
+  // Wayland app_id / X11 WM_CLASS for our windows (see LaufeyWindowDelegate::
+  // GetLinuxWindowProperties). Prefer the reverse-DNS identifier the embedder
+  // also uses for the `.desktop` file; fall back to the display name.
+  if (const char* app_id = getenv("LAUFEY_APP_ID")) {
+    if (*app_id) {
+      g_app_id = app_id;
+    }
+  }
+  if (g_app_id.empty()) {
+    if (const char* app_name = getenv("LAUFEY_APP_NAME")) {
+      if (*app_name) {
+        g_app_id = app_name;
+      }
+    }
+  }
+
   // Check for headless / forked worker mode (skip CEF entirely)
   if (is_forked_worker() || is_cli_worker_command(argc, argv)) {
     return run_headless(g_runtime_path);
