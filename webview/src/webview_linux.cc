@@ -296,6 +296,22 @@ static void on_load_changed(WebKitWebView* /*webview*/,
   RuntimeLoader::GetInstance()->DispatchPageLoadEvent(wid);
 }
 
+// Fired when the page requests a new webview (`target="_blank"` or
+// `window.open()`). These never reach the Navigation API interceptor, so route
+// http(s) destinations to the OS browser and create no new webview.
+static WebKitWebView* on_create(WebKitWebView* /*webview*/,
+                                WebKitNavigationAction* navigation_action,
+                                gpointer /*user_data*/) {
+  WebKitURIRequest* req =
+      webkit_navigation_action_get_request(navigation_action);
+  const char* uri = req ? webkit_uri_request_get_uri(req) : nullptr;
+  if (uri &&
+      (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://"))) {
+    g_app_info_launch_default_for_uri(uri, nullptr, nullptr);
+  }
+  return nullptr;
+}
+
 static gboolean on_key_event(GtkWidget* widget, GdkEventKey* event,
                              gpointer user_data) {
   uint32_t wid = LaufeyIdForWidget(widget);
@@ -329,6 +345,7 @@ class WebKitGTKBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
@@ -679,6 +696,7 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                      nullptr);
     g_signal_connect(webview, "load-changed", G_CALLBACK(on_load_changed),
                      GUINT_TO_POINTER(window_id));
+    g_signal_connect(webview, "create", G_CALLBACK(on_create), nullptr);
 
     WebKitSettings* wk_settings = webkit_web_view_get_settings(webview);
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
@@ -745,6 +763,12 @@ void WebKitGTKBackend::Navigate(uint32_t window_id, const std::string& url) {
     if (state) {
       webkit_web_view_load_uri(state->webview, url.c_str());
     }
+  });
+}
+
+void WebKitGTKBackend::OpenExternalURL(const std::string& url) {
+  gtk_invoke_sync([&] {
+    g_app_info_launch_default_for_uri(url.c_str(), nullptr, nullptr);
   });
 }
 

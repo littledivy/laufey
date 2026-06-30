@@ -2,6 +2,8 @@
 
 #include "runtime_loader.h"
 
+#include "laufey_external_links.h"
+
 #ifndef _WIN32
 #include <dlfcn.h>
 #include <unistd.h>
@@ -945,6 +947,27 @@ void RuntimeLoader::PollPendingJsCalls() {
   }
 
   for (auto& call : calls) {
+    // Reserved bridge call from the injected external-link interceptor
+    // (laufey_external_links.h): open the URL in the OS browser instead of
+    // forwarding to the runtime, then resolve the page-side promise.
+    if (call.method_path == LAUFEY_OPEN_EXTERNAL_METHOD) {
+      std::string url;
+      if (call.args && call.args->IsList()) {
+        const laufey::ValueList& list = call.args->GetList();
+        if (!list.empty() && list[0] && list[0]->IsString()) {
+          url = list[0]->GetString();
+        }
+      }
+      if (!url.empty()) {
+        if (LaufeyBackend* backend = GetBackend()) {
+          backend->OpenExternalURL(url);
+        }
+      }
+      JsCallRespond(call.window_id, call.call_id, laufey::Value::Null(),
+                    nullptr);
+      continue;
+    }
+
     if (handler) {
       laufey_value_t* argsWrapper = new laufey_value(call.args);
       handler(user_data, call.window_id, call.call_id, call.method_path.c_str(),

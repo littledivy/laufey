@@ -319,6 +319,7 @@ class WebView2Backend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
@@ -823,6 +824,31 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                     .Get(),
                 nullptr);
 
+            // `target="_blank"` / `window.open()` request a new window, which
+            // the Navigation API interceptor never sees. WebView2 would spawn a
+            // popup webview; instead route http(s) destinations to the OS
+            // browser and mark the request handled so no popup is created.
+            state->webview->add_NewWindowRequested(
+                Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                    [](ICoreWebView2* sender,
+                       ICoreWebView2NewWindowRequestedEventArgs* args)
+                        -> HRESULT {
+                      LPWSTR uriRaw = nullptr;
+                      args->get_Uri(&uriRaw);
+                      if (uriRaw) {
+                        if (wcsncmp(uriRaw, L"http://", 7) == 0 ||
+                            wcsncmp(uriRaw, L"https://", 8) == 0) {
+                          ShellExecuteW(nullptr, L"open", uriRaw, nullptr,
+                                        nullptr, SW_SHOWNORMAL);
+                        }
+                        CoTaskMemFree(uriRaw);
+                      }
+                      args->put_Handled(TRUE);
+                      return S_OK;
+                    })
+                    .Get(),
+                nullptr);
+
             // In-process app:// scheme: intercept requests and
             // bridge them to the runtime's memory transport. Only
             // wired up when the "app" scheme was actually registered
@@ -967,6 +993,12 @@ void WebView2Backend::Navigate(uint32_t window_id, const std::string& url) {
   } else {
     state->pending_url = wurl;
   }
+}
+
+void WebView2Backend::OpenExternalURL(const std::string& url) {
+  std::wstring wurl = Utf8ToWide(url);
+  ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr,
+                SW_SHOWNORMAL);
 }
 
 void WebView2Backend::SetTitle(uint32_t window_id, const std::string& title) {

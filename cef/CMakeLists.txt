@@ -11,6 +11,14 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# CEF 149's headers (e.g. base/cef_scoped_refptr.h) use C++20 concepts such as
+# std::same_as. The C++ sources pick this up from libcef_dll_wrapper's
+# cxx_std_20 INTERFACE compile feature, but that feature only applies to the
+# CXX language — Objective-C++ (.mm) sources fall back to the project default
+# and fail to compile. Set the ObjC++ standard to C++20 to match.
+set(CMAKE_OBJCXX_STANDARD 20)
+set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+
 set(LAUFEY_RENDERER_SRCS
   src/render_process_handler.cc
   src/render_process_handler.h

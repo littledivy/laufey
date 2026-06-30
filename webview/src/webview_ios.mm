@@ -46,6 +46,7 @@ class WKWebViewIOSBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t /*window_id*/, const std::string& /*title*/) override {
   }
   void ExecuteJs(uint32_t window_id, const std::string& script,
@@ -286,6 +287,21 @@ void WKWebViewIOSBackend::CloseWindow(uint32_t window_id) {
         return;
       it->second.window.hidden = YES;
       windows_.erase(it);
+    }
+  });
+}
+
+void WKWebViewIOSBackend::OpenExternalURL(const std::string& url) {
+  std::string urlCopy = url;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      NSURL* nsurl =
+          [NSURL URLWithString:[NSString stringWithUTF8String:urlCopy.c_str()]];
+      if (nsurl) {
+        [[UIApplication sharedApplication] openURL:nsurl
+                                           options:@{}
+                                 completionHandler:nil];
+      }
     }
   });
 }
