@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <string>
 
+#include "laufey_external_links.h"
+
 // The host->page side of the bridge protocol. These build the JS statements
 // that call the functions defined by BuildInitScript() below, so the function
 // names live in exactly one place. Each platform backend builds the statement
@@ -143,7 +145,7 @@ inline std::string BuildInitScript(const std::string& ns,
   };
 
 })();
-)JS";
+)JS" + BuildExternalLinkInterceptScript(ns);
 }
 
 #endif  // LAUFEY_WEBVIEW_INIT_SCRIPT_H_

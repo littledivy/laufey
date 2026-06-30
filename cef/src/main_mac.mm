@@ -14,6 +14,16 @@
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
 
+void LaufeyOpenExternalURL(const std::string& url) {
+  @autoreleasepool {
+    NSURL* nsurl =
+        [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
+    if (nsurl) {
+      [[NSWorkspace sharedWorkspace] openURL:nsurl];
+    }
+  }
+}
+
 @interface LaufeyApplication : NSApplication <CefAppProtocol> {
  @private
   BOOL handlingSendEvent_;

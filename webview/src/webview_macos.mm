@@ -51,6 +51,7 @@ class WKWebViewBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
@@ -360,6 +361,21 @@ class MacSchemeExchange : public SchemeExchangeBase {
 @end
 
 @implementation LaufeyUIDelegate
+
+// `target="_blank"` and `window.open()` request a new browsing context, which
+// the Navigation API interceptor never sees. WKWebView has no popup support, so
+// route http(s) destinations to the OS browser and create no new webview.
+- (WKWebView*)webView:(WKWebView*)webView
+    createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
+               forNavigationAction:(WKNavigationAction*)navigationAction
+                    windowFeatures:(WKWindowFeatures*)windowFeatures {
+  NSURL* url = navigationAction.request.URL;
+  if (url && ([url.scheme isEqualToString:@"http"] ||
+              [url.scheme isEqualToString:@"https"])) {
+    [[NSWorkspace sharedWorkspace] openURL:url];
+  }
+  return nil;
+}
 
 - (void)webView:(WKWebView*)webView
     runJavaScriptAlertPanelWithMessage:(NSString*)message
@@ -916,6 +932,19 @@ void WKWebViewBackend::CloseWindow(uint32_t window_id) {
       if (!win)
         return;
       [win close];
+    }
+  });
+}
+
+void WKWebViewBackend::OpenExternalURL(const std::string& url) {
+  std::string urlCopy = url;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      NSURL* nsurl =
+          [NSURL URLWithString:[NSString stringWithUTF8String:urlCopy.c_str()]];
+      if (nsurl) {
+        [[NSWorkspace sharedWorkspace] openURL:nsurl];
+      }
     }
   });
 }

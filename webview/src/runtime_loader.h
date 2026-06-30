@@ -411,6 +411,12 @@ class LaufeyBackend {
 
   virtual void OpenDevTools(uint32_t window_id) = 0;
 
+  // Open `url` in the user's default OS browser. Used to honor the
+  // external-link redirect policy (see laufey_external_links.h) so clicked
+  // links and `target="_blank"` popups leave the app's webview. Default no-op;
+  // platform backends override with the native open-in-browser call.
+  virtual void OpenExternalURL(const std::string& /*url*/) {}
+
   // --- Custom URL scheme handler (API >= 26) ---
   // Install a native handler for `scheme` so requests to <scheme>://… are
   // delivered to RuntimeLoader::DispatchSchemeRequest. Default no-op: backends

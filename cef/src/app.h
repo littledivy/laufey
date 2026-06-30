@@ -16,6 +16,11 @@
 
 extern std::string g_runtime_path;
 
+// Open `url` in the user's default OS browser. Implemented per platform in
+// main_mac.mm / main_windows.cc / main_linux.cc. Used to honor the external
+// link redirect policy (laufey_external_links.h).
+void LaufeyOpenExternalURL(const std::string& url);
+
 // Queue of laufey window IDs waiting for OnAfterCreated to fire.
 // Push before CreateBrowserView, pop in OnAfterCreated.
 // Both happen on the UI thread so no synchronization needed.
@@ -82,6 +87,18 @@ class LaufeyHandler : public CefClient,
       const std::vector<CefDraggableRegion>& regions) override;
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+  // `target="_blank"` / `window.open()` requests aren't seen by the page's
+  // Navigation API listener; cancel the popup and open http(s) destinations in
+  // the OS browser instead.
+  bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                     int popup_id, const CefString& target_url,
+                     const CefString& target_frame_name,
+                     WindowOpenDisposition target_disposition,
+                     bool user_gesture, const CefPopupFeatures& popupFeatures,
+                     CefWindowInfo& windowInfo, CefRefPtr<CefClient>& client,
+                     CefBrowserSettings& settings,
+                     CefRefPtr<CefDictionaryValue>& extra_info,
+                     bool* no_javascript_access) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 

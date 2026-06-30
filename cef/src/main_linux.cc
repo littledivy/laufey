@@ -19,6 +19,12 @@
 #include "renderer_app.h"
 #include "runtime_loader.h"
 
+#include <gio/gio.h>
+
+void LaufeyOpenExternalURL(const std::string& url) {
+  g_app_info_launch_default_for_uri(url.c_str(), nullptr, nullptr);
+}
+
 // --- Native event monitors (Linux / X11) ---
 // Uses XI2 (X Input Extension 2) on a dedicated X11 connection to monitor
 // mouse, scroll, cursor enter/leave, and focus events for CEF Views windows.
