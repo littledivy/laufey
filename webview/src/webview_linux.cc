@@ -279,6 +279,23 @@ static gboolean on_configure_event(GtkWidget* widget, GdkEventConfigure* event,
   return FALSE;
 }
 
+// Fired as a navigation progresses through its load states. We only care about
+// WEBKIT_LOAD_FINISHED, which signals the document and subresources have loaded
+// (and the web process has content to composite). The window_id is passed
+// directly as user_data because this signal is on the WebKitWebView, not the
+// toplevel registered with LaufeyIdForWidget.
+static void on_load_changed(WebKitWebView* /*webview*/,
+                            WebKitLoadEvent load_event, gpointer user_data) {
+  if (load_event != WEBKIT_LOAD_FINISHED) {
+    return;
+  }
+  uint32_t wid = static_cast<uint32_t>(GPOINTER_TO_UINT(user_data));
+  if (wid == 0) {
+    return;
+  }
+  RuntimeLoader::GetInstance()->DispatchPageLoadEvent(wid);
+}
+
 static gboolean on_key_event(GtkWidget* widget, GdkEventKey* event,
                              gpointer user_data) {
   uint32_t wid = LaufeyIdForWidget(widget);
@@ -660,6 +677,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
     g_signal_connect(webview, "script-dialog", G_CALLBACK(on_script_dialog),
                      nullptr);
+    g_signal_connect(webview, "load-changed", G_CALLBACK(on_load_changed),
+                     GUINT_TO_POINTER(window_id));
 
     WebKitSettings* wk_settings = webkit_web_view_get_settings(webview);
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
@@ -694,7 +713,13 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       windows_[window_id] = state;
     }
 
-    gtk_widget_show_all(window);
+    // A hidden window is created but not mapped; the embedder reveals it later
+    // (typically from a page-load handler) so the empty initial frame is never
+    // shown. The load state machine still advances while unmapped, so the
+    // page-load event fires regardless.
+    if (!(flags & LAUFEY_WINDOW_FLAG_HIDDEN)) {
+      gtk_widget_show_all(window);
+    }
   });
 }
 

@@ -694,11 +694,17 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
 
   InitializeWebViewForWindow(window_id, hwnd);
 
-  // Showing a non-activating panel must not take foreground from the user's
-  // active window.
-  ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
-                                                            : SW_SHOW);
-  UpdateWindow(hwnd);
+  // A hidden window is created but not shown; the embedder reveals it later
+  // (typically from a page-load handler) so the empty initial frame is never
+  // seen. WebView2 still loads and fires NavigationCompleted while hidden.
+  if (!(flags & LAUFEY_WINDOW_FLAG_HIDDEN)) {
+    // Showing a non-activating panel must not take foreground from the user's
+    // active window.
+    ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE)
+                         ? SW_SHOWNOACTIVATE
+                         : SW_SHOW);
+    UpdateWindow(hwnd);
+  }
 }
 
 void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
@@ -892,6 +898,20 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                         args->Accept();
                       }
 
+                      return S_OK;
+                    })
+                    .Get(),
+                nullptr);
+
+            // Reveal-on-load signal: fired when a navigation finishes. Used to
+            // show a window created with LAUFEY_WINDOW_FLAG_HIDDEN only once it
+            // has real content, so the empty initial frame is never seen.
+            state->webview->add_NavigationCompleted(
+                Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                    [wid](ICoreWebView2* sender,
+                          ICoreWebView2NavigationCompletedEventArgs* args)
+                        -> HRESULT {
+                      RuntimeLoader::GetInstance()->DispatchPageLoadEvent(wid);
                       return S_OK;
                     })
                     .Get(),

@@ -16,6 +16,7 @@
 @class LaufeyScriptMessageHandler;
 @class LaufeyWindowDelegate;
 @class LaufeyUIDelegate;
+@class LaufeyNavigationDelegate;
 
 // Defined in main_mac.mm — appends a default Edit submenu (Cut/Copy/Paste/
 // Select All/Undo/Redo) to the given menubar if no submenu in the tree
@@ -36,6 +37,7 @@ struct MacWindowState {
   id move_observer;
   NSMenu* menu = nil;  // per-window menu (nil = no custom menu)
   LaufeyUIDelegate* ui_delegate;
+  LaufeyNavigationDelegate* navigation_delegate;
 };
 
 class WKWebViewBackend : public LaufeyBackend {
@@ -423,6 +425,21 @@ class MacSchemeExchange : public SchemeExchangeBase {
 
 @end
 
+@interface LaufeyNavigationDelegate : NSObject <WKNavigationDelegate>
+@property(nonatomic, assign) uint32_t windowId;
+@end
+
+@implementation LaufeyNavigationDelegate
+
+// Fired when a main-frame navigation finishes loading. Used to reveal a window
+// created with LAUFEY_WINDOW_FLAG_HIDDEN once it has real content to show.
+- (void)webView:(WKWebView*)webView
+    didFinishNavigation:(WKNavigation*)navigation {
+  RuntimeLoader::GetInstance()->DispatchPageLoadEvent(self.windowId);
+}
+
+@end
+
 namespace {
 
 // NSEvent → W3C key/code lives in backend-common
@@ -793,6 +810,10 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       }
       LaufeyUIDelegate* uiDelegate = [[LaufeyUIDelegate alloc] init];
       webview.UIDelegate = uiDelegate;
+      LaufeyNavigationDelegate* navDelegate =
+          [[LaufeyNavigationDelegate alloc] init];
+      navDelegate.windowId = window_id;
+      webview.navigationDelegate = navDelegate;
       [window setContentView:webview];
 
       RegisterNSWindow(window, window_id);
@@ -855,6 +876,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       state.message_handler = handler;
       state.window_delegate = delegate;
       state.ui_delegate = uiDelegate;
+      state.navigation_delegate = navDelegate;
       state.focus_observer = focus_obs;
       state.blur_observer = blur_obs;
       state.resize_observer = resize_obs;
@@ -865,7 +887,11 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
         windows_[window_id] = state;
       }
 
-      if (no_activate) {
+      bool hidden = (flags & LAUFEY_WINDOW_FLAG_HIDDEN) != 0;
+      if (hidden) {
+        // Leave the window unmapped; the embedder reveals it later (typically
+        // from a page-load handler) so the empty initial frame is never shown.
+      } else if (no_activate) {
         // Show without activating the app / stealing focus.
         [window orderFrontRegardless];
       } else {

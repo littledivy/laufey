@@ -392,6 +392,12 @@ static void Backend_SetCloseRequestedHandler(void* data,
   loader->SetCloseRequestedHandler(handler, user_data);
 }
 
+static void Backend_SetPageLoadHandler(void* data, laufey_page_load_fn handler,
+                                       void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  loader->SetPageLoadHandler(handler, user_data);
+}
+
 static int Backend_ShowDialog(void* data, uint32_t window_id, int dialog_type,
                               const char* title, const char* message,
                               const char* default_value,
@@ -626,6 +632,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.create_window_ex = Backend_CreateWindowEx;
   backend_api_.close_window = Backend_CloseWindow;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
+  backend_api_.set_page_load_handler = Backend_SetPageLoadHandler;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;
 
