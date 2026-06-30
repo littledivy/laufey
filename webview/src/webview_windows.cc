@@ -31,6 +31,7 @@
 #include <map>
 #include <mutex>
 #include <vector>
+#include <functional>
 
 using namespace Microsoft::WRL;
 
@@ -227,63 +228,75 @@ class WinSchemeExchange : public SchemeExchangeBase {
 HRESULT HandleAppResourceRequested(
     ComPtr<ICoreWebView2Environment> env,
     ICoreWebView2WebResourceRequestedEventArgs* args) {
-  ComPtr<ICoreWebView2WebResourceRequest> request;
-  if (FAILED(args->get_Request(&request)) || !request)
-    return S_OK;
+  // This runs inside a WebView2 COM event callback. A C++ exception unwinding
+  // back through WebView2's (non-EH) frames would reach std::terminate and
+  // crash the whole process — on Windows that surfaces as exit code
+  // 0xc0000409 (STATUS_STACK_BUFFER_OVERRUN). Contain everything here.
+  try {
+    ComPtr<ICoreWebView2WebResourceRequest> request;
+    if (FAILED(args->get_Request(&request)) || !request)
+      return S_OK;
 
-  LPWSTR uri_raw = nullptr;
-  request->get_Uri(&uri_raw);
-  LPWSTR method_raw = nullptr;
-  request->get_Method(&method_raw);
-  std::string url = SchemeWideToUtf8(uri_raw);
-  std::string method = method_raw ? SchemeWideToUtf8(method_raw) : "GET";
-  if (uri_raw)
-    CoTaskMemFree(uri_raw);
-  if (method_raw)
-    CoTaskMemFree(method_raw);
+    LPWSTR uri_raw = nullptr;
+    request->get_Uri(&uri_raw);
+    LPWSTR method_raw = nullptr;
+    request->get_Method(&method_raw);
+    std::string url = SchemeWideToUtf8(uri_raw);
+    std::string method = method_raw ? SchemeWideToUtf8(method_raw) : "GET";
+    if (uri_raw)
+      CoTaskMemFree(uri_raw);
+    if (method_raw)
+      CoTaskMemFree(method_raw);
 
-  std::vector<std::pair<std::string, std::string>> headers;
-  ComPtr<ICoreWebView2HttpRequestHeaders> req_headers;
-  if (SUCCEEDED(request->get_Headers(&req_headers)) && req_headers) {
-    ComPtr<ICoreWebView2HttpHeadersCollectionIterator> it;
-    if (SUCCEEDED(req_headers->GetIterator(&it)) && it) {
-      BOOL has_current = FALSE;
-      while (SUCCEEDED(it->get_HasCurrentHeader(&has_current)) && has_current) {
-        LPWSTR name = nullptr;
-        LPWSTR value = nullptr;
-        if (SUCCEEDED(it->GetCurrentHeader(&name, &value))) {
-          headers.emplace_back(SchemeWideToUtf8(name), SchemeWideToUtf8(value));
-          if (name)
-            CoTaskMemFree(name);
-          if (value)
-            CoTaskMemFree(value);
+    std::vector<std::pair<std::string, std::string>> headers;
+    ComPtr<ICoreWebView2HttpRequestHeaders> req_headers;
+    if (SUCCEEDED(request->get_Headers(&req_headers)) && req_headers) {
+      ComPtr<ICoreWebView2HttpHeadersCollectionIterator> it;
+      if (SUCCEEDED(req_headers->GetIterator(&it)) && it) {
+        BOOL has_current = FALSE;
+        while (SUCCEEDED(it->get_HasCurrentHeader(&has_current)) &&
+               has_current) {
+          LPWSTR name = nullptr;
+          LPWSTR value = nullptr;
+          if (SUCCEEDED(it->GetCurrentHeader(&name, &value))) {
+            headers.emplace_back(SchemeWideToUtf8(name),
+                                 SchemeWideToUtf8(value));
+            if (name)
+              CoTaskMemFree(name);
+            if (value)
+              CoTaskMemFree(value);
+          }
+          BOOL has_next = FALSE;
+          if (FAILED(it->MoveNext(&has_next)) || !has_next)
+            break;
         }
-        BOOL has_next = FALSE;
-        if (FAILED(it->MoveNext(&has_next)) || !has_next)
-          break;
       }
     }
-  }
 
-  std::vector<uint8_t> body;
-  ComPtr<IStream> content;
-  if (SUCCEEDED(request->get_Content(&content)) && content) {
-    uint8_t chunk[16 * 1024];
-    ULONG read = 0;
-    while (SUCCEEDED(content->Read(chunk, sizeof(chunk), &read)) && read > 0) {
-      body.insert(body.end(), chunk, chunk + read);
+    std::vector<uint8_t> body;
+    ComPtr<IStream> content;
+    if (SUCCEEDED(request->get_Content(&content)) && content) {
+      uint8_t chunk[16 * 1024];
+      ULONG read = 0;
+      while (SUCCEEDED(content->Read(chunk, sizeof(chunk), &read)) &&
+             read > 0) {
+        body.insert(body.end(), chunk, chunk + read);
+      }
     }
+
+    ComPtr<ICoreWebView2Deferral> deferral;
+    args->GetDeferral(&deferral);
+
+    std::string flat = LaufeyFlattenHeaders(headers);
+    // window_id is unused by the desktop bridge (single named channel).
+    auto* exchange =
+        new WinSchemeExchange(env, args, deferral, std::move(body));
+    RuntimeLoader::GetInstance()->DispatchSchemeRequest(0, exchange, method,
+                                                        url, flat);
+    return S_OK;
+  } catch (...) {
+    return S_OK;
   }
-
-  ComPtr<ICoreWebView2Deferral> deferral;
-  args->GetDeferral(&deferral);
-
-  std::string flat = LaufeyFlattenHeaders(headers);
-  // window_id is unused by the desktop bridge (single named channel).
-  auto* exchange = new WinSchemeExchange(env, args, deferral, std::move(body));
-  RuntimeLoader::GetInstance()->DispatchSchemeRequest(0, exchange, method, url,
-                                                      flat);
-  return S_OK;
 }
 
 }  // namespace
@@ -306,6 +319,7 @@ class WebView2Backend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
@@ -318,6 +332,8 @@ class WebView2Backend : public LaufeyBackend {
   bool IsResizable(uint32_t window_id) override;
   void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) override;
   bool IsAlwaysOnTop(uint32_t window_id) override;
+  void SetWindowOpacity(uint32_t window_id, double opacity) override;
+  double GetWindowOpacity(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -398,12 +414,40 @@ class WebView2Backend : public LaufeyBackend {
  private:
   WinWindowState* GetWindow(uint32_t window_id);
   void InitializeWebViewForWindow(uint32_t window_id, HWND hwnd);
+  // Creates the WebView2 environment for a window. When `with_app_scheme` is
+  // true the in-process "app://" custom scheme is registered; if that makes
+  // environment creation fail it retries once with the scheme disabled so the
+  // window still opens (only the app:// transport is lost).
+  void CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
+                                  bool with_app_scheme);
+  // Wires up the controller, init script, message + scheme handlers once the
+  // environment is ready. `app_scheme_enabled` reflects whether the "app://"
+  // scheme was registered on the environment.
+  void OnEnvironmentReady(uint32_t window_id, HWND hwnd,
+                          ICoreWebView2Environment* env,
+                          bool app_scheme_enabled);
   static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                      LPARAM lParam);
+
+  // Marshal `task` onto the UI thread — the one that ran CoInitializeEx and
+  // pumps the message loop in Run(). WebView2 is single-threaded-apartment:
+  // every CreateCoreWebView2* call and every webview/controller method MUST
+  // run there, and its async completion callbacks are only delivered while
+  // that thread pumps messages. The runtime (and thus the C-ABI calls that
+  // reach this backend) runs on a separate thread, so without this the
+  // WebView2 environment fails to initialize (CO_E_NOTINITIALIZED) or its
+  // controller callback never fires and the window stays blank. Runs `task`
+  // inline when already on the UI thread.
+  void RunOnUiThread(std::function<void()> task);
 
   std::map<uint32_t, WinWindowState> windows_;
   std::mutex windows_mutex_;
   bool class_registered_ = false;
+  // Thread that constructs the backend (== WinMain / the message-loop thread).
+  DWORD ui_thread_id_ = 0;
+  // Message-only window owned by the UI thread used to receive marshaled
+  // tasks even before the first real window exists.
+  HWND dispatcher_hwnd_ = nullptr;
 };
 
 LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
@@ -546,6 +590,10 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
 WebView2Backend::WebView2Backend() {
   g_win_backend = this;
 
+  // The backend is constructed on the UI thread (WinMain, before the runtime
+  // thread is spawned). Remember it: all WebView2 work is marshaled here.
+  ui_thread_id_ = GetCurrentThreadId();
+
   // Register window class
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(WNDCLASSEXW);
@@ -556,6 +604,38 @@ WebView2Backend::WebView2Backend() {
   wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
   RegisterClassExW(&wc);
   class_registered_ = true;
+
+  // A message-only window lets RunOnUiThread deliver work to this thread even
+  // before the first real window is created (the bootstrapping create_window
+  // call itself is marshaled through here). It shares the class above, so its
+  // WM_UI_TASK messages are handled by WindowProc.
+  dispatcher_hwnd_ =
+      CreateWindowExW(0, L"LaufeyWebView2", L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+                      nullptr, GetModuleHandle(nullptr), nullptr);
+}
+
+void WebView2Backend::RunOnUiThread(std::function<void()> task) {
+  if (GetCurrentThreadId() == ui_thread_id_) {
+    task();
+    return;
+  }
+  // Heap-box the closure and a trampoline that invokes then frees it; the
+  // existing WM_UI_TASK handler in WindowProc runs `task(data)` and deletes
+  // the UiTaskData.
+  auto* boxed = new std::function<void()>(std::move(task));
+  auto* td = new UiTaskData{[](void* p) {
+                              auto* fn = static_cast<std::function<void()>*>(p);
+                              (*fn)();
+                              delete fn;
+                            },
+                            boxed};
+  if (!PostMessageW(dispatcher_hwnd_, WM_UI_TASK, 0,
+                    reinterpret_cast<LPARAM>(td))) {
+    // Posting failed (no dispatcher / queue full): don't leak, run inline as a
+    // last resort even though we're off the UI thread.
+    td->task(td->data);
+    delete td;
+  }
 }
 
 WebView2Backend::~WebView2Backend() {
@@ -583,6 +663,16 @@ void WebView2Backend::CreateWindow(uint32_t window_id, int width, int height) {
 
 void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
                                      uint32_t flags) {
+  // Window + WebView2 creation must happen on the UI thread. This is called
+  // from the runtime thread, so marshal it (the window_id is already allocated
+  // by the caller, so nothing here needs to return synchronously).
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, width, height, flags] {
+      CreateWindowEx(window_id, width, height, flags);
+    });
+    return;
+  }
+
   DWORD style = WS_OVERLAPPEDWINDOW;
   DWORD ex_style = 0;
   if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
@@ -614,192 +704,264 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
 
   InitializeWebViewForWindow(window_id, hwnd);
 
-  // Showing a non-activating panel must not take foreground from the user's
-  // active window.
-  ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? SW_SHOWNOACTIVATE
-                                                            : SW_SHOW);
-  UpdateWindow(hwnd);
+  // A hidden window is created but not shown; the embedder reveals it later
+  // (typically from a page-load handler) so the empty initial frame is never
+  // seen. WebView2 still loads and fires NavigationCompleted while hidden.
+  if (!(flags & LAUFEY_WINDOW_FLAG_HIDDEN)) {
+    // Showing a non-activating panel must not take foreground from the user's
+    // active window.
+    ShowWindow(hwnd, (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE)
+                         ? SW_SHOWNOACTIVATE
+                         : SW_SHOW);
+    UpdateWindow(hwnd);
+  }
 }
 
 void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
                                                  HWND hwnd) {
-  // Register "app" as a secure custom scheme so the in-process scheme handler
-  // can serve top-level navigations to app:// like a normal origin.
-  auto options = Make<CoreWebView2EnvironmentOptions>();
-  ComPtr<ICoreWebView2EnvironmentOptions4> options4;
-  if (SUCCEEDED(options.As(&options4)) && options4) {
-    auto appScheme = Make<CoreWebView2CustomSchemeRegistration>(L"app");
-    appScheme->put_TreatAsSecure(TRUE);
-    appScheme->put_HasAuthorityComponent(TRUE);
-    ICoreWebView2CustomSchemeRegistration* registrations[] = {appScheme.Get()};
-    options4->SetCustomSchemeRegistrations(1, registrations);
+  // Try with the in-process "app://" custom scheme first. If registering it
+  // makes environment creation fail, CreateEnvironmentForWindow retries
+  // without it so the window still opens for ordinary http(s)/TCP navigations.
+  CreateEnvironmentForWindow(window_id, hwnd, /*with_app_scheme=*/true);
+}
+
+void WebView2Backend::CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
+                                                 bool with_app_scheme) {
+  ComPtr<ICoreWebView2EnvironmentOptions> options;
+  if (with_app_scheme) {
+    // Register "app" as a secure custom scheme so the in-process scheme handler
+    // can serve top-level navigations to app:// like a normal origin.
+    auto opts = Make<CoreWebView2EnvironmentOptions>();
+    ComPtr<ICoreWebView2EnvironmentOptions4> options4;
+    if (SUCCEEDED(opts.As(&options4)) && options4) {
+      auto appScheme = Make<CoreWebView2CustomSchemeRegistration>(L"app");
+      appScheme->put_TreatAsSecure(TRUE);
+      appScheme->put_HasAuthorityComponent(TRUE);
+      ICoreWebView2CustomSchemeRegistration* registrations[] = {
+          appScheme.Get()};
+      options4->SetCustomSchemeRegistrations(1, registrations);
+    }
+    options = opts;
   }
 
-  CreateCoreWebView2EnvironmentWithOptions(
+  HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
       nullptr, nullptr, options.Get(),
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-          [this, window_id, hwnd](HRESULT result,
-                                  ICoreWebView2Environment* env) -> HRESULT {
-            if (FAILED(result)) {
-              std::cerr << "Failed to create WebView2 environment" << std::endl;
+          [this, window_id, hwnd, with_app_scheme](
+              HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
+            if (FAILED(result) || !env) {
+              if (with_app_scheme) {
+                // Registering a custom scheme can make environment creation
+                // fail outright — e.g. when the (shared, exe-derived) user
+                // data folder was previously initialized with a different set
+                // of custom schemes, WebView2 returns an error instead of
+                // opening. Retry once without the scheme so the window still
+                // appears; only the in-process app:// transport is lost.
+                std::cerr << "WebView2 environment creation failed with the "
+                             "app:// scheme (hr=0x"
+                          << std::hex << result << std::dec
+                          << "), retrying without it" << std::endl;
+                CreateEnvironmentForWindow(window_id, hwnd,
+                                           /*with_app_scheme=*/false);
+                return S_OK;
+              }
+              std::cerr << "Failed to create WebView2 environment (hr=0x"
+                        << std::hex << result << std::dec << ")" << std::endl;
+              return result;
+            }
+            OnEnvironmentReady(window_id, hwnd, env, with_app_scheme);
+            return S_OK;
+          })
+          .Get());
+  if (FAILED(hr)) {
+    std::cerr << "CreateCoreWebView2EnvironmentWithOptions failed to start "
+                 "(hr=0x"
+              << std::hex << hr << std::dec << ")" << std::endl;
+  }
+}
+
+void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
+                                         ICoreWebView2Environment* env,
+                                         bool app_scheme_enabled) {
+  env->CreateCoreWebView2Controller(
+      hwnd,
+      Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+          [this, window_id, hwnd, env, app_scheme_enabled](
+              HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+            if (FAILED(result) || !controller) {
+              std::cerr << "Failed to create WebView2 controller" << std::endl;
               return result;
             }
 
-            env->CreateCoreWebView2Controller(
-                hwnd,
-                Callback<
-                    ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                    [this, window_id, hwnd, env](
-                        HRESULT result,
-                        ICoreWebView2Controller* controller) -> HRESULT {
-                      if (FAILED(result) || !controller) {
-                        std::cerr << "Failed to create WebView2 controller"
-                                  << std::endl;
-                        return result;
+            std::lock_guard<std::mutex> lock(windows_mutex_);
+            auto* state = GetWindow(window_id);
+            if (!state)
+              return S_OK;
+
+            state->controller = controller;
+            controller->get_CoreWebView2(&state->webview);
+
+            RECT bounds;
+            GetClientRect(hwnd, &bounds);
+            controller->put_Bounds(bounds);
+
+            std::string initScript = BuildInitScript(
+                RuntimeLoader::GetInstance()->GetJsNamespace(),
+                "window.chrome.webview.postMessage(JSON.stringify({\n"
+                "            callId: callId,\n"
+                "            method: path.join('.'),\n"
+                "            args: processedArgs\n"
+                "          }));");
+            std::wstring wInitScript(initScript.begin(), initScript.end());
+            state->webview->AddScriptToExecuteOnDocumentCreated(
+                wInitScript.c_str(), nullptr);
+
+            uint32_t wid = window_id;
+            state->webview->add_WebMessageReceived(
+                Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                    [this, wid](ICoreWebView2* sender,
+                                ICoreWebView2WebMessageReceivedEventArgs* args)
+                        -> HRESULT {
+                      LPWSTR messageRaw;
+                      args->TryGetWebMessageAsString(&messageRaw);
+                      if (messageRaw) {
+                        HandleJsMessage(wid, messageRaw);
+                        CoTaskMemFree(messageRaw);
                       }
+                      return S_OK;
+                    })
+                    .Get(),
+                nullptr);
 
-                      std::lock_guard<std::mutex> lock(windows_mutex_);
-                      auto* state = GetWindow(window_id);
-                      if (!state)
-                        return S_OK;
-
-                      state->controller = controller;
-                      controller->get_CoreWebView2(&state->webview);
-
-                      RECT bounds;
-                      GetClientRect(hwnd, &bounds);
-                      controller->put_Bounds(bounds);
-
-                      std::string initScript = BuildInitScript(
-                          RuntimeLoader::GetInstance()->GetJsNamespace(),
-                          "window.chrome.webview.postMessage(JSON.stringify({\n"
-                          "            callId: callId,\n"
-                          "            method: path.join('.'),\n"
-                          "            args: processedArgs\n"
-                          "          }));");
-                      std::wstring wInitScript(initScript.begin(),
-                                               initScript.end());
-                      state->webview->AddScriptToExecuteOnDocumentCreated(
-                          wInitScript.c_str(), nullptr);
-
-                      uint32_t wid = window_id;
-                      state->webview->add_WebMessageReceived(
-                          Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                              [this, wid](
-                                  ICoreWebView2* sender,
-                                  ICoreWebView2WebMessageReceivedEventArgs*
-                                      args) -> HRESULT {
-                                LPWSTR messageRaw;
-                                args->TryGetWebMessageAsString(&messageRaw);
-                                if (messageRaw) {
-                                  HandleJsMessage(wid, messageRaw);
-                                  CoTaskMemFree(messageRaw);
-                                }
-                                return S_OK;
-                              })
-                              .Get(),
-                          nullptr);
-
-                      // In-process app:// scheme: intercept requests and
-                      // bridge them to the runtime's memory transport.
-                      {
-                        ComPtr<ICoreWebView2Environment> envPtr = env;
-                        state->webview->AddWebResourceRequestedFilter(
-                            L"app://*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
-                        EventRegistrationToken schemeToken;
-                        state->webview->add_WebResourceRequested(
-                            Callback<
-                                ICoreWebView2WebResourceRequestedEventHandler>(
-                                [envPtr](
-                                    ICoreWebView2* sender,
-                                    ICoreWebView2WebResourceRequestedEventArgs*
-                                        args) -> HRESULT {
-                                  return HandleAppResourceRequested(envPtr,
-                                                                    args);
-                                })
-                                .Get(),
-                            &schemeToken);
+            // `target="_blank"` / `window.open()` request a new window, which
+            // the Navigation API interceptor never sees. WebView2 would spawn a
+            // popup webview; instead route http(s) destinations to the OS
+            // browser and mark the request handled so no popup is created.
+            state->webview->add_NewWindowRequested(
+                Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                    [](ICoreWebView2* sender,
+                       ICoreWebView2NewWindowRequestedEventArgs* args)
+                        -> HRESULT {
+                      LPWSTR uriRaw = nullptr;
+                      args->get_Uri(&uriRaw);
+                      if (uriRaw) {
+                        if (wcsncmp(uriRaw, L"http://", 7) == 0 ||
+                            wcsncmp(uriRaw, L"https://", 8) == 0) {
+                          ShellExecuteW(nullptr, L"open", uriRaw, nullptr,
+                                        nullptr, SW_SHOWNORMAL);
+                        }
+                        CoTaskMemFree(uriRaw);
                       }
+                      args->put_Handled(TRUE);
+                      return S_OK;
+                    })
+                    .Get(),
+                nullptr);
 
-                      state->webview->add_ScriptDialogOpening(
-                          Callback<
-                              ICoreWebView2ScriptDialogOpeningEventHandler>(
-                              [hwnd](ICoreWebView2* sender,
-                                     ICoreWebView2ScriptDialogOpeningEventArgs*
-                                         args) -> HRESULT {
-                                COREWEBVIEW2_SCRIPT_DIALOG_KIND kind;
-                                args->get_Kind(&kind);
+            // In-process app:// scheme: intercept requests and
+            // bridge them to the runtime's memory transport. Only
+            // wired up when the "app" scheme was actually registered
+            // on the environment — otherwise an app:// filter would
+            // never fire and the handler is dead weight.
+            if (app_scheme_enabled) {
+              ComPtr<ICoreWebView2Environment> envPtr = env;
+              state->webview->AddWebResourceRequestedFilter(
+                  L"app://*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+              EventRegistrationToken schemeToken;
+              state->webview->add_WebResourceRequested(
+                  Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                      [envPtr](ICoreWebView2* sender,
+                               ICoreWebView2WebResourceRequestedEventArgs* args)
+                          -> HRESULT {
+                        return HandleAppResourceRequested(envPtr, args);
+                      })
+                      .Get(),
+                  &schemeToken);
+            }
 
-                                LPWSTR messageRaw = nullptr;
-                                args->get_Message(&messageRaw);
-                                std::wstring message =
-                                    messageRaw ? messageRaw : L"";
-                                if (messageRaw)
-                                  CoTaskMemFree(messageRaw);
+            state->webview->add_ScriptDialogOpening(
+                Callback<ICoreWebView2ScriptDialogOpeningEventHandler>(
+                    [hwnd](ICoreWebView2* sender,
+                           ICoreWebView2ScriptDialogOpeningEventArgs* args)
+                        -> HRESULT {
+                      COREWEBVIEW2_SCRIPT_DIALOG_KIND kind;
+                      args->get_Kind(&kind);
 
-                                if (kind ==
-                                    COREWEBVIEW2_SCRIPT_DIALOG_KIND_ALERT) {
-                                  MessageBoxW(hwnd, message.c_str(), L"Alert",
-                                              MB_OK | MB_ICONINFORMATION);
-                                  args->Accept();
-                                } else if (
-                                    kind ==
-                                    COREWEBVIEW2_SCRIPT_DIALOG_KIND_CONFIRM) {
-                                  int result = MessageBoxW(
-                                      hwnd, message.c_str(), L"Confirm",
-                                      MB_OKCANCEL | MB_ICONQUESTION);
-                                  if (result == IDOK) {
-                                    args->Accept();
-                                  }
-                                } else if (
-                                    kind ==
-                                    COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT) {
-                                  // For prompt, we need a custom dialog. Use a
-                                  // simple approach with TaskDialog-style
-                                  // input. WebView2 doesn't have a built-in way
-                                  // to show prompt with input, so we accept
-                                  // with the default.
-                                  LPWSTR defaultTextRaw = nullptr;
-                                  args->get_DefaultText(&defaultTextRaw);
-                                  std::wstring defaultText =
-                                      defaultTextRaw ? defaultTextRaw : L"";
-                                  if (defaultTextRaw)
-                                    CoTaskMemFree(defaultTextRaw);
+                      LPWSTR messageRaw = nullptr;
+                      args->get_Message(&messageRaw);
+                      std::wstring message = messageRaw ? messageRaw : L"";
+                      if (messageRaw)
+                        CoTaskMemFree(messageRaw);
 
-                                  // Use a simple MessageBox for now — accept
-                                  // with default text
-                                  int result = MessageBoxW(
-                                      hwnd, message.c_str(), L"Prompt",
-                                      MB_OKCANCEL | MB_ICONQUESTION);
-                                  if (result == IDOK) {
-                                    args->put_ResultText(defaultText.c_str());
-                                    args->Accept();
-                                  }
-                                } else if (
-                                    kind ==
-                                    COREWEBVIEW2_SCRIPT_DIALOG_KIND_BEFOREUNLOAD) {
-                                  args->Accept();
-                                }
+                      if (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_ALERT) {
+                        MessageBoxW(hwnd, message.c_str(), L"Alert",
+                                    MB_OK | MB_ICONINFORMATION);
+                        args->Accept();
+                      } else if (kind ==
+                                 COREWEBVIEW2_SCRIPT_DIALOG_KIND_CONFIRM) {
+                        int result =
+                            MessageBoxW(hwnd, message.c_str(), L"Confirm",
+                                        MB_OKCANCEL | MB_ICONQUESTION);
+                        if (result == IDOK) {
+                          args->Accept();
+                        }
+                      } else if (kind ==
+                                 COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT) {
+                        // For prompt, we need a custom dialog. Use a
+                        // simple approach with TaskDialog-style
+                        // input. WebView2 doesn't have a built-in way
+                        // to show prompt with input, so we accept
+                        // with the default.
+                        LPWSTR defaultTextRaw = nullptr;
+                        args->get_DefaultText(&defaultTextRaw);
+                        std::wstring defaultText =
+                            defaultTextRaw ? defaultTextRaw : L"";
+                        if (defaultTextRaw)
+                          CoTaskMemFree(defaultTextRaw);
 
-                                return S_OK;
-                              })
-                              .Get(),
-                          nullptr);
-
-                      state->webview_ready = true;
-
-                      if (!state->pending_url.empty()) {
-                        state->webview->Navigate(state->pending_url.c_str());
-                        state->pending_url.clear();
-                      }
-                      if (!state->pending_title.empty()) {
-                        SetWindowTextW(hwnd, state->pending_title.c_str());
-                        state->pending_title.clear();
+                        // Use a simple MessageBox for now — accept
+                        // with default text
+                        int result =
+                            MessageBoxW(hwnd, message.c_str(), L"Prompt",
+                                        MB_OKCANCEL | MB_ICONQUESTION);
+                        if (result == IDOK) {
+                          args->put_ResultText(defaultText.c_str());
+                          args->Accept();
+                        }
+                      } else if (kind ==
+                                 COREWEBVIEW2_SCRIPT_DIALOG_KIND_BEFOREUNLOAD) {
+                        args->Accept();
                       }
 
                       return S_OK;
                     })
-                    .Get());
+                    .Get(),
+                nullptr);
+
+            // Reveal-on-load signal: fired when a navigation finishes. Used to
+            // show a window created with LAUFEY_WINDOW_FLAG_HIDDEN only once it
+            // has real content, so the empty initial frame is never seen.
+            state->webview->add_NavigationCompleted(
+                Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                    [wid](ICoreWebView2* sender,
+                          ICoreWebView2NavigationCompletedEventArgs* args)
+                        -> HRESULT {
+                      RuntimeLoader::GetInstance()->DispatchPageLoadEvent(wid);
+                      return S_OK;
+                    })
+                    .Get(),
+                nullptr);
+
+            state->webview_ready = true;
+
+            if (!state->pending_url.empty()) {
+              state->webview->Navigate(state->pending_url.c_str());
+              state->pending_url.clear();
+            }
+            if (!state->pending_title.empty()) {
+              SetWindowTextW(hwnd, state->pending_title.c_str());
+              state->pending_title.clear();
+            }
 
             return S_OK;
           })
@@ -807,6 +969,10 @@ void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
 }
 
 void WebView2Backend::CloseWindow(uint32_t window_id) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { CloseWindow(window_id); });
+    return;
+  }
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -822,6 +988,10 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
 }
 
 void WebView2Backend::Navigate(uint32_t window_id, const std::string& url) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, url] { Navigate(window_id, url); });
+    return;
+  }
   std::wstring wurl = Utf8ToWide(url);
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
@@ -834,7 +1004,17 @@ void WebView2Backend::Navigate(uint32_t window_id, const std::string& url) {
   }
 }
 
+void WebView2Backend::OpenExternalURL(const std::string& url) {
+  std::wstring wurl = Utf8ToWide(url);
+  ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr,
+                SW_SHOWNORMAL);
+}
+
 void WebView2Backend::SetTitle(uint32_t window_id, const std::string& title) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, title] { SetTitle(window_id, title); });
+    return;
+  }
   std::wstring wtitle = Utf8ToWide(title);
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
@@ -850,6 +1030,12 @@ void WebView2Backend::SetTitle(uint32_t window_id, const std::string& title) {
 void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
                                 laufey_js_result_fn callback,
                                 void* callback_data) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, script, callback, callback_data] {
+      ExecuteJs(window_id, script, callback, callback_data);
+    });
+    return;
+  }
   std::wstring wscript = Utf8ToWide(script);
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
@@ -975,6 +1161,49 @@ bool WebView2Backend::IsAlwaysOnTop(uint32_t window_id) {
                : false;
 }
 
+void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return;
+  LONG ex = GetWindowLong(state->hwnd, GWL_EXSTYLE);
+  if (opacity >= 1.0) {
+    // Fully opaque: drop the layered style so the window renders on the normal
+    // (non-redirected) path with no per-window alpha overhead.
+    if (ex & WS_EX_LAYERED) {
+      SetWindowLong(state->hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+      RedrawWindow(state->hwnd, nullptr, nullptr,
+                   RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+    }
+    return;
+  }
+  if (!(ex & WS_EX_LAYERED)) {
+    SetWindowLong(state->hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+  }
+  SetLayeredWindowAttributes(state->hwnd, 0, (BYTE)(opacity * 255.0 + 0.5),
+                             LWA_ALPHA);
+}
+
+double WebView2Backend::GetWindowOpacity(uint32_t window_id) {
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return 1.0;
+  if (!(GetWindowLong(state->hwnd, GWL_EXSTYLE) & WS_EX_LAYERED))
+    return 1.0;
+  BYTE alpha = 255;
+  DWORD flags = 0;
+  if (GetLayeredWindowAttributes(state->hwnd, nullptr, &alpha, &flags) &&
+      (flags & LWA_ALPHA)) {
+    return alpha / 255.0;
+  }
+  return 1.0;
+}
+
 bool WebView2Backend::IsVisible(uint32_t window_id) {
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
@@ -1006,16 +1235,21 @@ void WebView2Backend::Focus(uint32_t window_id) {
 }
 
 void WebView2Backend::PostUiTask(void (*task)(void*), void* data) {
-  // Post to the first available window, or use a message-only window
-  std::lock_guard<std::mutex> lock(windows_mutex_);
-  if (!windows_.empty()) {
-    PostMessage(windows_.begin()->second.hwnd, WM_UI_TASK, 0,
-                reinterpret_cast<LPARAM>(new UiTaskData{task, data}));
-  }
+  // Always deliverable: the message-only dispatcher window exists from
+  // construction, so this works even before the first real window is created
+  // (the old "post to the first window" path silently dropped the task then).
+  PostMessageW(dispatcher_hwnd_, WM_UI_TASK, 0,
+               reinterpret_cast<LPARAM>(new UiTaskData{task, data}));
 }
 
 void WebView2Backend::InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
                                        laufey::ValuePtr args) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, callback_id, args] {
+      InvokeJsCallback(window_id, callback_id, args);
+    });
+    return;
+  }
   std::string argsJson = json::Serialize(args);
   std::wstring wscript =
       Utf8ToWide(BuildInvokeCallbackScript(callback_id, argsJson));
@@ -1036,6 +1270,12 @@ void WebView2Backend::InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
 
 void WebView2Backend::ReleaseJsCallback(uint32_t window_id,
                                         uint64_t callback_id) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, callback_id] {
+      ReleaseJsCallback(window_id, callback_id);
+    });
+    return;
+  }
   std::wstring wscript = Utf8ToWide(BuildReleaseCallbackScript(callback_id));
   std::lock_guard<std::mutex> lock(windows_mutex_);
   if (window_id == 0) {
@@ -1055,6 +1295,12 @@ void WebView2Backend::ReleaseJsCallback(uint32_t window_id,
 void WebView2Backend::RespondToJsCall(uint32_t window_id, uint64_t call_id,
                                       laufey::ValuePtr result,
                                       laufey::ValuePtr error) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, call_id, result, error] {
+      RespondToJsCall(window_id, call_id, result, error);
+    });
+    return;
+  }
   std::string resultJson = json::Serialize(result);
   std::string errorJson = error ? json::Serialize(error) : "null";
   std::wstring wscript = Utf8ToWide(BuildRespondScript(
@@ -1148,6 +1394,10 @@ void WebView2Backend::ShowContextMenu(uint32_t window_id, int x, int y,
 // ============================================================================
 
 void WebView2Backend::OpenDevTools(uint32_t window_id) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { OpenDevTools(window_id); });
+    return;
+  }
   std::lock_guard<std::mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state && state->webview) {

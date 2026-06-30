@@ -44,6 +44,23 @@ bool IsNSWindowResizable(void* cef_handle) {
   return true;
 }
 
+void SetNSWindowOpacity(void* cef_handle, double opacity) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (nswindow) {
+    [nswindow setAlphaValue:(CGFloat)opacity];
+  }
+}
+
+double GetNSWindowOpacity(void* cef_handle) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (nswindow) {
+    return (double)[nswindow alphaValue];
+  }
+  return 1.0;
+}
+
 void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle) {
   NSView* view = (__bridge NSView*)cef_handle;
   NSWindow* nswindow = [view window];

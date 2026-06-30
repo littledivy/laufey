@@ -19,6 +19,12 @@
 #include "renderer_app.h"
 #include "runtime_loader.h"
 
+#include <gio/gio.h>
+
+void LaufeyOpenExternalURL(const std::string& url) {
+  g_app_info_launch_default_for_uri(url.c_str(), nullptr, nullptr);
+}
+
 // --- Native event monitors (Linux / X11) ---
 // Uses XI2 (X Input Extension 2) on a dedicated X11 connection to monitor
 // mouse, scroll, cursor enter/leave, and focus events for CEF Views windows.
@@ -486,6 +492,57 @@ bool IsLinuxWindowResizable(unsigned long xid) {
 #endif
 }
 
+void SetLinuxWindowOpacity(unsigned long xid, double opacity) {
+#ifdef GDK_WINDOWING_X11
+  GdkDisplay* gdk_display = gdk_display_get_default();
+  if (!gdk_display || !GDK_IS_X11_DISPLAY(gdk_display))
+    return;
+  Display* dpy = GDK_DISPLAY_XDISPLAY(gdk_display);
+
+  // _NET_WM_WINDOW_OPACITY is a CARDINAL where 0xffffffff is fully opaque and
+  // 0 fully transparent; compositing WMs scale the whole window by it.
+  Atom net_wm_opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  if (opacity >= 1.0) {
+    // Fully opaque: drop the hint so the WM treats the window normally.
+    XDeleteProperty(dpy, xid, net_wm_opacity);
+  } else {
+    unsigned long value = (unsigned long)(opacity * 0xffffffffUL);
+    XChangeProperty(dpy, xid, net_wm_opacity, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&value), 1);
+  }
+  XFlush(dpy);
+#endif
+}
+
+double GetLinuxWindowOpacity(unsigned long xid) {
+#ifdef GDK_WINDOWING_X11
+  GdkDisplay* gdk_display = gdk_display_get_default();
+  if (!gdk_display || !GDK_IS_X11_DISPLAY(gdk_display))
+    return 1.0;
+  Display* dpy = GDK_DISPLAY_XDISPLAY(gdk_display);
+
+  Atom net_wm_opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  Atom actual_type = None;
+  int actual_format = 0;
+  unsigned long nitems = 0, bytes_after = 0;
+  unsigned char* prop = nullptr;
+  double result = 1.0;
+  if (XGetWindowProperty(dpy, xid, net_wm_opacity, 0, 1, False, XA_CARDINAL,
+                         &actual_type, &actual_format, &nitems, &bytes_after,
+                         &prop) == Success) {
+    if (prop && nitems >= 1 && actual_format == 32) {
+      unsigned long value = *reinterpret_cast<unsigned long*>(prop);
+      result = (double)value / (double)0xffffffffUL;
+    }
+    if (prop)
+      XFree(prop);
+  }
+  return result;
+#else
+  return 1.0;
+#endif
+}
+
 void MonitorLinuxWindowEvents(unsigned long xid) {
 #ifdef GDK_WINDOWING_X11
   if (!g_monitor_display)
@@ -714,6 +771,26 @@ int main(int argc, char* argv[]) {
     const char* envPath = getenv("LAUFEY_RUNTIME_PATH");
     if (envPath) {
       g_runtime_path = envPath;
+    }
+  }
+
+  if (g_runtime_path.empty()) {
+    g_runtime_path = LaufeyFindColocatedRuntime();
+  }
+
+  // Wayland app_id / X11 WM_CLASS for our windows (see LaufeyWindowDelegate::
+  // GetLinuxWindowProperties). Prefer the reverse-DNS identifier the embedder
+  // also uses for the `.desktop` file; fall back to the display name.
+  if (const char* app_id = getenv("LAUFEY_APP_ID")) {
+    if (*app_id) {
+      g_app_id = app_id;
+    }
+  }
+  if (g_app_id.empty()) {
+    if (const char* app_name = getenv("LAUFEY_APP_NAME")) {
+      if (*app_name) {
+        g_app_id = app_name;
+      }
     }
   }
 

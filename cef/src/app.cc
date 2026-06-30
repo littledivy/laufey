@@ -3,6 +3,7 @@
 #include "app.h"
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
+#include "laufey_external_links.h"
 #include "scheme_handler.h"
 
 #include <iostream>
@@ -29,6 +30,7 @@ NativeDialogResult ShowNativeJSDialog_Mac(int type, const std::string& message,
 #include "include/wrapper/cef_helpers.h"
 
 std::string g_runtime_path;
+std::string g_app_id;
 std::queue<uint32_t> g_pending_laufey_ids;
 
 namespace {
@@ -84,6 +86,21 @@ cef_state_t LaufeyWindowDelegate::AcceptsFirstMouse(
                                                    : STATE_DEFAULT;
 }
 
+#if defined(__linux__)
+bool LaufeyWindowDelegate::GetLinuxWindowProperties(
+    CefRefPtr<CefWindow> window, CefLinuxWindowProperties& properties) {
+  if (g_app_id.empty()) {
+    return false;
+  }
+  // Same id for Wayland's app_id and X11's WM_CLASS (both class and name) so
+  // the window matches the installed `<g_app_id>.desktop` under either backend.
+  CefString(&properties.wayland_app_id) = g_app_id;
+  CefString(&properties.wm_class_class) = g_app_id;
+  CefString(&properties.wm_class_name) = g_app_id;
+  return true;
+}
+#endif
+
 void LaufeyWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   // Unregister native window
   CefWindowHandle handle = window->GetWindowHandle();
@@ -133,6 +150,24 @@ void LaufeyHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     g_pending_laufey_ids.pop();
     loader->RegisterBrowser(laufey_id, browser);
   }
+}
+
+bool LaufeyHandler::OnBeforePopup(
+    CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int popup_id,
+    const CefString& target_url, const CefString& target_frame_name,
+    WindowOpenDisposition target_disposition, bool user_gesture,
+    const CefPopupFeatures& popupFeatures, CefWindowInfo& windowInfo,
+    CefRefPtr<CefClient>& client, CefBrowserSettings& settings,
+    CefRefPtr<CefDictionaryValue>& extra_info, bool* no_javascript_access) {
+  CEF_REQUIRE_UI_THREAD();
+  // `target="_blank"` / `window.open()` aren't seen by the page's Navigation
+  // API listener. Cancel the popup and route http(s) destinations to the OS
+  // browser; return true to prevent the new browser from being created.
+  std::string url = target_url.ToString();
+  if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0) {
+    LaufeyOpenExternalURL(url);
+  }
+  return true;
 }
 
 bool LaufeyHandler::DoClose(CefRefPtr<CefBrowser> browser) {
@@ -358,6 +393,27 @@ bool LaufeyHandler::OnProcessMessageReceived(
     uint64_t call_id = static_cast<uint64_t>(args->GetDouble(0));
     std::string method_path = args->GetString(1).ToString();
     CefRefPtr<CefListValue> callArgs = args->GetList(2);
+
+    // Reserved bridge call from the injected external-link interceptor
+    // (laufey_external_links.h): open the URL in the OS browser instead of
+    // forwarding to the runtime, then resolve the page-side promise.
+    if (method_path == LAUFEY_OPEN_EXTERNAL_METHOD) {
+      if (callArgs && callArgs->GetSize() > 0 &&
+          callArgs->GetType(0) == VTYPE_STRING) {
+        std::string url = callArgs->GetString(0).ToString();
+        if (!url.empty()) {
+          LaufeyOpenExternalURL(url);
+        }
+      }
+      CefRefPtr<CefProcessMessage> reply =
+          CefProcessMessage::Create("laufey_response");
+      CefRefPtr<CefListValue> replyArgs = reply->GetArgumentList();
+      replyArgs->SetDouble(0, static_cast<double>(call_id));
+      replyArgs->SetNull(1);
+      replyArgs->SetString(2, "");
+      frame->SendProcessMessage(PID_RENDERER, reply);
+      return true;
+    }
 
     uint32_t wid = RuntimeLoader::GetInstance()->GetLaufeyIdForBrowser(browser);
     RuntimeLoader::GetInstance()->OnJsCall(wid, call_id, method_path, callArgs);

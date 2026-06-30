@@ -2,8 +2,11 @@
 
 #include "runtime_loader.h"
 
+#include "laufey_external_links.h"
+
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <unistd.h>
 #else
 #include <windows.h>
 // windows.h defines CreateWindow as a macro which conflicts with
@@ -11,10 +14,89 @@
 #undef CreateWindow
 #endif
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 #include <iostream>
 #include <cstring>
+#include <vector>
 
 RuntimeLoader* RuntimeLoader::instance_ = nullptr;
+
+namespace {
+
+// Absolute path of the running executable, or "" if it can't be determined.
+std::string GetExecutablePath() {
+#if defined(_WIN32)
+  std::vector<wchar_t> buf(MAX_PATH);
+  for (;;) {
+    DWORD len =
+        GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+    if (len == 0)
+      return "";
+    if (len < buf.size()) {
+      int size = WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, nullptr, 0,
+                                     nullptr, nullptr);
+      if (size <= 0)
+        return "";
+      std::string out(size - 1, '\0');
+      WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, &out[0], size, nullptr,
+                          nullptr);
+      return out;
+    }
+    buf.resize(buf.size() * 2);  // truncated; grow and retry
+  }
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);  // query required length
+  std::vector<char> buf(size);
+  if (_NSGetExecutablePath(buf.data(), &size) != 0)
+    return "";
+  return std::string(buf.data());
+#else
+  std::vector<char> buf(4096);
+  ssize_t len = readlink("/proc/self/exe", buf.data(), buf.size());
+  if (len <= 0)
+    return "";
+  return std::string(buf.data(), static_cast<size_t>(len));
+#endif
+}
+
+bool PathExists(const std::string& path) {
+#if defined(_WIN32)
+  return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+#else
+  return access(path.c_str(), F_OK) == 0;
+#endif
+}
+
+}  // namespace
+
+std::string LaufeyFindColocatedRuntime() {
+  std::string exe = GetExecutablePath();
+  if (exe.empty())
+    return "";
+
+  // Strip the extension from the filename component only (keep directory dots).
+  size_t slash = exe.find_last_of("/\\");
+  size_t file_start = (slash == std::string::npos) ? 0 : slash + 1;
+  size_t dot = exe.find_last_of('.');
+  std::string base =
+      (dot != std::string::npos && dot > file_start) ? exe.substr(0, dot) : exe;
+
+#if defined(_WIN32)
+  std::string candidate = base + ".dll";
+#elif defined(__APPLE__)
+  std::string candidate = base + ".dylib";
+#else
+  std::string candidate = base + ".so";
+#endif
+
+  if (PathExists(candidate))
+    return candidate;
+  return "";
+}
 
 static void Backend_Navigate(void* data, uint32_t window_id, const char* url) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
@@ -121,6 +203,24 @@ static bool Backend_IsAlwaysOnTop(void* data, uint32_t window_id) {
     return backend->IsAlwaysOnTop(window_id);
   }
   return false;
+}
+
+static void Backend_SetWindowOpacity(void* data, uint32_t window_id,
+                                     double opacity) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    backend->SetWindowOpacity(window_id, opacity);
+  }
+}
+
+static double Backend_GetWindowOpacity(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    return backend->GetWindowOpacity(window_id);
+  }
+  return 1.0;
 }
 
 static bool Backend_IsVisible(void* data, uint32_t window_id) {
@@ -392,6 +492,12 @@ static void Backend_SetCloseRequestedHandler(void* data,
   loader->SetCloseRequestedHandler(handler, user_data);
 }
 
+static void Backend_SetPageLoadHandler(void* data, laufey_page_load_fn handler,
+                                       void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  loader->SetPageLoadHandler(handler, user_data);
+}
+
 static int Backend_ShowDialog(void* data, uint32_t window_id, int dialog_type,
                               const char* title, const char* message,
                               const char* default_value,
@@ -590,6 +696,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.is_resizable = Backend_IsResizable;
   backend_api_.set_always_on_top = Backend_SetAlwaysOnTop;
   backend_api_.is_always_on_top = Backend_IsAlwaysOnTop;
+  backend_api_.set_window_opacity = Backend_SetWindowOpacity;
+  backend_api_.get_window_opacity = Backend_GetWindowOpacity;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;
@@ -639,6 +747,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.create_window_ex = Backend_CreateWindowEx;
   backend_api_.close_window = Backend_CloseWindow;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
+  backend_api_.set_page_load_handler = Backend_SetPageLoadHandler;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;
   backend_api_.read_clipboard_text = Backend_ReadClipboardText;
@@ -873,6 +982,27 @@ void RuntimeLoader::PollPendingJsCalls() {
   }
 
   for (auto& call : calls) {
+    // Reserved bridge call from the injected external-link interceptor
+    // (laufey_external_links.h): open the URL in the OS browser instead of
+    // forwarding to the runtime, then resolve the page-side promise.
+    if (call.method_path == LAUFEY_OPEN_EXTERNAL_METHOD) {
+      std::string url;
+      if (call.args && call.args->IsList()) {
+        const laufey::ValueList& list = call.args->GetList();
+        if (!list.empty() && list[0] && list[0]->IsString()) {
+          url = list[0]->GetString();
+        }
+      }
+      if (!url.empty()) {
+        if (LaufeyBackend* backend = GetBackend()) {
+          backend->OpenExternalURL(url);
+        }
+      }
+      JsCallRespond(call.window_id, call.call_id, laufey::Value::Null(),
+                    nullptr);
+      continue;
+    }
+
     if (handler) {
       laufey_value_t* argsWrapper = new laufey_value(call.args);
       handler(user_data, call.window_id, call.call_id, call.method_path.c_str(),

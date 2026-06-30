@@ -20,6 +20,16 @@
 #include "renderer_app.h"
 #include "runtime_loader.h"
 
+void LaufeyOpenExternalURL(const std::string& url) {
+  int wlen = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
+  if (wlen <= 0)
+    return;
+  std::wstring wurl(static_cast<size_t>(wlen - 1), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, &wurl[0], wlen);
+  ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr,
+                SW_SHOWNORMAL);
+}
+
 // Windows mouse/input monitor for CEF Views windows.
 // CEF Views creates its own HWND; we hook into it after window creation.
 
@@ -258,6 +268,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     if (GetEnvironmentVariableA("LAUFEY_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
       g_runtime_path = envPath;
     }
+  }
+
+  if (g_runtime_path.empty()) {
+    g_runtime_path = LaufeyFindColocatedRuntime();
   }
 
   // Check for headless / forked worker mode (skip CEF entirely)

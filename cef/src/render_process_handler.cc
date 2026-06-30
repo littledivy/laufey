@@ -2,6 +2,8 @@
 
 #include "render_process_handler.h"
 
+#include "laufey_external_links.h"
+
 CefRefPtr<LaufeyRenderProcessHandler> g_render_handler;
 
 LaufeyPathObject::LaufeyPathObject(std::vector<std::string> path,
@@ -167,6 +169,13 @@ void LaufeyRenderProcessHandler::OnContextCreated(
   CefRefPtr<CefV8Value> laufey = CefV8Value::CreateObject(nullptr, handler);
 
   global->SetValue(ns, laufey, V8_PROPERTY_ATTRIBUTE_READONLY);
+
+  // Redirect external link navigations to the OS browser via the standards
+  // based Navigation API (laufey_external_links.h). The injected listener calls
+  // `window[ns].__laufeyOpenExternal(url)`, which the browser process
+  // intercepts before dispatching to the runtime.
+  frame->ExecuteJavaScript(BuildExternalLinkInterceptScript(ns),
+                           frame->GetURL(), 0);
 }
 
 void LaufeyRenderProcessHandler::OnContextReleased(

@@ -29,13 +29,15 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 27;
+pub const LAUFEY_API_VERSION: u32 = 29;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
 pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
 pub const LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR: u32 = 1 << 2;
+pub const LAUFEY_WINDOW_FLAG_HIDDEN: u32 = 1 << 3;
+pub const LAUFEY_WINDOW_FLAG_TRANSPARENT: u32 = 1 << 4;
 
 pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: i32 = 0;
 pub const LAUFEY_WINDOW_HANDLE_APPKIT: i32 = 1;
@@ -679,6 +681,20 @@ pub struct WindowOptions {
   /// bar transparent and let the web content extend under it (Electron
   /// `titleBarStyle: 'hidden'`). macOS only; ignored elsewhere.
   pub transparent_titlebar: bool,
+  /// Create the window without showing it. It stays hidden until [`Window::show`]
+  /// (or [`Window::focus`]) is called — typically from a [`crate::on_page_load`]
+  /// handler so the first reveal happens only once content has painted, avoiding
+  /// the empty/black initial frame (most visible on Wayland).
+  pub hidden: bool,
+  /// Give the window a transparent background so the web content's own alpha
+  /// composites against whatever is behind the window. Any region the page
+  /// leaves transparent (e.g. `background: transparent` on the root element)
+  /// shows the desktop through it. Often combined with `frameless` for a
+  /// borderless translucent look. Distinct from [`Window::set_opacity`], which
+  /// uniformly fades the whole window. Supported by the system-WebView backend
+  /// on macOS and Linux and by the Winit backend; ignored by the Windows
+  /// WebView2 and CEF backends, which paint an opaque window background.
+  pub transparent: bool,
 }
 
 impl WindowOptions {
@@ -692,6 +708,12 @@ impl WindowOptions {
     }
     if self.transparent_titlebar {
       flags |= LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR;
+    }
+    if self.hidden {
+      flags |= LAUFEY_WINDOW_FLAG_HIDDEN;
+    }
+    if self.transparent {
+      flags |= LAUFEY_WINDOW_FLAG_TRANSPARENT;
     }
     flags
   }
@@ -843,6 +865,37 @@ impl Window {
       unsafe { f(api.backend_data, self.id) }
     } else {
       false
+    }
+  }
+
+  /// Builder form of [`Window::set_opacity`].
+  pub fn opacity(self, opacity: f64) -> Self {
+    self.set_opacity(opacity);
+    self
+  }
+
+  /// Set the window's overall opacity, a uniform factor in `[0.0, 1.0]` where
+  /// `1.0` is fully opaque (the default) and `0.0` is fully transparent. This
+  /// fades the entire window — web content and native chrome alike — like CSS
+  /// `opacity`. It is distinct from [`WindowOptions::transparent`], which makes
+  /// the background transparent while honoring the page's own per-pixel alpha.
+  /// Out-of-range values are clamped. No-op on backends without opacity support
+  /// (e.g. the Winit backend).
+  pub fn set_opacity(&self, opacity: f64) {
+    let api = api();
+    if let Some(f) = api.set_window_opacity {
+      unsafe { f(api.backend_data, self.id, opacity.clamp(0.0, 1.0)) };
+    }
+  }
+
+  /// Get the window's current opacity in `[0.0, 1.0]`. Returns `1.0` when the
+  /// backend does not report opacity.
+  pub fn get_opacity(&self) -> f64 {
+    let api = api();
+    if let Some(f) = api.get_window_opacity {
+      unsafe { f(api.backend_data, self.id) }
+    } else {
+      1.0
     }
   }
 
@@ -1036,6 +1089,14 @@ impl Window {
     F: Fn(CloseRequestedEvent) + Send + Sync + 'static,
   {
     on_close_requested(self.id, handler);
+    self
+  }
+
+  pub fn on_page_load<F>(self, handler: F) -> Self
+  where
+    F: Fn(PageLoadEvent) + Send + Sync + 'static,
+  {
+    on_page_load(self.id, handler);
     self
   }
 
@@ -1306,6 +1367,16 @@ pub enum MenuItem {
     id: Option<String>,
     accelerator: Option<String>,
     enabled: bool,
+    /// Checkmark next to the item (`NSMenuItem.state` / `MFS_CHECKED` /
+    /// `GtkCheckMenuItem`). All platforms.
+    checked: bool,
+    /// Item icon: a file path to a PNG image. macOS and Windows (Linux
+    /// unsupported — GtkMenuItem has no image slot). On macOS a monochrome
+    /// black+alpha PNG is rendered as a template so it tints to white on
+    /// selection; Windows renders the image as-is.
+    icon: Option<String>,
+    /// Tooltip shown on hover. macOS only (matches Electron's `toolTip`).
+    tooltip: Option<String>,
   },
   /// A submenu containing child items.
   Submenu { label: String, items: Vec<MenuItem> },
@@ -1323,6 +1394,9 @@ impl MenuItem {
         id,
         accelerator,
         enabled,
+        checked,
+        icon,
+        tooltip,
       } => {
         let mut dict = HashMap::new();
         dict.insert("label".to_string(), Value::String(label.clone()));
@@ -1334,6 +1408,15 @@ impl MenuItem {
         }
         if !enabled {
           dict.insert("enabled".to_string(), Value::Bool(false));
+        }
+        if *checked {
+          dict.insert("checked".to_string(), Value::Bool(true));
+        }
+        if let Some(icon) = icon {
+          dict.insert("icon".to_string(), Value::String(icon.clone()));
+        }
+        if let Some(tooltip) = tooltip {
+          dict.insert("tooltip".to_string(), Value::String(tooltip.clone()));
         }
         Value::Dict(dict)
       }
@@ -2462,6 +2545,9 @@ mod tests {
       id: None,
       accelerator: None,
       enabled: true,
+      checked: false,
+      icon: None,
+      tooltip: None,
     };
     let v = item.to_value();
     assert_eq!(
@@ -2481,6 +2567,9 @@ mod tests {
       id: Some("file.open".into()),
       accelerator: Some("CmdOrCtrl+O".into()),
       enabled: false,
+      checked: true,
+      icon: Some("doc".into()),
+      tooltip: Some("Open a file".into()),
     };
     let v = item.to_value();
     assert_eq!(
@@ -2496,6 +2585,19 @@ mod tests {
     assert_eq!(
       dict_get(&v, "enabled").and_then(|v| v.as_bool()),
       Some(false)
+    );
+    // checked=true serializes; icon/tooltip serialize when Some.
+    assert_eq!(
+      dict_get(&v, "checked").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      dict_get(&v, "icon").and_then(|v| v.as_string()),
+      Some("doc")
+    );
+    assert_eq!(
+      dict_get(&v, "tooltip").and_then(|v| v.as_string()),
+      Some("Open a file")
     );
   }
 
@@ -2675,6 +2777,9 @@ mod tests {
           id: Some("recent.0".into()),
           accelerator: None,
           enabled: true,
+          checked: false,
+          icon: None,
+          tooltip: None,
         }],
       }],
     };
@@ -2767,12 +2872,29 @@ mod tests {
     );
     assert_eq!(
       WindowOptions {
+        transparent: true,
+        ..Default::default()
+      }
+      .to_flags(),
+      LAUFEY_WINDOW_FLAG_TRANSPARENT
+    );
+    assert_eq!(
+      WindowOptions {
         frameless: true,
         no_activate: true,
         ..Default::default()
       }
       .to_flags(),
       LAUFEY_WINDOW_FLAG_FRAMELESS | LAUFEY_WINDOW_FLAG_NO_ACTIVATE
+    );
+    assert_eq!(
+      WindowOptions {
+        frameless: true,
+        transparent: true,
+        ..Default::default()
+      }
+      .to_flags(),
+      LAUFEY_WINDOW_FLAG_FRAMELESS | LAUFEY_WINDOW_FLAG_TRANSPARENT
     );
   }
 

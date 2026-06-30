@@ -28,11 +28,16 @@ use winit::window::{Window, WindowLevel};
 
 // --- Constants ---
 
-pub const LAUFEY_API_VERSION: u32 = 27;
+// Must match `LAUFEY_API_VERSION` in capi/include/laufey.h (and capi/src/lib.rs).
+// Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
+// rejects any backend whose reported `version` differs, and the vtable layout
+// below must match the v29 `laufey_backend_api`.
+pub const LAUFEY_API_VERSION: u32 = 29;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
 pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
+pub const LAUFEY_WINDOW_FLAG_TRANSPARENT: u32 = 1 << 4;
 
 #[allow(dead_code)]
 pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: c_int = 0;
@@ -126,6 +131,36 @@ pub type LaufeyCloseRequestedFn = unsafe extern "C" fn(
   *mut c_void, // user_data
   u32,         // window_id
 );
+// Mirrors `laufey_page_load_fn` (API >= 27). The winit backend has no web
+// engine and never fires page-load events; the typedef exists only so the
+// `set_page_load_handler` vtable slot has the right signature.
+pub type LaufeyPageLoadFn = unsafe extern "C" fn(
+  *mut c_void, // user_data
+  u32,         // window_id
+);
+
+// --- Custom URL scheme handler (in-process app transport, API >= 26) --------
+//
+// Mirrors `laufey_scheme_request_fn` / `laufey_scheme_cancel_fn` in laufey.h.
+// The winit backend does not implement an in-process scheme transport, so it
+// never invokes these; the typedefs exist only so the vtable fields below have
+// the correct signatures and the struct layout matches the v26
+// `laufey_backend_api` the capi reads through the backend's pointer. The
+// opaque exchange handle is represented as `*mut c_void`.
+pub type LaufeySchemeRequestFn = unsafe extern "C" fn(
+  *mut c_void,   // user_data
+  u32,           // window_id
+  *mut c_void,   // exchange (opaque laufey_scheme_exchange_t*)
+  *const c_char, // method
+  *const c_char, // url
+  *const c_char, // headers (flat NUL-terminated name/value pairs)
+  usize,         // headers_len
+);
+pub type LaufeySchemeCancelFn = unsafe extern "C" fn(
+  *mut c_void, // user_data
+  *mut c_void, // exchange
+);
+
 pub const LAUFEY_DIALOG_ALERT: i32 = 0;
 pub const LAUFEY_DIALOG_CONFIRM: i32 = 1;
 pub const LAUFEY_DIALOG_PROMPT: i32 = 2;
@@ -290,6 +325,11 @@ pub struct LaufeyBackendApi {
       *mut c_void,
     ),
   >,
+  // Mirrors laufey.h: set_page_load_handler (API >= 27) sits between
+  // set_close_requested_handler and poll_js_calls.
+  pub set_page_load_handler: Option<
+    unsafe extern "C" fn(*mut c_void, Option<LaufeyPageLoadFn>, *mut c_void),
+  >,
   pub poll_js_calls: Option<unsafe extern "C" fn(*mut c_void)>,
   pub set_js_call_notify: Option<
     unsafe extern "C" fn(
@@ -422,14 +462,67 @@ pub struct LaufeyBackendApi {
     ),
   >,
   // Mirrors laufey.h: the clipboard pair (API >= 27) sits between
-  // request_permission and the scheme-handler section. The winit/servo
-  // backends have no web engine, so they stop here and omit the trailing
-  // scheme-handler pointers, which keeps these offsets aligned with the
-  // runtime's full (bindgen) view of the struct.
+  // request_permission and the scheme-handler section.
   pub read_clipboard_text:
     Option<unsafe extern "C" fn(*mut c_void) -> *mut c_char>,
   pub write_clipboard_text:
     Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
+
+  // --- Custom URL scheme handler (API >= 26) ---------------------------------
+  //
+  // The winit backend has no in-process scheme transport, so it leaves all
+  // five pointers None (NULL) and the embedder falls back to a socket
+  // transport. They MUST still be declared: the capi reads the v26
+  // `laufey_backend_api` through the backend's pointer, so a struct missing
+  // these trailing fields would make the capi read past its end.
+  pub register_scheme_handler: Option<
+    unsafe extern "C" fn(
+      *mut c_void,                   // backend_data
+      *const c_char,                 // scheme
+      Option<LaufeySchemeRequestFn>, // handler
+      Option<LaufeySchemeCancelFn>,  // on_cancel
+      *mut c_void,                   // user_data
+    ),
+  >,
+  pub scheme_request_read_body: Option<
+    unsafe extern "C" fn(
+      *mut c_void, // backend_data
+      *mut c_void, // exchange
+      *mut u8,     // buf
+      usize,       // cap
+    ) -> isize,
+  >,
+  pub scheme_response_begin: Option<
+    unsafe extern "C" fn(
+      *mut c_void,   // backend_data
+      *mut c_void,   // exchange
+      c_int,         // status
+      *const c_char, // headers
+      usize,         // headers_len
+    ),
+  >,
+  pub scheme_response_write: Option<
+    unsafe extern "C" fn(
+      *mut c_void, // backend_data
+      *mut c_void, // exchange
+      *const u8,   // buf
+      usize,       // len
+    ) -> isize,
+  >,
+  pub scheme_response_finish: Option<
+    unsafe extern "C" fn(
+      *mut c_void, // backend_data
+      *mut c_void, // exchange
+    ),
+  >,
+
+  // --- Window opacity (API >= 28) ---
+  // winit exposes no runtime window-opacity API, so both pointers stay None;
+  // the embedder's set_opacity/get_opacity become no-ops (get returns 1.0).
+  // The fields MUST still be declared to keep the struct layout in sync with
+  // the v28 `laufey_backend_api` the capi reads through the backend's pointer.
+  pub set_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32, f64)>,
+  pub get_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32) -> f64>,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1021,6 +1114,7 @@ pub fn create_api_base() -> LaufeyBackendApi {
     set_resize_handler: None,
     set_move_handler: None,
     set_close_requested_handler: None,
+    set_page_load_handler: None,
     poll_js_calls: None,
     set_js_call_notify: None,
     set_application_menu: None,
@@ -1049,6 +1143,15 @@ pub fn create_api_base() -> LaufeyBackendApi {
     request_permission: None,
     read_clipboard_text: None,
     write_clipboard_text: None,
+    // Scheme handler vtable (API >= 26): unsupported by the winit backend.
+    register_scheme_handler: None,
+    scheme_request_read_body: None,
+    scheme_response_begin: None,
+    scheme_response_write: None,
+    scheme_response_finish: None,
+    // Window opacity (API >= 28): winit has no runtime opacity API.
+    set_window_opacity: None,
+    get_window_opacity: None,
   }
 }
 
@@ -2857,6 +2960,13 @@ pub fn apply_pending_attrs(
     // Don't activate / take focus when first shown.
     attrs = attrs.with_active(false);
   }
+  if flags & LAUFEY_WINDOW_FLAG_TRANSPARENT != 0 {
+    // Transparent background so anything the window draws with alpha < 1
+    // composites against the desktop. (winit has no web engine of its own,
+    // but the flag is honored so embedders driving their own surface get a
+    // transparent framebuffer.)
+    attrs = attrs.with_transparent(true);
+  }
   attrs
 }
 
@@ -3410,12 +3520,57 @@ pub fn dispatch_close_requested_event(
 
 // --- Runtime loading ---
 
+// Path to a runtime library co-located with the running executable and sharing
+// its base name (e.g. example.exe -> example.dll, ./foo -> foo.so), or None.
+// Lets a renamed single-exe auto-load its runtime without --runtime or a
+// wrapper script.
+fn find_colocated_runtime() -> Option<PathBuf> {
+  let exe = env::current_exe().ok()?;
+  let dir = exe.parent()?;
+  let stem = exe.file_stem()?;
+
+  let ext = if cfg!(target_os = "windows") {
+    "dll"
+  } else if cfg!(target_os = "macos") {
+    "dylib"
+  } else {
+    "so"
+  };
+
+  let candidate = dir.join(stem).with_extension(ext);
+  if candidate.exists() && candidate != exe {
+    return Some(candidate);
+  }
+  None
+}
+
 pub fn find_runtime_library() -> Option<PathBuf> {
+  let mut args = env::args().skip(1);
+  while let Some(arg) = args.next() {
+    if arg == "--runtime" {
+      if let Some(path) = args.next() {
+        let p = PathBuf::from(path);
+        if p.exists() {
+          return Some(p);
+        }
+      }
+    } else if let Some(path) = arg.strip_prefix("--runtime=") {
+      let p = PathBuf::from(path);
+      if p.exists() {
+        return Some(p);
+      }
+    }
+  }
+
   if let Ok(path) = env::var("LAUFEY_RUNTIME_PATH") {
     let p = PathBuf::from(path);
     if p.exists() {
       return Some(p);
     }
+  }
+
+  if let Some(p) = find_colocated_runtime() {
+    return Some(p);
   }
 
   let search_paths = [

@@ -105,6 +105,7 @@ handler_store!(focused_handlers, FocusedEvent);
 handler_store!(resize_handlers, ResizeEvent);
 handler_store!(move_handlers, MoveEvent);
 handler_store!(close_requested_handlers, CloseRequestedEvent);
+handler_store!(page_load_handlers, PageLoadEvent);
 
 macro_rules! ensure_handler {
   ($fn_name:ident, $api_field:ident, $trampoline:ident) => {
@@ -150,6 +151,11 @@ ensure_handler!(
   ensure_close_requested,
   set_close_requested_handler,
   close_requested_trampoline
+);
+ensure_handler!(
+  ensure_page_load,
+  set_page_load_handler,
+  page_load_trampoline
 );
 
 // --- Trampolines ---
@@ -475,6 +481,39 @@ where
 {
   ensure_close_requested();
   close_requested_handlers()
+    .lock()
+    .unwrap()
+    .insert(window_id, Box::new(handler));
+}
+
+// --- Page load events ---
+
+#[derive(Debug, Clone, Copy)]
+pub struct PageLoadEvent {
+  pub window_id: u32,
+}
+
+unsafe extern "C" fn page_load_trampoline(
+  _user_data: *mut c_void,
+  window_id: u32,
+) {
+  let event = PageLoadEvent { window_id };
+
+  let guard = page_load_handlers().lock().unwrap();
+  if let Some(handler) = guard.get(&window_id) {
+    handler(event);
+  }
+}
+
+/// Register a handler fired when `window_id` finishes loading a navigation.
+/// Fires once per completed load, so it may run again on later in-app
+/// navigations. Primarily used to reveal a window created hidden.
+pub fn on_page_load<F>(window_id: u32, handler: F)
+where
+  F: Fn(PageLoadEvent) + Send + Sync + 'static,
+{
+  ensure_page_load();
+  page_load_handlers()
     .lock()
     .unwrap()
     .insert(window_id, Box::new(handler));

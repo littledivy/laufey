@@ -67,6 +67,9 @@ fn hello_main() {
             id: Some("hello".into()),
             accelerator: None,
             enabled: true,
+            checked: false,
+            icon: None,
+            tooltip: None,
           },
           MenuItem::Separator,
           MenuItem::Item {
@@ -74,6 +77,9 @@ fn hello_main() {
             id: Some("noise".into()),
             accelerator: None,
             enabled: true,
+            checked: false,
+            icon: None,
+            tooltip: None,
           },
         ];
         laufey::set_dock_menu(&items, |id| {
@@ -128,6 +134,16 @@ fn hello_main() {
         <button onclick="testInfo()">Laufey.getInfo()</button>
         <button onclick="testUnknown()">Laufey.unknown()</button>
     </div>
+    <h2>External Links</h2>
+    <p>These should open in your default browser, not navigate this window:</p>
+    <div style="line-height: 2;">
+        <a href="https://example.com" style="color: %2300d4ff;">In-place link to example.com</a><br>
+        <a href="https://deno.com" target="_blank" style="color: %2300d4ff;">target=_blank link to deno.com</a>
+    </div>
+    <p>This one stays in the app (same-document fragment link, not intercepted):</p>
+    <div style="line-height: 2;">
+        <a href="%23more-info" style="color: %2300ff88;">In-page anchor &#8594; jump to section below</a>
+    </div>
     <h2>Dock / Taskbar</h2>
     <div>
         <button onclick="Laufey.setDockBadge('3')">Badge "3"</button>
@@ -139,6 +155,10 @@ fn hello_main() {
         <button onclick="Laufey.setDockVisible(true)">Show in Dock</button>
     </div>
     <pre id="output">Click a button to test...</pre>
+    <div style="height: 400px;"></div>
+    <h2 id="more-info">More info</h2>
+    <p>You jumped here from the in-page anchor without leaving the app &#8212;
+    the external-link policy only redirects cross-origin http(s) navigations.</p>
     <script>
         const out = document.getElementById('output');
         function log(msg, isError) {
@@ -173,6 +193,37 @@ fn hello_main() {
 </body>
 </html>"#,
       );
+
+    // App menu bar (real NSMenu — shows item icons, unlike the Dock menu).
+    // Look for the "Demo" menu in the top menu bar.
+    _win.set_menu(
+      &[MenuItem::Submenu {
+        label: "Demo".into(),
+        items: vec![
+          // checked: a checkmark next to the item.
+          MenuItem::Item {
+            label: "Say hello".into(),
+            id: Some("hello".into()),
+            accelerator: None,
+            enabled: true,
+            checked: true,
+            icon: None,
+            tooltip: None,
+          },
+          // icon (a template PNG that tints on selection) + tooltip.
+          MenuItem::Item {
+            label: "Make noise".into(),
+            id: Some("noise".into()),
+            accelerator: None,
+            enabled: true,
+            checked: false,
+            icon: Some("examples/hello/icons/bell.png".into()),
+            tooltip: Some("Play a sound".into()),
+          },
+        ],
+      }],
+      |id| println!("menu: {id}"),
+    );
 
     laufey::run().await;
   });

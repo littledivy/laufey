@@ -16,6 +16,7 @@
 @class LaufeyScriptMessageHandler;
 @class LaufeyWindowDelegate;
 @class LaufeyUIDelegate;
+@class LaufeyNavigationDelegate;
 
 // Defined in main_mac.mm — appends a default Edit submenu (Cut/Copy/Paste/
 // Select All/Undo/Redo) to the given menubar if no submenu in the tree
@@ -36,6 +37,7 @@ struct MacWindowState {
   id move_observer;
   NSMenu* menu = nil;  // per-window menu (nil = no custom menu)
   LaufeyUIDelegate* ui_delegate;
+  LaufeyNavigationDelegate* navigation_delegate;
 };
 
 class WKWebViewBackend : public LaufeyBackend {
@@ -49,6 +51,7 @@ class WKWebViewBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
@@ -61,6 +64,8 @@ class WKWebViewBackend : public LaufeyBackend {
   bool IsResizable(uint32_t window_id) override;
   void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) override;
   bool IsAlwaysOnTop(uint32_t window_id) override;
+  void SetWindowOpacity(uint32_t window_id, double opacity) override;
+  double GetWindowOpacity(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -366,6 +371,21 @@ class MacSchemeExchange : public SchemeExchangeBase {
 
 @implementation LaufeyUIDelegate
 
+// `target="_blank"` and `window.open()` request a new browsing context, which
+// the Navigation API interceptor never sees. WKWebView has no popup support, so
+// route http(s) destinations to the OS browser and create no new webview.
+- (WKWebView*)webView:(WKWebView*)webView
+    createWebViewWithConfiguration:(WKWebViewConfiguration*)configuration
+               forNavigationAction:(WKNavigationAction*)navigationAction
+                    windowFeatures:(WKWindowFeatures*)windowFeatures {
+  NSURL* url = navigationAction.request.URL;
+  if (url && ([url.scheme isEqualToString:@"http"] ||
+              [url.scheme isEqualToString:@"https"])) {
+    [[NSWorkspace sharedWorkspace] openURL:url];
+  }
+  return nil;
+}
+
 - (void)webView:(WKWebView*)webView
     runJavaScriptAlertPanelWithMessage:(NSString*)message
                       initiatedByFrame:(WKFrameInfo*)frame
@@ -426,6 +446,21 @@ class MacSchemeExchange : public SchemeExchangeBase {
 - (BOOL)windowShouldClose:(NSWindow*)sender {
   RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(self.windowId);
   return NO;
+}
+
+@end
+
+@interface LaufeyNavigationDelegate : NSObject <WKNavigationDelegate>
+@property(nonatomic, assign) uint32_t windowId;
+@end
+
+@implementation LaufeyNavigationDelegate
+
+// Fired when a main-frame navigation finishes loading. Used to reveal a window
+// created with LAUFEY_WINDOW_FLAG_HIDDEN once it has real content to show.
+- (void)webView:(WKWebView*)webView
+    didFinishNavigation:(WKNavigation*)navigation {
+  RuntimeLoader::GetInstance()->DispatchPageLoadEvent(self.windowId);
 }
 
 @end
@@ -530,6 +565,8 @@ void WKWebViewBackend::RemoveWindowState(uint32_t window_id) {
     if (state.webview)
       [state.webview.configuration.userContentController
           removeScriptMessageHandlerForName:@"laufey"];
+    if (state.window)
+      [state.window setDelegate:nil];
     UnregisterNSWindow(state.window);
   }
   windows_.erase(it);
@@ -715,6 +752,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
       bool frameless = (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) != 0;
       bool no_activate = (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) != 0;
+      bool transparent = (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT) != 0;
 
       NSRect frame = NSMakeRect(0, 0, width, height);
       NSWindowStyleMask style = NSWindowStyleMaskClosable |
@@ -798,6 +836,26 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       }
       LaufeyUIDelegate* uiDelegate = [[LaufeyUIDelegate alloc] init];
       webview.UIDelegate = uiDelegate;
+      LaufeyNavigationDelegate* navDelegate =
+          [[LaufeyNavigationDelegate alloc] init];
+      navDelegate.windowId = window_id;
+      webview.navigationDelegate = navDelegate;
+
+      if (transparent) {
+        // Make the window non-opaque with a clear backdrop and stop the
+        // WKWebView from painting its own opaque background, so any region the
+        // page leaves transparent shows whatever is behind the window.
+        [window setOpaque:NO];
+        [window setBackgroundColor:[NSColor clearColor]];
+        // `drawsBackground` is an undocumented but long-stable WKWebView
+        // property; KVC keeps us off the private @interface.
+        @try {
+          [webview setValue:@NO forKey:@"drawsBackground"];
+        } @catch (NSException*) {
+          // Older/newer WebKit without the key: fall back to a clear layer.
+        }
+      }
+
       [window setContentView:webview];
 
       RegisterNSWindow(window, window_id);
@@ -860,6 +918,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       state.message_handler = handler;
       state.window_delegate = delegate;
       state.ui_delegate = uiDelegate;
+      state.navigation_delegate = navDelegate;
       state.focus_observer = focus_obs;
       state.blur_observer = blur_obs;
       state.resize_observer = resize_obs;
@@ -870,7 +929,11 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
         windows_[window_id] = state;
       }
 
-      if (no_activate) {
+      bool hidden = (flags & LAUFEY_WINDOW_FLAG_HIDDEN) != 0;
+      if (hidden) {
+        // Leave the window unmapped; the embedder reveals it later (typically
+        // from a page-load handler) so the empty initial frame is never shown.
+      } else if (no_activate) {
         // Show without activating the app / stealing focus.
         [window orderFrontRegardless];
       } else {
@@ -883,12 +946,30 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 void WKWebViewBackend::CloseWindow(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto it = windows_.find(window_id);
-      if (it != windows_.end()) {
-        NSWindow* win = it->second.window;
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto it = windows_.find(window_id);
+        if (it == windows_.end())
+          return;
+        win = it->second.window;
         RemoveWindowState(window_id);
-        [win close];
+      }
+      if (!win)
+        return;
+      [win close];
+    }
+  });
+}
+
+void WKWebViewBackend::OpenExternalURL(const std::string& url) {
+  std::string urlCopy = url;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      NSURL* nsurl =
+          [NSURL URLWithString:[NSString stringWithUTF8String:urlCopy.c_str()]];
+      if (nsurl) {
+        [[NSWorkspace sharedWorkspace] openURL:nsurl];
       }
     }
   });
@@ -1166,6 +1247,34 @@ bool WKWebViewBackend::IsAlwaysOnTop(uint32_t window_id) {
   return result;
 }
 
+void WKWebViewBackend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      std::lock_guard<std::mutex> lock(windows_mutex_);
+      auto* state = GetWindow(window_id);
+      if (state) {
+        [state->window setAlphaValue:(CGFloat)opacity];
+      }
+    }
+  });
+}
+
+double WKWebViewBackend::GetWindowOpacity(uint32_t window_id) {
+  __block double result = 1.0;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = (double)[state->window alphaValue];
+    }
+  });
+  return result;
+}
+
 bool WKWebViewBackend::IsVisible(uint32_t window_id) {
   __block bool result = false;
   dispatch_sync(dispatch_get_main_queue(), ^{
@@ -1181,11 +1290,17 @@ bool WKWebViewBackend::IsVisible(uint32_t window_id) {
 void WKWebViewBackend::Show(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (state) {
-        [state->window makeKeyAndOrderFront:nil];
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state) {
+          win = state->window;
+        }
       }
+      if (!win)
+        return;
+      [win makeKeyAndOrderFront:nil];
     }
   });
 }
@@ -1193,11 +1308,17 @@ void WKWebViewBackend::Show(uint32_t window_id) {
 void WKWebViewBackend::Hide(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (state) {
-        [state->window orderOut:nil];
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state) {
+          win = state->window;
+        }
       }
+      if (!win)
+        return;
+      [win orderOut:nil];
     }
   });
 }
@@ -1205,11 +1326,17 @@ void WKWebViewBackend::Hide(uint32_t window_id) {
 void WKWebViewBackend::Focus(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (state) {
+      NSWindow* win = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state) {
+          win = state->window;
+        }
+      }
+      if (win) {
         [NSApp activateIgnoringOtherApps:YES];
-        [state->window makeKeyAndOrderFront:nil];
+        [win makeKeyAndOrderFront:nil];
       }
     }
   });

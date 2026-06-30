@@ -233,6 +233,19 @@ class RuntimeLoader {
     }
   }
 
+  void SetPageLoadHandler(laufey_page_load_fn handler, void* user_data) {
+    std::lock_guard<std::mutex> lock(page_load_mutex_);
+    page_load_handler_ = handler;
+    page_load_user_data_ = user_data;
+  }
+
+  void DispatchPageLoadEvent(uint32_t window_id) {
+    std::lock_guard<std::mutex> lock(page_load_mutex_);
+    if (page_load_handler_) {
+      page_load_handler_(page_load_user_data_, window_id);
+    }
+  }
+
   void SetJsCallNotify(void (*notify_fn)(void*), void* notify_data) {
     std::lock_guard<std::mutex> lock(notify_mutex_);
     js_call_notify_fn_ = notify_fn;
@@ -311,6 +324,10 @@ class RuntimeLoader {
   void* close_requested_user_data_ = nullptr;
   std::mutex close_requested_mutex_;
 
+  laufey_page_load_fn page_load_handler_ = nullptr;
+  void* page_load_user_data_ = nullptr;
+  std::mutex page_load_mutex_;
+
   std::atomic<uint32_t> next_window_id_{1};
   std::map<uint64_t, uint32_t> call_to_window_;
   std::mutex call_map_mutex_;
@@ -362,6 +379,13 @@ class LaufeyBackend {
   virtual bool IsResizable(uint32_t window_id) = 0;
   virtual void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) = 0;
   virtual bool IsAlwaysOnTop(uint32_t window_id) = 0;
+  // Overall window opacity in [0.0, 1.0] (1.0 == fully opaque). Fades the whole
+  // window uniformly, unlike LAUFEY_WINDOW_FLAG_TRANSPARENT. Default no-op /
+  // reports fully opaque; platform backends override.
+  virtual void SetWindowOpacity(uint32_t /*window_id*/, double /*opacity*/) {}
+  virtual double GetWindowOpacity(uint32_t /*window_id*/) {
+    return 1.0;
+  }
   virtual bool IsVisible(uint32_t window_id) = 0;
   virtual void Show(uint32_t window_id) = 0;
   virtual void Hide(uint32_t window_id) = 0;
@@ -393,6 +417,12 @@ class LaufeyBackend {
                                void* on_click_data) = 0;
 
   virtual void OpenDevTools(uint32_t window_id) = 0;
+
+  // Open `url` in the user's default OS browser. Used to honor the
+  // external-link redirect policy (see laufey_external_links.h) so clicked
+  // links and `target="_blank"` popups leave the app's webview. Default no-op;
+  // platform backends override with the native open-in-browser call.
+  virtual void OpenExternalURL(const std::string& /*url*/) {}
 
   // --- Custom URL scheme handler (API >= 26) ---
   // Install a native handler for `scheme` so requests to <scheme>://… are
@@ -496,5 +526,11 @@ class LaufeyBackend {
 };
 
 LaufeyBackend* CreateLaufeyBackend();
+
+// Returns the path to a runtime library co-located with the running executable
+// and sharing its base name (e.g. example.exe -> example.dll, ./foo -> foo.so),
+// or "" if none exists. Lets a renamed single-exe auto-load its runtime without
+// a --runtime flag or wrapper script.
+std::string LaufeyFindColocatedRuntime();
 
 #endif  // LAUFEY_RUNTIME_LOADER_H_

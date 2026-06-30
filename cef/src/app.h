@@ -16,6 +16,19 @@
 
 extern std::string g_runtime_path;
 
+// Wayland app_id / X11 WM_CLASS for the app's windows. Read at startup from
+// LAUFEY_APP_ID (falling back to LAUFEY_APP_NAME). Empty leaves the
+// CEF/Chromium default (the backend binary name). On Wayland the compositor
+// keys the taskbar/overview icon off this app_id matching an installed
+// `<app_id>.desktop`, so it must equal the desktop file's id for the icon to
+// show.
+extern std::string g_app_id;
+
+// Open `url` in the user's default OS browser. Implemented per platform in
+// main_mac.mm / main_windows.cc / main_linux.cc. Used to honor the external
+// link redirect policy (laufey_external_links.h).
+void LaufeyOpenExternalURL(const std::string& url);
+
 // Queue of laufey window IDs waiting for OnAfterCreated to fire.
 // Push before CreateBrowserView, pop in OnAfterCreated.
 // Both happen on the UI thread so no synchronization needed.
@@ -39,6 +52,15 @@ class LaufeyWindowDelegate : public CefWindowDelegate {
   // click without the app having to activate first, so a tray popover can be
   // interacted with while the previously-focused app keeps focus.
   cef_state_t AcceptsFirstMouse(CefRefPtr<CefWindow> window) override;
+
+#if defined(__linux__)
+  // Advertise the Wayland app_id / X11 WM_CLASS (from g_app_id) so window
+  // managers can attribute the right `.desktop` file — and therefore the right
+  // taskbar/overview icon — to our windows. Without this the app_id defaults to
+  // the backend binary name and Wayland shows a generic placeholder icon.
+  bool GetLinuxWindowProperties(CefRefPtr<CefWindow> window,
+                                CefLinuxWindowProperties& properties) override;
+#endif
 
  private:
   CefRefPtr<CefBrowserView> browser_view_;
@@ -82,6 +104,18 @@ class LaufeyHandler : public CefClient,
       const std::vector<CefDraggableRegion>& regions) override;
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+  // `target="_blank"` / `window.open()` requests aren't seen by the page's
+  // Navigation API listener; cancel the popup and open http(s) destinations in
+  // the OS browser instead.
+  bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                     int popup_id, const CefString& target_url,
+                     const CefString& target_frame_name,
+                     WindowOpenDisposition target_disposition,
+                     bool user_gesture, const CefPopupFeatures& popupFeatures,
+                     CefWindowInfo& windowInfo, CefRefPtr<CefClient>& client,
+                     CefBrowserSettings& settings,
+                     CefRefPtr<CefDictionaryValue>& extra_info,
+                     bool* no_javascript_access) override;
   bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 

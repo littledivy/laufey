@@ -6,7 +6,7 @@ It defines the boundary between a **backend** (a native executable embedding a
 browser engine) and a **runtime** (a shared library holding the application
 logic). The backend implements the ABI; the runtime consumes it.
 
-`LAUFEY_API_VERSION` (currently `26`) versions the contract. The `version` field
+`LAUFEY_API_VERSION` (currently `28`) versions the contract. The `version` field
 on the API table lets a runtime detect the backend's vintage and avoid calling
 function pointers a backend predates (older backends leave new pointers `NULL`).
 
@@ -43,10 +43,12 @@ hand-rolled vtable with no global state. Windows are referenced by an opaque
 The pointers group into:
 
 - **Window lifecycle** — `create_window`, `create_window_ex` (style flags, see
-  `LAUFEY_WINDOW_FLAG_*`), `close_window`, `navigate`, `set_title`,
+  `LAUFEY_WINDOW_FLAG_*`, including `LAUFEY_WINDOW_FLAG_TRANSPARENT` for a
+  transparent background), `close_window`, `navigate`, `set_title`,
   size/position get+set, `set_resizable`/`is_resizable`,
-  `set_always_on_top`/`is_always_on_top`, `show`/`hide`/`is_visible`, `focus`,
-  `quit`, `post_ui_task`.
+  `set_always_on_top`/`is_always_on_top`,
+  `set_window_opacity`/`get_window_opacity` (whole-window alpha, API ≥ 28),
+  `show`/`hide`/`is_visible`, `focus`, `quit`, `post_ui_task`.
 - **Value marshalling** — the `value_*` family (below).
 - **JavaScript interop** — `set_js_call_handler`, `js_call_respond`,
   `invoke_js_callback`, `release_js_callback`, `execute_js`, `set_js_namespace`,

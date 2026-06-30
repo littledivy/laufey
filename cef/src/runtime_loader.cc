@@ -7,8 +7,13 @@
 
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <unistd.h>
 #else
 #include <windows.h>
+#endif
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
 #endif
 
 #include <iostream>
@@ -27,6 +32,80 @@
 #include "include/wrapper/cef_helpers.h"
 
 RuntimeLoader* RuntimeLoader::instance_ = nullptr;
+
+namespace {
+
+// Absolute path of the running executable, or "" if it can't be determined.
+std::string GetExecutablePath() {
+#if defined(_WIN32)
+  std::vector<wchar_t> buf(MAX_PATH);
+  for (;;) {
+    DWORD len =
+        GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+    if (len == 0)
+      return "";
+    if (len < buf.size()) {
+      int size = WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, nullptr, 0,
+                                     nullptr, nullptr);
+      if (size <= 0)
+        return "";
+      std::string out(size - 1, '\0');
+      WideCharToMultiByte(CP_UTF8, 0, buf.data(), -1, &out[0], size, nullptr,
+                          nullptr);
+      return out;
+    }
+    buf.resize(buf.size() * 2);  // truncated; grow and retry
+  }
+#elif defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);  // query required length
+  std::vector<char> buf(size);
+  if (_NSGetExecutablePath(buf.data(), &size) != 0)
+    return "";
+  return std::string(buf.data());
+#else
+  std::vector<char> buf(4096);
+  ssize_t len = readlink("/proc/self/exe", buf.data(), buf.size());
+  if (len <= 0)
+    return "";
+  return std::string(buf.data(), static_cast<size_t>(len));
+#endif
+}
+
+bool PathExists(const std::string& path) {
+#if defined(_WIN32)
+  return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+#else
+  return access(path.c_str(), F_OK) == 0;
+#endif
+}
+
+}  // namespace
+
+std::string LaufeyFindColocatedRuntime() {
+  std::string exe = GetExecutablePath();
+  if (exe.empty())
+    return "";
+
+  // Strip the extension from the filename component only (keep directory dots).
+  size_t slash = exe.find_last_of("/\\");
+  size_t file_start = (slash == std::string::npos) ? 0 : slash + 1;
+  size_t dot = exe.find_last_of('.');
+  std::string base =
+      (dot != std::string::npos && dot > file_start) ? exe.substr(0, dot) : exe;
+
+#if defined(_WIN32)
+  std::string candidate = base + ".dll";
+#elif defined(__APPLE__)
+  std::string candidate = base + ".dylib";
+#else
+  std::string candidate = base + ".so";
+#endif
+
+  if (PathExists(candidate))
+    return candidate;
+  return "";
+}
 
 #ifdef _WIN32
 void ConfigureWin32WindowAsPanel(void* hwnd_ptr) {
@@ -328,6 +407,82 @@ static bool Backend_IsAlwaysOnTop(void* data, uint32_t window_id) {
           result = window->IsAlwaysOnTop();
         }
       }
+    });
+  }
+  return result;
+}
+
+static void Backend_SetWindowOpacity(void* data, uint32_t window_id,
+                                     double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  if (browser) {
+    CefPostTask(TID_UI,
+                base::BindOnce(
+                    [](CefRefPtr<CefBrowser> b, double o) {
+                      auto browser_view = CefBrowserView::GetForBrowser(b);
+                      if (!browser_view)
+                        return;
+                      auto window = browser_view->GetWindow();
+                      if (!window)
+                        return;
+#ifdef _WIN32
+                      HWND hwnd = window->GetWindowHandle();
+                      LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+                      if (o >= 1.0) {
+                        if (ex & WS_EX_LAYERED) {
+                          SetWindowLong(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+                          RedrawWindow(hwnd, nullptr, nullptr,
+                                       RDW_ERASE | RDW_INVALIDATE | RDW_FRAME |
+                                           RDW_ALLCHILDREN);
+                        }
+                      } else {
+                        if (!(ex & WS_EX_LAYERED))
+                          SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+                        SetLayeredWindowAttributes(
+                            hwnd, 0, (BYTE)(o * 255.0 + 0.5), LWA_ALPHA);
+                      }
+#elif defined(__APPLE__)
+                      SetNSWindowOpacity(window->GetWindowHandle(), o);
+#elif defined(__linux__)
+                      SetLinuxWindowOpacity(window->GetWindowHandle(), o);
+#endif
+                    },
+                    browser, opacity));
+  }
+}
+
+static double Backend_GetWindowOpacity(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  double result = 1.0;
+  if (browser) {
+    cef_invoke_sync([&] {
+      auto browser_view = CefBrowserView::GetForBrowser(browser);
+      if (!browser_view)
+        return;
+      auto window = browser_view->GetWindow();
+      if (!window)
+        return;
+#ifdef _WIN32
+      HWND hwnd = window->GetWindowHandle();
+      if (!(GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED))
+        return;
+      BYTE alpha = 255;
+      DWORD flags = 0;
+      if (GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags) &&
+          (flags & LWA_ALPHA)) {
+        result = alpha / 255.0;
+      }
+#elif defined(__APPLE__)
+      result = GetNSWindowOpacity(window->GetWindowHandle());
+#elif defined(__linux__)
+      result = GetLinuxWindowOpacity(window->GetWindowHandle());
+#endif
     });
   }
   return result;
@@ -1307,6 +1462,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.is_resizable = Backend_IsResizable;
   backend_api_.set_always_on_top = Backend_SetAlwaysOnTop;
   backend_api_.is_always_on_top = Backend_IsAlwaysOnTop;
+  backend_api_.set_window_opacity = Backend_SetWindowOpacity;
+  backend_api_.get_window_opacity = Backend_GetWindowOpacity;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;

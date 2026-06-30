@@ -279,6 +279,39 @@ static gboolean on_configure_event(GtkWidget* widget, GdkEventConfigure* event,
   return FALSE;
 }
 
+// Fired as a navigation progresses through its load states. We only care about
+// WEBKIT_LOAD_FINISHED, which signals the document and subresources have loaded
+// (and the web process has content to composite). The window_id is passed
+// directly as user_data because this signal is on the WebKitWebView, not the
+// toplevel registered with LaufeyIdForWidget.
+static void on_load_changed(WebKitWebView* /*webview*/,
+                            WebKitLoadEvent load_event, gpointer user_data) {
+  if (load_event != WEBKIT_LOAD_FINISHED) {
+    return;
+  }
+  uint32_t wid = static_cast<uint32_t>(GPOINTER_TO_UINT(user_data));
+  if (wid == 0) {
+    return;
+  }
+  RuntimeLoader::GetInstance()->DispatchPageLoadEvent(wid);
+}
+
+// Fired when the page requests a new webview (`target="_blank"` or
+// `window.open()`). These never reach the Navigation API interceptor, so route
+// http(s) destinations to the OS browser and create no new webview.
+static WebKitWebView* on_create(WebKitWebView* /*webview*/,
+                                WebKitNavigationAction* navigation_action,
+                                gpointer /*user_data*/) {
+  WebKitURIRequest* req =
+      webkit_navigation_action_get_request(navigation_action);
+  const char* uri = req ? webkit_uri_request_get_uri(req) : nullptr;
+  if (uri &&
+      (g_str_has_prefix(uri, "http://") || g_str_has_prefix(uri, "https://"))) {
+    g_app_info_launch_default_for_uri(uri, nullptr, nullptr);
+  }
+  return nullptr;
+}
+
 static gboolean on_key_event(GtkWidget* widget, GdkEventKey* event,
                              gpointer user_data) {
   uint32_t wid = LaufeyIdForWidget(widget);
@@ -312,6 +345,7 @@ class WebKitGTKBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
                  laufey_js_result_fn callback, void* callback_data) override;
@@ -324,6 +358,8 @@ class WebKitGTKBackend : public LaufeyBackend {
   bool IsResizable(uint32_t window_id) override;
   void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) override;
   bool IsAlwaysOnTop(uint32_t window_id) override;
+  void SetWindowOpacity(uint32_t window_id, double opacity) override;
+  double GetWindowOpacity(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -614,6 +650,17 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
       gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
     }
+    bool transparent = (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT) != 0;
+    if (transparent) {
+      // Give the toplevel an RGBA visual (must be set before realization) so
+      // the compositor blends the window's alpha. Requires a compositing WM.
+      GdkScreen* screen = gtk_widget_get_screen(window);
+      GdkVisual* rgba = gdk_screen_get_rgba_visual(screen);
+      if (rgba) {
+        gtk_widget_set_visual(window, rgba);
+      }
+      gtk_widget_set_app_paintable(window, TRUE);
+    }
     if (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) {
       // Treat as a utility/panel window: out of taskbar & pager, and don't
       // grab focus when shown (the GTK equivalent of a non-activating panel).
@@ -667,9 +714,19 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
     g_signal_connect(webview, "script-dialog", G_CALLBACK(on_script_dialog),
                      nullptr);
+    g_signal_connect(webview, "load-changed", G_CALLBACK(on_load_changed),
+                     GUINT_TO_POINTER(window_id));
+    g_signal_connect(webview, "create", G_CALLBACK(on_create), nullptr);
 
     WebKitSettings* wk_settings = webkit_web_view_get_settings(webview);
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
+
+    if (transparent) {
+      // Let the page's own alpha show through the webview (any region the
+      // document leaves transparent composites against the desktop).
+      GdkRGBA clear = {0.0, 0.0, 0.0, 0.0};
+      webkit_web_view_set_background_color(webview, &clear);
+    }
 
     std::string initScript = BuildInitScript(
         RuntimeLoader::GetInstance()->GetJsNamespace(),
@@ -701,7 +758,13 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       windows_[window_id] = state;
     }
 
-    gtk_widget_show_all(window);
+    // A hidden window is created but not mapped; the embedder reveals it later
+    // (typically from a page-load handler) so the empty initial frame is never
+    // shown. The load state machine still advances while unmapped, so the
+    // page-load event fires regardless.
+    if (!(flags & LAUFEY_WINDOW_FLAG_HIDDEN)) {
+      gtk_widget_show_all(window);
+    }
   });
 }
 
@@ -727,6 +790,12 @@ void WebKitGTKBackend::Navigate(uint32_t window_id, const std::string& url) {
     if (state) {
       webkit_web_view_load_uri(state->webview, url.c_str());
     }
+  });
+}
+
+void WebKitGTKBackend::OpenExternalURL(const std::string& url) {
+  gtk_invoke_sync([&] {
+    g_app_info_launch_default_for_uri(url.c_str(), nullptr, nullptr);
   });
 }
 
@@ -929,6 +998,32 @@ bool WebKitGTKBackend::IsAlwaysOnTop(uint32_t window_id) {
         GdkWindowState wstate = gdk_window_get_state(gdk_window);
         result = (wstate & GDK_WINDOW_STATE_ABOVE) != 0;
       }
+    }
+  });
+  return result;
+}
+
+void WebKitGTKBackend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  gtk_invoke_sync([&] {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      gtk_widget_set_opacity(state->window, opacity);
+    }
+  });
+}
+
+double WebKitGTKBackend::GetWindowOpacity(uint32_t window_id) {
+  double result = 1.0;
+  gtk_invoke_sync([&] {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = gtk_widget_get_opacity(state->window);
     }
   });
   return result;
