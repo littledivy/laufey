@@ -40,8 +40,8 @@ std::string GetExecutablePath() {
 #if defined(_WIN32)
   std::vector<wchar_t> buf(MAX_PATH);
   for (;;) {
-    DWORD len = GetModuleFileNameW(nullptr, buf.data(),
-                                   static_cast<DWORD>(buf.size()));
+    DWORD len =
+        GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
     if (len == 0)
       return "";
     if (len < buf.size()) {
