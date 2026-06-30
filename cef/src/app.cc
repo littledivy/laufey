@@ -30,6 +30,7 @@ NativeDialogResult ShowNativeJSDialog_Mac(int type, const std::string& message,
 #include "include/wrapper/cef_helpers.h"
 
 std::string g_runtime_path;
+std::string g_app_id;
 std::queue<uint32_t> g_pending_laufey_ids;
 
 namespace {
@@ -84,6 +85,21 @@ cef_state_t LaufeyWindowDelegate::AcceptsFirstMouse(
   return (flags_ & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) ? STATE_ENABLED
                                                    : STATE_DEFAULT;
 }
+
+#if defined(__linux__)
+bool LaufeyWindowDelegate::GetLinuxWindowProperties(
+    CefRefPtr<CefWindow> window, CefLinuxWindowProperties& properties) {
+  if (g_app_id.empty()) {
+    return false;
+  }
+  // Same id for Wayland's app_id and X11's WM_CLASS (both class and name) so
+  // the window matches the installed `<g_app_id>.desktop` under either backend.
+  CefString(&properties.wayland_app_id) = g_app_id;
+  CefString(&properties.wm_class_class) = g_app_id;
+  CefString(&properties.wm_class_name) = g_app_id;
+  return true;
+}
+#endif
 
 void LaufeyWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   // Unregister native window
