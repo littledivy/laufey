@@ -1284,6 +1284,16 @@ pub enum MenuItem {
     id: Option<String>,
     accelerator: Option<String>,
     enabled: bool,
+    /// Checkmark next to the item (`NSMenuItem.state` / `MFS_CHECKED` /
+    /// `GtkCheckMenuItem`). All platforms.
+    checked: bool,
+    /// Item icon: a file path to a PNG image. macOS and Windows (Linux
+    /// unsupported — GtkMenuItem has no image slot). On macOS a monochrome
+    /// black+alpha PNG is rendered as a template so it tints to white on
+    /// selection; Windows renders the image as-is.
+    icon: Option<String>,
+    /// Tooltip shown on hover. macOS only (matches Electron's `toolTip`).
+    tooltip: Option<String>,
   },
   /// A submenu containing child items.
   Submenu { label: String, items: Vec<MenuItem> },
@@ -1301,6 +1311,9 @@ impl MenuItem {
         id,
         accelerator,
         enabled,
+        checked,
+        icon,
+        tooltip,
       } => {
         let mut dict = HashMap::new();
         dict.insert("label".to_string(), Value::String(label.clone()));
@@ -1312,6 +1325,15 @@ impl MenuItem {
         }
         if !enabled {
           dict.insert("enabled".to_string(), Value::Bool(false));
+        }
+        if *checked {
+          dict.insert("checked".to_string(), Value::Bool(true));
+        }
+        if let Some(icon) = icon {
+          dict.insert("icon".to_string(), Value::String(icon.clone()));
+        }
+        if let Some(tooltip) = tooltip {
+          dict.insert("tooltip".to_string(), Value::String(tooltip.clone()));
         }
         Value::Dict(dict)
       }
@@ -2440,6 +2462,9 @@ mod tests {
       id: None,
       accelerator: None,
       enabled: true,
+      checked: false,
+      icon: None,
+      tooltip: None,
     };
     let v = item.to_value();
     assert_eq!(
@@ -2459,6 +2484,9 @@ mod tests {
       id: Some("file.open".into()),
       accelerator: Some("CmdOrCtrl+O".into()),
       enabled: false,
+      checked: true,
+      icon: Some("doc".into()),
+      tooltip: Some("Open a file".into()),
     };
     let v = item.to_value();
     assert_eq!(
@@ -2474,6 +2502,19 @@ mod tests {
     assert_eq!(
       dict_get(&v, "enabled").and_then(|v| v.as_bool()),
       Some(false)
+    );
+    // checked=true serializes; icon/tooltip serialize when Some.
+    assert_eq!(
+      dict_get(&v, "checked").and_then(|v| v.as_bool()),
+      Some(true)
+    );
+    assert_eq!(
+      dict_get(&v, "icon").and_then(|v| v.as_string()),
+      Some("doc")
+    );
+    assert_eq!(
+      dict_get(&v, "tooltip").and_then(|v| v.as_string()),
+      Some("Open a file")
     );
   }
 
@@ -2653,6 +2694,9 @@ mod tests {
           id: Some("recent.0".into()),
           accelerator: None,
           enabled: true,
+          checked: false,
+          icon: None,
+          tooltip: None,
         }],
       }],
     };
