@@ -492,6 +492,57 @@ bool IsLinuxWindowResizable(unsigned long xid) {
 #endif
 }
 
+void SetLinuxWindowOpacity(unsigned long xid, double opacity) {
+#ifdef GDK_WINDOWING_X11
+  GdkDisplay* gdk_display = gdk_display_get_default();
+  if (!gdk_display || !GDK_IS_X11_DISPLAY(gdk_display))
+    return;
+  Display* dpy = GDK_DISPLAY_XDISPLAY(gdk_display);
+
+  // _NET_WM_WINDOW_OPACITY is a CARDINAL where 0xffffffff is fully opaque and
+  // 0 fully transparent; compositing WMs scale the whole window by it.
+  Atom net_wm_opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  if (opacity >= 1.0) {
+    // Fully opaque: drop the hint so the WM treats the window normally.
+    XDeleteProperty(dpy, xid, net_wm_opacity);
+  } else {
+    unsigned long value = (unsigned long)(opacity * 0xffffffffUL);
+    XChangeProperty(dpy, xid, net_wm_opacity, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char*>(&value), 1);
+  }
+  XFlush(dpy);
+#endif
+}
+
+double GetLinuxWindowOpacity(unsigned long xid) {
+#ifdef GDK_WINDOWING_X11
+  GdkDisplay* gdk_display = gdk_display_get_default();
+  if (!gdk_display || !GDK_IS_X11_DISPLAY(gdk_display))
+    return 1.0;
+  Display* dpy = GDK_DISPLAY_XDISPLAY(gdk_display);
+
+  Atom net_wm_opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+  Atom actual_type = None;
+  int actual_format = 0;
+  unsigned long nitems = 0, bytes_after = 0;
+  unsigned char* prop = nullptr;
+  double result = 1.0;
+  if (XGetWindowProperty(dpy, xid, net_wm_opacity, 0, 1, False, XA_CARDINAL,
+                         &actual_type, &actual_format, &nitems, &bytes_after,
+                         &prop) == Success) {
+    if (prop && nitems >= 1 && actual_format == 32) {
+      unsigned long value = *reinterpret_cast<unsigned long*>(prop);
+      result = (double)value / (double)0xffffffffUL;
+    }
+    if (prop)
+      XFree(prop);
+  }
+  return result;
+#else
+  return 1.0;
+#endif
+}
+
 void MonitorLinuxWindowEvents(unsigned long xid) {
 #ifdef GDK_WINDOWING_X11
   if (!g_monitor_display)

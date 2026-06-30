@@ -64,6 +64,8 @@ class WKWebViewBackend : public LaufeyBackend {
   bool IsResizable(uint32_t window_id) override;
   void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) override;
   bool IsAlwaysOnTop(uint32_t window_id) override;
+  void SetWindowOpacity(uint32_t window_id, double opacity) override;
+  double GetWindowOpacity(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -743,6 +745,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
       bool frameless = (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) != 0;
       bool no_activate = (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) != 0;
+      bool transparent = (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT) != 0;
 
       NSRect frame = NSMakeRect(0, 0, width, height);
       NSWindowStyleMask style = NSWindowStyleMaskClosable |
@@ -830,6 +833,22 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
           [[LaufeyNavigationDelegate alloc] init];
       navDelegate.windowId = window_id;
       webview.navigationDelegate = navDelegate;
+
+      if (transparent) {
+        // Make the window non-opaque with a clear backdrop and stop the
+        // WKWebView from painting its own opaque background, so any region the
+        // page leaves transparent shows whatever is behind the window.
+        [window setOpaque:NO];
+        [window setBackgroundColor:[NSColor clearColor]];
+        // `drawsBackground` is an undocumented but long-stable WKWebView
+        // property; KVC keeps us off the private @interface.
+        @try {
+          [webview setValue:@NO forKey:@"drawsBackground"];
+        } @catch (NSException*) {
+          // Older/newer WebKit without the key: fall back to a clear layer.
+        }
+      }
+
       [window setContentView:webview];
 
       RegisterNSWindow(window, window_id);
@@ -1216,6 +1235,34 @@ bool WKWebViewBackend::IsAlwaysOnTop(uint32_t window_id) {
     auto* state = GetWindow(window_id);
     if (state) {
       result = [state->window level] >= NSFloatingWindowLevel;
+    }
+  });
+  return result;
+}
+
+void WKWebViewBackend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      std::lock_guard<std::mutex> lock(windows_mutex_);
+      auto* state = GetWindow(window_id);
+      if (state) {
+        [state->window setAlphaValue:(CGFloat)opacity];
+      }
+    }
+  });
+}
+
+double WKWebViewBackend::GetWindowOpacity(uint32_t window_id) {
+  __block double result = 1.0;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = (double)[state->window alphaValue];
     }
   });
   return result;

@@ -358,6 +358,8 @@ class WebKitGTKBackend : public LaufeyBackend {
   bool IsResizable(uint32_t window_id) override;
   void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) override;
   bool IsAlwaysOnTop(uint32_t window_id) override;
+  void SetWindowOpacity(uint32_t window_id, double opacity) override;
+  double GetWindowOpacity(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -641,6 +643,17 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     if (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) {
       gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
     }
+    bool transparent = (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT) != 0;
+    if (transparent) {
+      // Give the toplevel an RGBA visual (must be set before realization) so
+      // the compositor blends the window's alpha. Requires a compositing WM.
+      GdkScreen* screen = gtk_widget_get_screen(window);
+      GdkVisual* rgba = gdk_screen_get_rgba_visual(screen);
+      if (rgba) {
+        gtk_widget_set_visual(window, rgba);
+      }
+      gtk_widget_set_app_paintable(window, TRUE);
+    }
     if (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) {
       // Treat as a utility/panel window: out of taskbar & pager, and don't
       // grab focus when shown (the GTK equivalent of a non-activating panel).
@@ -700,6 +713,13 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
     WebKitSettings* wk_settings = webkit_web_view_get_settings(webview);
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);
+
+    if (transparent) {
+      // Let the page's own alpha show through the webview (any region the
+      // document leaves transparent composites against the desktop).
+      GdkRGBA clear = {0.0, 0.0, 0.0, 0.0};
+      webkit_web_view_set_background_color(webview, &clear);
+    }
 
     std::string initScript = BuildInitScript(
         RuntimeLoader::GetInstance()->GetJsNamespace(),
@@ -971,6 +991,32 @@ bool WebKitGTKBackend::IsAlwaysOnTop(uint32_t window_id) {
         GdkWindowState wstate = gdk_window_get_state(gdk_window);
         result = (wstate & GDK_WINDOW_STATE_ABOVE) != 0;
       }
+    }
+  });
+  return result;
+}
+
+void WebKitGTKBackend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (opacity < 0.0)
+    opacity = 0.0;
+  if (opacity > 1.0)
+    opacity = 1.0;
+  gtk_invoke_sync([&] {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      gtk_widget_set_opacity(state->window, opacity);
+    }
+  });
+}
+
+double WebKitGTKBackend::GetWindowOpacity(uint32_t window_id) {
+  double result = 1.0;
+  gtk_invoke_sync([&] {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = gtk_widget_get_opacity(state->window);
     }
   });
   return result;

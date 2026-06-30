@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 27;
+pub const LAUFEY_API_VERSION: u32 = 28;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -37,6 +37,7 @@ pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
 pub const LAUFEY_WINDOW_FLAG_NO_ACTIVATE: u32 = 1 << 1;
 pub const LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR: u32 = 1 << 2;
 pub const LAUFEY_WINDOW_FLAG_HIDDEN: u32 = 1 << 3;
+pub const LAUFEY_WINDOW_FLAG_TRANSPARENT: u32 = 1 << 4;
 
 pub const LAUFEY_WINDOW_HANDLE_UNKNOWN: i32 = 0;
 pub const LAUFEY_WINDOW_HANDLE_APPKIT: i32 = 1;
@@ -685,6 +686,15 @@ pub struct WindowOptions {
   /// handler so the first reveal happens only once content has painted, avoiding
   /// the empty/black initial frame (most visible on Wayland).
   pub hidden: bool,
+  /// Give the window a transparent background so the web content's own alpha
+  /// composites against whatever is behind the window. Any region the page
+  /// leaves transparent (e.g. `background: transparent` on the root element)
+  /// shows the desktop through it. Often combined with `frameless` for a
+  /// borderless translucent look. Distinct from [`Window::set_opacity`], which
+  /// uniformly fades the whole window. Supported by the system-WebView backend
+  /// on macOS and Linux and by the Winit backend; ignored by the Windows
+  /// WebView2 and CEF backends, which paint an opaque window background.
+  pub transparent: bool,
 }
 
 impl WindowOptions {
@@ -701,6 +711,9 @@ impl WindowOptions {
     }
     if self.hidden {
       flags |= LAUFEY_WINDOW_FLAG_HIDDEN;
+    }
+    if self.transparent {
+      flags |= LAUFEY_WINDOW_FLAG_TRANSPARENT;
     }
     flags
   }
@@ -852,6 +865,37 @@ impl Window {
       unsafe { f(api.backend_data, self.id) }
     } else {
       false
+    }
+  }
+
+  /// Builder form of [`Window::set_opacity`].
+  pub fn opacity(self, opacity: f64) -> Self {
+    self.set_opacity(opacity);
+    self
+  }
+
+  /// Set the window's overall opacity, a uniform factor in `[0.0, 1.0]` where
+  /// `1.0` is fully opaque (the default) and `0.0` is fully transparent. This
+  /// fades the entire window — web content and native chrome alike — like CSS
+  /// `opacity`. It is distinct from [`WindowOptions::transparent`], which makes
+  /// the background transparent while honoring the page's own per-pixel alpha.
+  /// Out-of-range values are clamped. No-op on backends without opacity support
+  /// (e.g. the Winit backend).
+  pub fn set_opacity(&self, opacity: f64) {
+    let api = api();
+    if let Some(f) = api.set_window_opacity {
+      unsafe { f(api.backend_data, self.id, opacity.clamp(0.0, 1.0)) };
+    }
+  }
+
+  /// Get the window's current opacity in `[0.0, 1.0]`. Returns `1.0` when the
+  /// backend does not report opacity.
+  pub fn get_opacity(&self) -> f64 {
+    let api = api();
+    if let Some(f) = api.get_window_opacity {
+      unsafe { f(api.backend_data, self.id) }
+    } else {
+      1.0
     }
   }
 
@@ -2789,12 +2833,29 @@ mod tests {
     );
     assert_eq!(
       WindowOptions {
+        transparent: true,
+        ..Default::default()
+      }
+      .to_flags(),
+      LAUFEY_WINDOW_FLAG_TRANSPARENT
+    );
+    assert_eq!(
+      WindowOptions {
         frameless: true,
         no_activate: true,
         ..Default::default()
       }
       .to_flags(),
       LAUFEY_WINDOW_FLAG_FRAMELESS | LAUFEY_WINDOW_FLAG_NO_ACTIVATE
+    );
+    assert_eq!(
+      WindowOptions {
+        frameless: true,
+        transparent: true,
+        ..Default::default()
+      }
+      .to_flags(),
+      LAUFEY_WINDOW_FLAG_FRAMELESS | LAUFEY_WINDOW_FLAG_TRANSPARENT
     );
   }
 

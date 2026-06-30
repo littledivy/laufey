@@ -379,6 +379,13 @@ class LaufeyBackend {
   virtual bool IsResizable(uint32_t window_id) = 0;
   virtual void SetAlwaysOnTop(uint32_t window_id, bool always_on_top) = 0;
   virtual bool IsAlwaysOnTop(uint32_t window_id) = 0;
+  // Overall window opacity in [0.0, 1.0] (1.0 == fully opaque). Fades the whole
+  // window uniformly, unlike LAUFEY_WINDOW_FLAG_TRANSPARENT. Default no-op /
+  // reports fully opaque; platform backends override.
+  virtual void SetWindowOpacity(uint32_t /*window_id*/, double /*opacity*/) {}
+  virtual double GetWindowOpacity(uint32_t /*window_id*/) {
+    return 1.0;
+  }
   virtual bool IsVisible(uint32_t window_id) = 0;
   virtual void Show(uint32_t window_id) = 0;
   virtual void Hide(uint32_t window_id) = 0;

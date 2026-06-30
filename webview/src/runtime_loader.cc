@@ -205,6 +205,24 @@ static bool Backend_IsAlwaysOnTop(void* data, uint32_t window_id) {
   return false;
 }
 
+static void Backend_SetWindowOpacity(void* data, uint32_t window_id,
+                                     double opacity) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    backend->SetWindowOpacity(window_id, opacity);
+  }
+}
+
+static double Backend_GetWindowOpacity(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    return backend->GetWindowOpacity(window_id);
+  }
+  return 1.0;
+}
+
 static bool Backend_IsVisible(void* data, uint32_t window_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   LaufeyBackend* backend = loader->GetBackend();
@@ -665,6 +683,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.is_resizable = Backend_IsResizable;
   backend_api_.set_always_on_top = Backend_SetAlwaysOnTop;
   backend_api_.is_always_on_top = Backend_IsAlwaysOnTop;
+  backend_api_.set_window_opacity = Backend_SetWindowOpacity;
+  backend_api_.get_window_opacity = Backend_GetWindowOpacity;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;
