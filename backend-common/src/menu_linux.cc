@@ -21,10 +21,18 @@ struct GtkMenuCallbackData {
   void* on_click_data;
   uint32_t window_id;
   std::string item_id;
+  bool checked;
 };
 
-void OnGtkMenuItemActivate(GtkMenuItem* /*item*/, gpointer user_data) {
+void OnGtkMenuItemActivate(GtkMenuItem* item, gpointer user_data) {
   auto* data = static_cast<GtkMenuCallbackData*>(user_data);
+  // laufey models `checked` as a static property, but a GtkCheckMenuItem flips
+  // its own active state on click. The default toggle has already run by the
+  // time this RUN_FIRST handler fires, so restore the intended state to keep
+  // the checkmark in sync with the app model (matches macOS/Windows).
+  if (GTK_IS_CHECK_MENU_ITEM(item)) {
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item), data->checked);
+  }
   if (data->on_click) {
     data->on_click(data->on_click_data, data->window_id, data->item_id.c_str());
   }
@@ -88,8 +96,8 @@ GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t
 
       if (!label.empty()) {
         GtkWidget* item = gtk_menu_item_new_with_label(label.c_str());
-        auto* cb_data =
-            new GtkMenuCallbackData{on_click, on_click_data, window_id, role};
+        auto* cb_data = new GtkMenuCallbackData{on_click, on_click_data,
+                                                window_id, role, false};
         g_signal_connect_data(item, "activate",
                               G_CALLBACK(OnGtkMenuItemActivate), cb_data,
                               DestroyGtkMenuCallbackData, (GConnectFlags)0);
@@ -116,16 +124,18 @@ GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t
     std::string itemId = DictString(api, itemVal, "id");
     // checked -> GtkCheckMenuItem with an active checkmark.
     laufey_value_t* checkedVal = api->value_dict_get(itemVal, "checked");
+    bool checked = checkedVal && api->value_is_bool(checkedVal) &&
+                   api->value_get_bool(checkedVal);
     GtkWidget* gtkItem;
-    if (checkedVal && api->value_is_bool(checkedVal) &&
-        api->value_get_bool(checkedVal)) {
+    if (checked) {
       gtkItem = gtk_check_menu_item_new_with_label(label.c_str());
       gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(gtkItem), TRUE);
     } else {
       gtkItem = gtk_menu_item_new_with_label(label.c_str());
     }
-    auto* cb_data = new GtkMenuCallbackData{on_click, on_click_data, window_id,
-                                             itemId.empty() ? label : itemId};
+    auto* cb_data = new GtkMenuCallbackData{
+        on_click, on_click_data, window_id,
+        itemId.empty() ? label : itemId, checked};
     g_signal_connect_data(gtkItem, "activate",
                           G_CALLBACK(OnGtkMenuItemActivate), cb_data,
                           DestroyGtkMenuCallbackData, (GConnectFlags)0);
