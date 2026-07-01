@@ -177,6 +177,51 @@ async function waitForBinding(name) {
             binding_calls.load(Ordering::SeqCst) >= 2,
         );
 
+        // Custom-scheme (app://) navigation. A custom standard scheme only
+        // works if it is registered in EVERY process — browser, renderer, AND
+        // the network service. If LaufeyRendererApp (the CefApp for all
+        // sub-processes) does not mirror LaufeyApp::OnRegisterCustomSchemes,
+        // the network service rejects the navigation with
+        // VALIDATION_ERROR_DESERIALIZATION_FAILED on network.mojom.NetworkContext
+        // and the page stays blank. Serve a tiny page over app:// and confirm
+        // its script round-trips back through the `report` binding.
+        let app_html: &[u8] = br#"<!doctype html><html><body><script>
+(async () => {
+  for (let i = 0; i < 100; i++) {
+    if (typeof Laufey === 'object' && typeof Laufey.report === 'function') break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  try { await Laufey.report('app-scheme-loaded'); } catch (_) {}
+})();
+</script></body></html>"#;
+        let sh_handle = tokio::runtime::Handle::current();
+        laufey::register_scheme_handler("app", move |req| {
+            // The handler runs on a backend IO thread and must not block it,
+            // so serve the response from a spawned task.
+            sh_handle.spawn(async move {
+                let ex = req.exchange;
+                ex.begin(
+                    200,
+                    &[("content-type".to_string(), "text/html".to_string())],
+                );
+                ex.write(app_html);
+                ex.finish();
+            });
+        });
+        win.navigate("app://e2e/");
+        let saw_app_scheme = wait_for(
+            || {
+                last_label.lock().unwrap().as_deref() == Some("app-scheme-loaded")
+            },
+            200,
+            50,
+        )
+        .await;
+        check(
+            "custom app:// scheme navigation loaded (all-process scheme registration)",
+            saw_app_scheme,
+        );
+
         // executeJs round-trip. The capi has an `execute_js` API with
         // optional callback that delivers the JS expression's result
         // back to Rust.
