@@ -91,12 +91,12 @@ static std::string WideToUtf8(const std::wstring& wstr) {
 
 // HWND → laufey_id mapping
 static std::map<HWND, uint32_t> g_hwnd_to_laufey_id;
-static std::mutex g_hwnd_mutex;
+static std::recursive_mutex g_hwnd_mutex;
 
 static uint32_t LaufeyIdForHwnd(HWND hwnd) {
   if (!hwnd)
     return 0;
-  std::lock_guard<std::mutex> lock(g_hwnd_mutex);
+  std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
   auto it = g_hwnd_to_laufey_id.find(hwnd);
   return it != g_hwnd_to_laufey_id.end() ? it->second : 0;
 }
@@ -441,7 +441,7 @@ class WebView2Backend : public LaufeyBackend {
   void RunOnUiThread(std::function<void()> task);
 
   std::map<uint32_t, WinWindowState> windows_;
-  std::mutex windows_mutex_;
+  std::recursive_mutex windows_mutex_;
   bool class_registered_ = false;
   // Thread that constructs the backend (== WinMain / the message-loop thread).
   DWORD ui_thread_id_ = 0;
@@ -457,7 +457,8 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
   switch (msg) {
     case WM_SIZE: {
       if (g_win_backend && wid > 0) {
-        std::lock_guard<std::mutex> lock(g_win_backend->windows_mutex_);
+        std::lock_guard<std::recursive_mutex> lock(
+            g_win_backend->windows_mutex_);
         auto* state = g_win_backend->GetWindow(wid);
         if (state && state->controller) {
           RECT bounds;
@@ -559,7 +560,7 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       }
       // Check if any windows remain
       {
-        std::lock_guard<std::mutex> lock(g_hwnd_mutex);
+        std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
         // Remove this window from map
         g_hwnd_to_laufey_id.erase(hwnd);
         if (g_hwnd_to_laufey_id.empty()) {
@@ -639,12 +640,12 @@ void WebView2Backend::RunOnUiThread(std::function<void()> task) {
 }
 
 WebView2Backend::~WebView2Backend() {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
     if (state.controller)
       state.controller->Close();
     {
-      std::lock_guard<std::mutex> hlock(g_hwnd_mutex);
+      std::lock_guard<std::recursive_mutex> hlock(g_hwnd_mutex);
       g_hwnd_to_laufey_id.erase(state.hwnd);
     }
   }
@@ -689,7 +690,7 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
       width, height, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
   {
-    std::lock_guard<std::mutex> lock(g_hwnd_mutex);
+    std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
     g_hwnd_to_laufey_id[hwnd] = window_id;
   }
 
@@ -698,7 +699,7 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
   state.hwnd = hwnd;
 
   {
-    std::lock_guard<std::mutex> lock(windows_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
     windows_[window_id] = state;
   }
 
@@ -793,7 +794,7 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
               return result;
             }
 
-            std::lock_guard<std::mutex> lock(windows_mutex_);
+            std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
             auto* state = GetWindow(window_id);
             if (!state)
               return S_OK;
@@ -973,13 +974,13 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
     RunOnUiThread([this, window_id] { CloseWindow(window_id); });
     return;
   }
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     if (state->controller)
       state->controller->Close();
     {
-      std::lock_guard<std::mutex> hlock(g_hwnd_mutex);
+      std::lock_guard<std::recursive_mutex> hlock(g_hwnd_mutex);
       g_hwnd_to_laufey_id.erase(state->hwnd);
     }
     DestroyWindow(state->hwnd);
@@ -993,7 +994,7 @@ void WebView2Backend::Navigate(uint32_t window_id, const std::string& url) {
     return;
   }
   std::wstring wurl = Utf8ToWide(url);
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (!state)
     return;
@@ -1016,7 +1017,7 @@ void WebView2Backend::SetTitle(uint32_t window_id, const std::string& title) {
     return;
   }
   std::wstring wtitle = Utf8ToWide(title);
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (!state)
     return;
@@ -1037,7 +1038,7 @@ void WebView2Backend::ExecuteJs(uint32_t window_id, const std::string& script,
     return;
   }
   std::wstring wscript = Utf8ToWide(script);
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (!state || !state->webview_ready || !state->webview) {
     if (callback)
@@ -1079,7 +1080,7 @@ void WebView2Backend::Quit() {
 }
 
 void WebView2Backend::SetWindowSize(uint32_t window_id, int width, int height) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     SetWindowPos(state->hwnd, nullptr, 0, 0, width, height,
@@ -1089,7 +1090,7 @@ void WebView2Backend::SetWindowSize(uint32_t window_id, int width, int height) {
 
 void WebView2Backend::GetWindowSize(uint32_t window_id, int* width,
                                     int* height) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     RECT rect;
@@ -1103,7 +1104,7 @@ void WebView2Backend::GetWindowSize(uint32_t window_id, int* width,
 }
 
 void WebView2Backend::SetWindowPosition(uint32_t window_id, int x, int y) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     SetWindowPos(state->hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
@@ -1111,7 +1112,7 @@ void WebView2Backend::SetWindowPosition(uint32_t window_id, int x, int y) {
 }
 
 void WebView2Backend::GetWindowPosition(uint32_t window_id, int* x, int* y) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     RECT rect;
@@ -1125,7 +1126,7 @@ void WebView2Backend::GetWindowPosition(uint32_t window_id, int* x, int* y) {
 }
 
 void WebView2Backend::SetResizable(uint32_t window_id, bool resizable) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     LONG style = GetWindowLong(state->hwnd, GWL_STYLE);
@@ -1139,14 +1140,14 @@ void WebView2Backend::SetResizable(uint32_t window_id, bool resizable) {
 }
 
 bool WebView2Backend::IsResizable(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   return state ? (GetWindowLong(state->hwnd, GWL_STYLE) & WS_THICKFRAME) != 0
                : false;
 }
 
 void WebView2Backend::SetAlwaysOnTop(uint32_t window_id, bool always_on_top) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     SetWindowPos(state->hwnd, always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST, 0,
@@ -1155,7 +1156,7 @@ void WebView2Backend::SetAlwaysOnTop(uint32_t window_id, bool always_on_top) {
 }
 
 bool WebView2Backend::IsAlwaysOnTop(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   return state ? (GetWindowLong(state->hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0
                : false;
@@ -1166,7 +1167,7 @@ void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
     opacity = 0.0;
   if (opacity > 1.0)
     opacity = 1.0;
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (!state)
     return;
@@ -1189,7 +1190,7 @@ void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
 }
 
 double WebView2Backend::GetWindowOpacity(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (!state)
     return 1.0;
@@ -1205,27 +1206,27 @@ double WebView2Backend::GetWindowOpacity(uint32_t window_id) {
 }
 
 bool WebView2Backend::IsVisible(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   return state ? IsWindowVisible(state->hwnd) != FALSE : false;
 }
 
 void WebView2Backend::Show(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state)
     ShowWindow(state->hwnd, SW_SHOW);
 }
 
 void WebView2Backend::Hide(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state)
     ShowWindow(state->hwnd, SW_HIDE);
 }
 
 void WebView2Backend::Focus(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
     ShowWindow(state->hwnd, SW_SHOW);
@@ -1253,7 +1254,7 @@ void WebView2Backend::InvokeJsCallback(uint32_t window_id, uint64_t callback_id,
   std::string argsJson = json::Serialize(args);
   std::wstring wscript =
       Utf8ToWide(BuildInvokeCallbackScript(callback_id, argsJson));
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   if (window_id == 0) {
     for (auto& [wid, state] : windows_) {
       if (state.webview_ready && state.webview) {
@@ -1277,7 +1278,7 @@ void WebView2Backend::ReleaseJsCallback(uint32_t window_id,
     return;
   }
   std::wstring wscript = Utf8ToWide(BuildReleaseCallbackScript(callback_id));
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   if (window_id == 0) {
     for (auto& [wid, state] : windows_) {
       if (state.webview_ready && state.webview) {
@@ -1305,7 +1306,7 @@ void WebView2Backend::RespondToJsCall(uint32_t window_id, uint64_t call_id,
   std::string errorJson = error ? json::Serialize(error) : "null";
   std::wstring wscript = Utf8ToWide(BuildRespondScript(
       call_id, resultJson, errorJson, static_cast<bool>(error)));
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state && state->webview_ready && state->webview) {
     state->webview->ExecuteScript(wscript.c_str(), nullptr);
@@ -1362,7 +1363,7 @@ void WebView2Backend::SetApplicationMenu(uint32_t window_id,
                                          void* on_click_data) {
   if (!menu_template)
     return;
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state && state->hwnd) {
     win32_menu::SetApplicationMenu(state->hwnd, menu_template, api, on_click,
@@ -1381,7 +1382,7 @@ void WebView2Backend::ShowContextMenu(uint32_t window_id, int x, int y,
                                       void* on_click_data) {
   if (!menu_template)
     return;
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state && state->hwnd) {
     win32_menu::ShowContextMenu(state->hwnd, x, y, menu_template, api, on_click,
@@ -1398,7 +1399,7 @@ void WebView2Backend::OpenDevTools(uint32_t window_id) {
     RunOnUiThread([this, window_id] { OpenDevTools(window_id); });
     return;
   }
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state && state->webview) {
     state->webview->OpenDevToolsWindow();
@@ -1423,7 +1424,7 @@ int WebView2Backend::ShowDialog(uint32_t /*window_id*/, int dialog_type,
 // ============================================================================
 
 void WebView2Backend::BounceDock(int type) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
     if (!state.hwnd)
       continue;
@@ -1446,7 +1447,7 @@ void WebView2Backend::BounceDock(int type) {
 void WebView2Backend::SetDockBadge(const char* badge_or_null) {
   std::string badge =
       (badge_or_null && *badge_or_null) ? std::string(badge_or_null) : "";
-  std::lock_guard<std::mutex> wlock(windows_mutex_);
+  std::lock_guard<std::recursive_mutex> wlock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
     if (!state.hwnd)
       continue;
