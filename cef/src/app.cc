@@ -206,6 +206,14 @@ void LaufeyHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 void LaufeyHandler::OnTitleChange(CefRefPtr<CefBrowser> browser,
                                   const CefString& title) {
   CEF_REQUIRE_UI_THREAD();
+  // Don't let the page's document.title (or the URL, which CEF falls back to
+  // when the document has no <title>) clobber a title the embedder set
+  // explicitly via the C API.
+  auto* loader = RuntimeLoader::GetInstance();
+  uint32_t wid = loader ? loader->GetLaufeyIdForBrowser(browser) : 0;
+  if (wid > 0 && loader->HasExplicitTitle(wid)) {
+    return;
+  }
   if (auto browser_view = CefBrowserView::GetForBrowser(browser)) {
     if (auto window = browser_view->GetWindow()) {
       window->SetTitle(title);

@@ -165,6 +165,9 @@ static void Backend_Navigate(void* data, uint32_t window_id, const char* url) {
 static void Backend_SetTitle(void* data, uint32_t window_id,
                              const char* title) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  // The embedder set an explicit title; keep the page's document.title / URL
+  // from overwriting it later (see LaufeyHandler::OnTitleChange).
+  loader->MarkExplicitTitle(window_id);
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (browser && title) {
     std::string title_str(title);
