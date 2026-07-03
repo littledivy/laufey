@@ -11,16 +11,20 @@ matrix over the C ABI surface, and a phased rollout.
 
 > Status: implemented for all three backends. `examples/native_e2e` (the Layer-0
 > battery + menu/tray click round-trips via the `test_click_menu_item` hook) and
-> `examples/native_e2e_driver` (the Linux D-Bus observer) run green under
-> **Winit, WebView, and CEF** (verified on macOS); a `native-e2e` CI job
-> (`backend × os` matrix) drives the same runtime under each backend on
-> Linux/macOS/Windows via `scripts/native-e2e-run.sh`. The
-> `test_click_menu_item` hook (`§8`) is implemented for the Winit backend (Rust)
-> and the C++ `backend-common` shared by CEF/WebView. The macOS
-> self-accessibility approach (`§7.2`) is verified standalone but not yet
-> embedded (it needs the backend's main thread — see `§8`). Implementing the
-> hook exposed and fixed a pre-existing self-deadlock in the Winit menu-callback
-> registration.
+> `examples/native_e2e_driver` (the Linux D-Bus observer) run under **Winit,
+> WebView, and CEF** via `scripts/native-e2e-run.sh`. The `native-e2e` CI job
+> gates macOS for all three backends (both native-chrome codebases, end to end),
+> plus winit/Windows and cef/Linux. Some backend × OS combos are **excluded** as
+> known headless-CI backend limitations (follow-ups, not harness bugs):
+> winit/Linux (the winit backend doesn't support Linux menus and panics building
+> a muda menu with no GTK init), webview/Linux (WebKitGTK/Xlib isn't thread-safe
+> under the worker-thread runtime), and cef|webview/Windows (CEF dist extraction
+> / WebView2 run flakiness). The `test_click_menu_item` hook (`§8`) is
+> implemented for the Winit backend (Rust) and the C++ `backend-common` shared
+> by CEF/WebView. The macOS self-accessibility approach (`§7.2`) is verified
+> standalone but not yet embedded (it needs the backend's main thread — see
+> `§8`). Implementing the hook exposed and fixed a pre-existing self-deadlock in
+> the Winit menu-callback registration.
 
 ---
 
