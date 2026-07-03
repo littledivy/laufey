@@ -1,0 +1,16 @@
+[package]
+name = "native_e2e_driver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "native_e2e_driver"
+path = "src/main.rs"
+
+# The driver is a Linux-only D-Bus observer (StatusNotifierWatcher +
+# org.freedesktop.Notifications). On other platforms it compiles to a stub so
+# `cargo check --workspace` stays green everywhere.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "process"] }

@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 29;
+pub const LAUFEY_API_VERSION: u32 = 30;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -1356,6 +1356,26 @@ pub fn write_clipboard_text(text: &str) {
     // SAFETY: `c_text` outlives the call; the backend copies the bytes.
     unsafe { f(api.backend_data, c_text.as_ptr()) };
   }
+}
+
+/// Test-only. Synthesizes a click on the menu/tray item with the given id by
+/// invoking the same click-dispatch path a real click uses. Returns `true` if
+/// an item with that id was registered (via [`Window::set_menu`],
+/// [`TrayIcon::set_menu`], etc.) and its handler ran, `false` if not found or
+/// the backend does not implement the test hook (API < 30).
+///
+/// Intended for automated e2e tests to exercise click round-trips without OS
+/// input injection. See `examples/native_e2e` and `docs/e2e-testing.md`.
+pub fn test_click_menu_item(item_id: &str) -> bool {
+  let api = api();
+  let Some(f) = api.test_click_menu_item else {
+    return false;
+  };
+  let Ok(c_id) = CString::new(item_id) else {
+    return false;
+  };
+  // SAFETY: `c_id` outlives the call; the backend only reads the string.
+  unsafe { f(api.backend_data, c_id.as_ptr()) }
 }
 
 /// A menu item in an application menu template.

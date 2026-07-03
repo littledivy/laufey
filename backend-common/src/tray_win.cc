@@ -446,9 +446,14 @@ void SetTrayMenuWin(uint32_t tray_id, laufey_value_t* menu_template,
   }
   if (it->second.hmenu) DestroyMenu(it->second.hmenu);
   it->second.hmenu = menu;
-  it->second.cmd_to_id = std::move(cmd_to_id);
+  it->second.cmd_to_id = cmd_to_id;
   it->second.menu_click_fn = on_click;
   it->second.menu_click_data = on_click_data;
+  // Register each id for the test-click hook (window_id == tray_id, matching
+  // the real click dispatch above).
+  for (const auto& [cmd, id] : cmd_to_id) {
+    RegisterMenuClick(id, on_click, on_click_data, tray_id);
+  }
 }
 
 void SetTrayClickHandlerWin(uint32_t tray_id, laufey_tray_click_fn handler,

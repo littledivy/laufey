@@ -20,3 +20,4 @@
 - [Permissions](permissions.md)
 - [Packaging & distribution](distribution.md)
 - [Building](building.md)
+- [End-to-end testing](e2e-testing.md)

@@ -1,0 +1,12 @@
+[package]
+name = "native_e2e_runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+laufey = { path = "../../capi" }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync"] }

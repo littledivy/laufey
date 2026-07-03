@@ -2,6 +2,7 @@
 
 #include "runtime_loader.h"
 
+#include "laufey_backend_common.h"
 #include "laufey_external_links.h"
 
 #ifndef _WIN32
@@ -603,6 +604,12 @@ static void Backend_SetTrayTooltip(void* data, uint32_t tray_id,
     backend->SetTrayTooltip(tray_id, tooltip_or_null);
 }
 
+// Test hook (API >= 30): synthesize a click on a menu/tray item by id. Platform
+// independent — the shared registry in backend-common holds the handlers.
+static bool Backend_TestClickMenuItem(void* /*data*/, const char* item_id) {
+  return laufey_common::TestClickMenuItem(item_id);
+}
+
 static void Backend_SetTrayMenu(void* data, uint32_t tray_id,
                                 laufey_value_t* menu_template,
                                 laufey_menu_click_fn on_click,
@@ -683,6 +690,7 @@ void RuntimeLoader::InitializeBackendApi() {
   memset(&backend_api_, 0, sizeof(backend_api_));
   backend_api_.version = LAUFEY_API_VERSION;
   backend_api_.backend_data = this;
+  backend_api_.test_click_menu_item = Backend_TestClickMenuItem;
 
   backend_api_.navigate = Backend_Navigate;
   backend_api_.set_title = Backend_SetTitle;
