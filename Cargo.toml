@@ -10,4 +10,6 @@ members = [
     "examples/ddcore",
     "examples/presentation",
     "examples/cef_e2e",
+    "examples/native_e2e",
+    "examples/native_e2e_driver",
 ]

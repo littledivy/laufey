@@ -32,7 +32,7 @@ use winit::window::{Window, WindowLevel};
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
 // below must match the v29 `laufey_backend_api`.
-pub const LAUFEY_API_VERSION: u32 = 29;
+pub const LAUFEY_API_VERSION: u32 = 30;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -523,6 +523,10 @@ pub struct LaufeyBackendApi {
   // the v28 `laufey_backend_api` the capi reads through the backend's pointer.
   pub set_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32, f64)>,
   pub get_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32) -> f64>,
+
+  // --- Test hooks (API >= 30) ---
+  pub test_click_menu_item:
+    Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> bool>,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1152,6 +1156,8 @@ pub fn create_api_base() -> LaufeyBackendApi {
     // Window opacity (API >= 28): winit has no runtime opacity API.
     set_window_opacity: None,
     get_window_opacity: None,
+    // Test hooks (API >= 30).
+    test_click_menu_item: None,
   }
 }
 
@@ -1416,13 +1422,26 @@ pub fn register_menu_callbacks(
   };
   let mut store = MENU_CLICK_STORE.lock().unwrap();
   let store = store.get_or_insert_with(HashMap::new);
+  // Traverse without re-locking: the recursion must not re-acquire the store
+  // mutex (std Mutex is not reentrant — doing so self-deadlocks on menus that
+  // contain submenus).
+  insert_menu_ids(items, cb, callback_data, window_id, store);
+}
+
+fn insert_menu_ids(
+  items: &[ParsedMenuItem],
+  callback: LaufeyMenuClickFn,
+  callback_data: usize,
+  window_id: u32,
+  store: &mut HashMap<String, MenuCallbackInfo>,
+) {
   for item in items {
     match item {
       ParsedMenuItem::Item { id, .. } => {
         store.insert(
           id.clone(),
           MenuCallbackInfo {
-            callback: cb,
+            callback,
             callback_data,
             window_id,
           },
@@ -1431,7 +1450,7 @@ pub fn register_menu_callbacks(
       ParsedMenuItem::Submenu {
         items: children, ..
       } => {
-        register_menu_callbacks(children, callback, callback_data, window_id);
+        insert_menu_ids(children, callback, callback_data, window_id, store);
       }
       _ => {}
     }
@@ -1584,22 +1603,34 @@ fn build_muda_context_menu(items: &[ParsedMenuItem]) -> muda::Menu {
 /// Poll muda menu events and dispatch callbacks. Call from the event loop.
 pub fn poll_menu_events() {
   while let Ok(event) = MenuEvent::receiver().try_recv() {
-    let id_str = event.id().0.clone();
-    let store = MENU_CLICK_STORE.lock().unwrap();
-    if let Some(store) = store.as_ref() {
-      if let Some(info) = store.get(&id_str) {
-        if let Ok(c_id) = CString::new(id_str.as_str()) {
-          unsafe {
-            (info.callback)(
-              info.callback_data as *mut c_void,
-              info.window_id,
-              c_id.as_ptr(),
-            );
-          }
-        }
-      }
-    }
+    dispatch_menu_click_by_id(&event.id().0);
   }
+}
+
+/// Invoke the registered `on_click` handler for `item_id` (app menu, tray menu,
+/// or context menu — all share `MENU_CLICK_STORE`), exactly as
+/// `poll_menu_events` does for a real muda event. Returns true if an item with
+/// that id was registered. Backs the `test_click_menu_item` C ABI test hook.
+pub fn dispatch_menu_click_by_id(item_id: &str) -> bool {
+  let store = MENU_CLICK_STORE.lock().unwrap();
+  let Some(store) = store.as_ref() else {
+    return false;
+  };
+  let Some(info) = store.get(item_id) else {
+    return false;
+  };
+  let Ok(c_id) = CString::new(item_id) else {
+    return false;
+  };
+  // SAFETY: `c_id` outlives the call; the callback only reads the string.
+  unsafe {
+    (info.callback)(
+      info.callback_data as *mut c_void,
+      info.window_id,
+      c_id.as_ptr(),
+    );
+  }
+  true
 }
 
 // --- Per-window common state ---
@@ -2318,6 +2349,19 @@ macro_rules! define_common_backend_fns {
       $crate::write_clipboard_text_native(&text_str);
     }
 
+    unsafe extern "C" fn backend_test_click_menu_item(
+      _data: *mut ::std::ffi::c_void,
+      item_id: *const ::std::ffi::c_char,
+    ) -> bool {
+      if item_id.is_null() {
+        return false;
+      }
+      let id = unsafe { ::std::ffi::CStr::from_ptr(item_id) }
+        .to_string_lossy()
+        .into_owned();
+      $crate::dispatch_menu_click_by_id(&id)
+    }
+
     unsafe extern "C" fn backend_set_application_menu(
       _data: *mut ::std::ffi::c_void,
       window_id: u32,
@@ -2747,6 +2791,7 @@ macro_rules! fill_common_api {
     $api.request_permission = Some(backend_request_permission);
     $api.read_clipboard_text = Some(backend_read_clipboard_text);
     $api.write_clipboard_text = Some(backend_write_clipboard_text);
+    $api.test_click_menu_item = Some(backend_test_click_menu_item);
   };
 }
 

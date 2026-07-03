@@ -122,6 +122,84 @@ jobs:
             laufey-winit-${{ matrix.target }}.tar.gz
             laufey-winit-${{ matrix.target }}.zip
 
+  # End-to-end native-chrome / windowing tests. See docs/e2e-testing.md.
+  # Drives the *same* backend-agnostic native_e2e_runtime under every backend
+  # (winit, webview, cef) on every OS:
+  #   Layer 0 (all): in-process readback + event-callback + clipboard + menu/
+  #                  tray click round-trips (via the test_click_menu_item hook).
+  #   Layer 1 (Linux, cef/webview): D-Bus StatusNotifier/dbusmenu observer.
+  native-e2e:
+    name: native-e2e / ${{ matrix.backend }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [winit, webview, cef]
+        os: [ubuntu-22.04, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: native-e2e
+          key: ${{ matrix.os }}-${{ matrix.backend }}
+
+      # CEF fetches a large prebuilt binary distribution; cache it.
+      - name: Cache CEF
+        if: matrix.backend == 'cef'
+        uses: actions/cache@v4
+        with:
+          path: vendor/cef
+          key: cef-${{ matrix.os }}-${{ runner.arch }}
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make cmake ninja-build pkg-config xvfb dbus-x11 \
+            libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev libgtk-3-dev \
+            libayatana-appindicator3-dev libxdo-dev
+          if [ "${{ matrix.backend }}" = "cef" ]; then
+            sudo apt-get install -y libxi-dev libglib2.0-dev libnss3-dev libnspr4-dev \
+              libatk1.0-dev libatk-bridge2.0-dev libcups2-dev libdrm-dev libgbm-dev \
+              libasound2-dev libpango1.0-dev libcairo2-dev libxcomposite-dev \
+              libxdamage-dev libxrandr-dev libdbus-1-dev libxext-dev libxfixes-dev
+          fi
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm ninja
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: choco install make ninja -y
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows' && matrix.backend != 'winit'
+
+      - name: Build runtime + driver + backend
+        shell: bash
+        run: |
+          cargo build --release -p native_e2e_runtime
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cargo build --release -p native_e2e_driver
+          fi
+          make ${{ matrix.backend }}
+
+      - name: Layer 0 — readback / events / clipboard / menu+tray clicks
+        shell: bash
+        run: scripts/native-e2e-run.sh ${{ matrix.backend }}
+
+      # Layer 1 needs a StatusNotifierWatcher-less session bus; only the
+      # backend-common (cef/webview) and winit tray impls register an SNI.
+      - name: Layer 1 — D-Bus StatusNotifier / dbusmenu observer (Linux)
+        if: runner.os == 'Linux'
+        # Newly added; not yet observed green on a real session bus in CI.
+        # Promote to a hard gate (drop continue-on-error) once it's proven.
+        continue-on-error: true
+        shell: bash
+        run: scripts/native-e2e-run.sh ${{ matrix.backend }} --layer1
+
   build-webview:
     name: webview / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
