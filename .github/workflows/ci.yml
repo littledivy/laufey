@@ -152,19 +152,37 @@ jobs:
           path: vendor/cef
           key: cef-${{ matrix.os }}-${{ runner.arch }}
 
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      # Per-backend deps mirror the proven build-{winit,webview,cef} jobs, plus
+      # the runtime libs the *run* step needs (xvfb, dbus, libxkbcommon-x11 for
+      # winit). Note: the backend-common (cef/webview) tray needs no
+      # appindicator dev package — installing one makes cmake define
+      # LAUFEY_HAVE_APPINDICATOR while tray_linux.cc includes the non-ayatana
+      # header, breaking the build; without it the tray compiles as a stub (N/A).
+      - name: Install dependencies (Linux, winit)
+        if: runner.os == 'Linux' && matrix.backend == 'winit'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make pkg-config xvfb dbus-x11 \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libwayland-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+
+      - name: Install dependencies (Linux, webview)
+        if: runner.os == 'Linux' && matrix.backend == 'webview'
         run: |
           sudo apt-get update
           sudo apt-get install -y make cmake ninja-build pkg-config xvfb dbus-x11 \
-            libx11-dev libxcb1-dev libxkbcommon-dev libwayland-dev libgtk-3-dev \
-            libayatana-appindicator3-dev libxdo-dev
-          if [ "${{ matrix.backend }}" = "cef" ]; then
-            sudo apt-get install -y libxi-dev libglib2.0-dev libnss3-dev libnspr4-dev \
-              libatk1.0-dev libatk-bridge2.0-dev libcups2-dev libdrm-dev libgbm-dev \
-              libasound2-dev libpango1.0-dev libcairo2-dev libxcomposite-dev \
-              libxdamage-dev libxrandr-dev libdbus-1-dev libxext-dev libxfixes-dev
-          fi
+            libwebkit2gtk-4.1-dev libgtk-3-dev
+
+      - name: Install dependencies (Linux, cef)
+        if: runner.os == 'Linux' && matrix.backend == 'cef'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make cmake ninja-build pkg-config xvfb dbus-x11 \
+            libx11-dev libxi-dev libglib2.0-dev libnss3-dev libnspr4-dev \
+            libatk1.0-dev libatk-bridge2.0-dev libcups2-dev libdrm-dev libgtk-3-dev \
+            libgbm-dev libasound2-dev libpango1.0-dev libcairo2-dev libxcomposite-dev \
+            libxdamage-dev libxrandr-dev libxkbcommon-dev libdbus-1-dev libxext-dev \
+            libxfixes-dev
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -172,19 +190,35 @@ jobs:
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
-        run: choco install make ninja -y
+        shell: bash
+        run: |
+          choco install make ninja -y
+          if [ "${{ matrix.backend }}" = "webview" ]; then
+            nuget install Microsoft.Web.WebView2 -OutputDirectory packages
+          fi
 
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows' && matrix.backend != 'winit'
-
-      - name: Build runtime + driver + backend
+      # Build the Rust runtime/driver BEFORE msvc-dev-cmd: cargo's own toolchain
+      # detection invokes MSVC link.exe by full path, but once msvc-dev-cmd has
+      # run, Git bash's /usr/bin/link shadows it and the build fails.
+      - name: Build runtime + driver
         shell: bash
         run: |
           cargo build --release -p native_e2e_runtime
           if [ "${{ runner.os }}" = "Linux" ]; then
             cargo build --release -p native_e2e_driver
           fi
-          make ${{ matrix.backend }}
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows' && matrix.backend != 'winit'
+
+      - name: Build backend
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.backend }}" = "webview" ]; then
+            WEBVIEW2_ROOT="$(pwd)/$(ls -d packages/Microsoft.Web.WebView2.* | head -1)" make webview
+          else
+            make ${{ matrix.backend }}
+          fi
 
       - name: Layer 0 — readback / events / clipboard / menu+tray clicks
         shell: bash

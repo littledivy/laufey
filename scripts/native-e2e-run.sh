@@ -52,8 +52,9 @@ if [ "$mode" = "--layer1" ]; then
   exec xvfb-run -a dbus-run-session -- "$driver" "$bin"
 fi
 
-# Layer 0: run the backend directly (headless via Xvfb on Linux).
+# Layer 0: run the backend directly. On Linux, headless via Xvfb + a private
+# session bus (some tray impls need a session bus to even initialize).
 if is_linux; then
-  exec xvfb-run -a "$bin"
+  exec xvfb-run -a dbus-run-session -- "$bin"
 fi
 exec "$bin"
