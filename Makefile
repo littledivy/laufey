@@ -66,6 +66,7 @@ BUILD_DIR := $(CURDIR)/build
 .PHONY: winit webview cef
 .PHONY: cef-deps
 .PHONY: fmt fmt-check lint
+.PHONY: native-e2e native-e2e-run
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -90,6 +91,17 @@ hello-runtime: check-deps ## Build hello_runtime
 
 ddcore-runtime: check-deps ## Build ddcore_runtime
 	cargo build --release -p ddcore_runtime
+
+native-e2e: check-deps ## Build the native-chrome e2e runtime (+ Linux D-Bus driver)
+	cargo build --release -p native_e2e_runtime
+ifeq ($(HOST_OS),linux)
+	cargo build --release -p native_e2e_driver
+endif
+
+RUNTIME_LIB := $(firstword $(wildcard target/release/libnative_e2e_runtime.dylib target/release/libnative_e2e_runtime.so target/release/native_e2e_runtime.dll))
+
+native-e2e-run: native-e2e winit ## Run the e2e battery under the winit backend
+	LAUFEY_RUNTIME_PATH="$(CURDIR)/$(RUNTIME_LIB)" ./target/release/laufey_winit
 
 winit: check-deps ## Build the winit backend
 	cd winit && cargo build --release

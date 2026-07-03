@@ -133,12 +133,13 @@ GtkWidget* BuildGtkMenuFromValue(laufey_value_t* val, const laufey_backend_api_t
     } else {
       gtkItem = gtk_menu_item_new_with_label(label.c_str());
     }
+    std::string clickKey = itemId.empty() ? label : itemId;
     auto* cb_data = new GtkMenuCallbackData{
-        on_click, on_click_data, window_id,
-        itemId.empty() ? label : itemId, checked};
+        on_click, on_click_data, window_id, clickKey, checked};
     g_signal_connect_data(gtkItem, "activate",
                           G_CALLBACK(OnGtkMenuItemActivate), cb_data,
                           DestroyGtkMenuCallbackData, (GConnectFlags)0);
+    RegisterMenuClick(clickKey, on_click, on_click_data, window_id);
 
     laufey_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");
     if (enabledVal && api->value_is_bool(enabledVal) &&

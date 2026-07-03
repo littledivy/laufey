@@ -1444,10 +1444,17 @@ static void Backend_WriteClipboardText(void* /*data*/, const char* text) {
 #endif
 }
 
+// Test hook (API >= 30): synthesize a click on a menu/tray item by id. Platform
+// independent — the shared registry in backend-common holds the handlers.
+static bool Backend_TestClickMenuItem(void* /*data*/, const char* item_id) {
+  return laufey_common::TestClickMenuItem(item_id);
+}
+
 void RuntimeLoader::InitializeBackendApi() {
   memset(&backend_api_, 0, sizeof(backend_api_));
   backend_api_.version = LAUFEY_API_VERSION;
   backend_api_.backend_data = this;
+  backend_api_.test_click_menu_item = Backend_TestClickMenuItem;
 
   backend_api_.create_window = Backend_CreateWindow;
   backend_api_.create_window_ex = Backend_CreateWindowEx;

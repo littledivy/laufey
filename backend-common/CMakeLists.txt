@@ -36,6 +36,7 @@ set(LAUFEY_COMMON_SRCS
   src/keymap_vk.cc
   src/title_badge.cc
   src/laufey_value.cc
+  src/test_hooks.cc
 )
 
 if(APPLE)
