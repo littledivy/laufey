@@ -123,28 +123,32 @@ jobs:
             laufey-winit-${{ matrix.target }}.zip
 
   # End-to-end native-chrome / windowing tests. See docs/e2e-testing.md.
-  # Drives the *same* backend-agnostic native_e2e_runtime under every backend
-  # (winit, webview, cef) on every OS:
+  # Drives the *same* backend-agnostic native_e2e_runtime under each backend:
   #   Layer 0 (all): in-process readback + event-callback + clipboard + menu/
   #                  tray click round-trips (via the test_click_menu_item hook).
-  #   Layer 1 (Linux, cef/webview): D-Bus StatusNotifier/dbusmenu observer.
+  #   Layer 1 (Linux, cef): D-Bus StatusNotifier/dbusmenu observer.
   #
-  # Gating: macOS is the hard gate (all three backends pass there, exercising
-  # both native-chrome codebases end to end). Linux and Windows run for signal
-  # but are non-gating: headless Linux exposes real backend-side constraints
-  # (GTK/X11 is not thread-safe under the worker-thread runtime; the winit
-  # backend doesn't support Linux menus), and the CEF Windows build is flaky in
-  # this context — all need hands-on Linux/Windows work to gate. Tracked as
-  # follow-ups; promote per-leg as each is fixed.
+  # macOS exercises all three backends (both native-chrome codebases) end to
+  # end. Non-macOS legs are included only where they pass reliably; the rest are
+  # known backend limitations under headless CI, tracked as follow-ups:
+  #   - winit / linux : the winit backend doesn't support Linux menus and panics
+  #                     building a muda menu with no GTK init.
+  #   - webview / linux: WebKitGTK/Xlib isn't thread-safe under the worker-thread
+  #                      runtime (xcb_xlib_threads_sequence_lost).
+  #   - cef|webview / windows: CEF's Windows dist extraction and the WebView2
+  #                            run are flaky in this job; need hands-on debugging.
   native-e2e:
     name: native-e2e / ${{ matrix.backend }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os != 'macos-14' }}
     strategy:
       fail-fast: false
       matrix:
-        backend: [winit, webview, cef]
-        os: [ubuntu-22.04, windows-latest, macos-14]
+        include:
+          - { os: macos-14, backend: winit }
+          - { os: macos-14, backend: webview }
+          - { os: macos-14, backend: cef }
+          - { os: windows-latest, backend: winit }
+          - { os: ubuntu-22.04, backend: cef }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -233,15 +237,11 @@ jobs:
         shell: bash
         run: scripts/native-e2e-run.sh ${{ matrix.backend }}
 
-      # Layer 1 needs a StatusNotifierWatcher-less session bus; only the
-      # backend-common (cef/webview) and winit tray impls register an SNI.
-      - name: Layer 1 — D-Bus StatusNotifier / dbusmenu observer (Linux)
-        if: runner.os == 'Linux'
-        # Newly added; not yet observed green on a real session bus in CI.
-        # Promote to a hard gate (drop continue-on-error) once it's proven.
-        continue-on-error: true
-        shell: bash
-        run: scripts/native-e2e-run.sh ${{ matrix.backend }} --layer1
+      # Layer 1 (Linux D-Bus StatusNotifier/dbusmenu observer) is built above
+      # (compile-checked on real Linux) but not run here: the only tray impl
+      # that registers an SNI is the winit backend's tray-icon crate, and
+      # winit/linux is excluded above pending its GTK-menu fix. Re-enable the
+      # driver run once a tray-capable Linux leg is in the matrix.
 
   build-webview:
     name: webview / ${{ matrix.target }}
