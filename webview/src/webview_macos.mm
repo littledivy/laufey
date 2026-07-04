@@ -435,14 +435,14 @@ class MacSchemeExchange : public SchemeExchangeBase {
   }
 }
 
-// `<input type="file">`. WKWebView has no default handler; the host must present
-// the open panel or the input stays inert. Honor multiple-selection and
+// `<input type="file">`. WKWebView has no default handler; the host must
+// present the open panel or the input stays inert. Honor multiple-selection and
 // directory flags from the parameters, and attach as a sheet to the window.
 - (void)webView:(WKWebView*)webView
     runOpenPanelWithParameters:(WKOpenPanelParameters*)parameters
               initiatedByFrame:(WKFrameInfo*)frame
-             completionHandler:(void (^)(NSArray<NSURL*>* _Nullable))
-                                   completionHandler {
+             completionHandler:
+                 (void (^)(NSArray<NSURL*>* _Nullable))completionHandler {
   NSOpenPanel* panel = [NSOpenPanel openPanel];
   [panel setAllowsMultipleSelection:parameters.allowsMultipleSelection];
   [panel setCanChooseDirectories:parameters.allowsDirectories];
