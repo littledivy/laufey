@@ -435,6 +435,35 @@ class MacSchemeExchange : public SchemeExchangeBase {
   }
 }
 
+// `<input type="file">`. WKWebView has no default handler; the host must
+// present the open panel or the input stays inert. Honor multiple-selection and
+// directory flags from the parameters, and attach as a sheet to the window.
+- (void)webView:(WKWebView*)webView
+    runOpenPanelWithParameters:(WKOpenPanelParameters*)parameters
+              initiatedByFrame:(WKFrameInfo*)frame
+             completionHandler:
+                 (void (^)(NSArray<NSURL*>* _Nullable))completionHandler {
+  NSOpenPanel* panel = [NSOpenPanel openPanel];
+  [panel setAllowsMultipleSelection:parameters.allowsMultipleSelection];
+  [panel setCanChooseDirectories:parameters.allowsDirectories];
+  [panel setCanChooseFiles:!parameters.allowsDirectories];
+
+  void (^handler)(NSModalResponse) = ^(NSModalResponse response) {
+    if (response == NSModalResponseOK) {
+      completionHandler([panel URLs]);
+    } else {
+      completionHandler(nil);
+    }
+  };
+
+  NSWindow* window = webView.window;
+  if (window) {
+    [panel beginSheetModalForWindow:window completionHandler:handler];
+  } else {
+    handler([panel runModal]);
+  }
+}
+
 @end
 
 @interface LaufeyWindowDelegate : NSObject <NSWindowDelegate>
