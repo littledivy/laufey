@@ -199,15 +199,30 @@ elseif(PLATFORM_WINDOWS)
     target_include_directories(${LAUFEY_TARGET} PRIVATE
       ${WEBVIEW2_ROOT}/build/native/include
     )
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-      target_link_directories(${LAUFEY_TARGET} PRIVATE
-        ${WEBVIEW2_ROOT}/build/native/x64
-      )
+    # WebView2's NuGet package ships a separate loader import lib per arch under
+    # build/native/{x64,x86,arm64}. Pointer size can't tell x64 from arm64 (both
+    # 64-bit), so key off the compiler's actual target arch. MSVC_CXX_ARCHITECTURE_ID
+    # (X64/X86/ARM64) comes straight from cl.exe's target; fall back to the VS
+    # generator platform, then the system processor, then pointer size.
+    if(MSVC_CXX_ARCHITECTURE_ID)
+      set(_wv2_arch "${MSVC_CXX_ARCHITECTURE_ID}")
+    elseif(CMAKE_GENERATOR_PLATFORM)
+      set(_wv2_arch "${CMAKE_GENERATOR_PLATFORM}")
     else()
-      target_link_directories(${LAUFEY_TARGET} PRIVATE
-        ${WEBVIEW2_ROOT}/build/native/x86
-      )
+      set(_wv2_arch "${CMAKE_SYSTEM_PROCESSOR}")
     endif()
+    string(TOLOWER "${_wv2_arch}" _wv2_arch)
+    if(_wv2_arch MATCHES "arm64|aarch64")
+      set(_wv2_arch_dir "arm64")
+    elseif(_wv2_arch MATCHES "x64|amd64|x86_64" OR CMAKE_SIZEOF_VOID_P EQUAL 8)
+      set(_wv2_arch_dir "x64")
+    else()
+      set(_wv2_arch_dir "x86")
+    endif()
+    message(STATUS "WebView2 loader arch: ${_wv2_arch_dir}")
+    target_link_directories(${LAUFEY_TARGET} PRIVATE
+      ${WEBVIEW2_ROOT}/build/native/${_wv2_arch_dir}
+    )
   endif()
 
   target_link_libraries(${LAUFEY_TARGET}
