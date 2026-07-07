@@ -40,14 +40,22 @@ inline cef_log_severity_t LaufeyCefLogSeverity() {
   for (char& c : v) {
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   }
-  if (v == "verbose") return LOGSEVERITY_VERBOSE;
-  if (v == "debug") return LOGSEVERITY_DEBUG;
-  if (v == "info") return LOGSEVERITY_INFO;
-  if (v == "warning") return LOGSEVERITY_WARNING;
-  if (v == "error") return LOGSEVERITY_ERROR;
-  if (v == "fatal") return LOGSEVERITY_FATAL;
-  if (v == "disable") return LOGSEVERITY_DISABLE;
-  if (v == "default") return LOGSEVERITY_DEFAULT;
+  if (v == "verbose")
+    return LOGSEVERITY_VERBOSE;
+  if (v == "debug")
+    return LOGSEVERITY_DEBUG;
+  if (v == "info")
+    return LOGSEVERITY_INFO;
+  if (v == "warning")
+    return LOGSEVERITY_WARNING;
+  if (v == "error")
+    return LOGSEVERITY_ERROR;
+  if (v == "fatal")
+    return LOGSEVERITY_FATAL;
+  if (v == "disable")
+    return LOGSEVERITY_DISABLE;
+  if (v == "default")
+    return LOGSEVERITY_DEFAULT;
   return LOGSEVERITY_FATAL;
 }
 
