@@ -14,6 +14,21 @@ elseif(WIN32)
   set(PLATFORM_WINDOWS TRUE)
 endif()
 
+# Pin the macOS deployment target so the binary's LC_BUILD_VERSION minos matches
+# the LSMinimumSystemVersion declared in macos/Info.plist.in. Without this the
+# compiler stamps the build machine's SDK version (e.g. 14.0) as the minimum,
+# and macOS enforces that Mach-O field at launch — refusing to start on older
+# systems regardless of the Info.plist value (denoland/deno#35764). The CEF
+# backend gets this for free via cef_variables; the webview backend must set it
+# explicitly. Set before add_subdirectory(backend-common) so the shared static
+# lib inherits the same target (see backend-common/CMakeLists.txt).
+# The webview code uses runtime feature detection (respondsToSelector:,
+# valueForKey:/@try) rather than compile-time @available, so a low floor is safe.
+if(PLATFORM_MACOS)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING
+      "Minimum macOS version" FORCE)
+endif()
+
 # Shared native-API implementations (notifications, tray, dock, dialogs, ...).
 # Each platform branch links laufey_backend_common below. iOS doesn't use it
 # (those are desktop-only AppKit/GTK surfaces); it compiles just the value

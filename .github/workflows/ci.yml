@@ -246,6 +246,12 @@ jobs:
   build-webview:
     name: webview / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Keep the macOS minimum in sync with LSMinimumSystemVersion in
+    # webview/macos/Info.plist.in (denoland/deno#35764). Ignored on non-macOS
+    # runners. The webview CMakeLists also pins this; setting it here guards
+    # against SDK-default minos stamping regardless of build path.
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
     strategy:
       fail-fast: false
       matrix:
