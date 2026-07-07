@@ -285,6 +285,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   CefSettings settings;
   settings.no_sandbox = true;
+  settings.log_severity = LaufeyCefLogSeverity();
 
   // Set cache path
   char tempPath[MAX_PATH];

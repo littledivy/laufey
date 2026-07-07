@@ -3,6 +3,8 @@
 #ifndef LAUFEY_APP_H_
 #define LAUFEY_APP_H_
 
+#include <cctype>
+#include <cstdlib>
 #include <list>
 #include <map>
 #include <queue>
@@ -15,6 +17,39 @@
 #include "include/views/cef_window.h"
 
 extern std::string g_runtime_path;
+
+// Default CEF log severity for CefSettings.log_severity.
+//
+// Chromium continuously logs ERROR/WARNING lines that are irrelevant to an
+// embedded webview app and not actionable by the app developer: GCM
+// registration failures (`registration_request.cc ... PHONE_REGISTRATION_ERROR`
+// / `DEPRECATED_ENDPOINT`), on-device model service disconnects
+// (`on_device_model/...`), xdg desktop-portal "Request cancelled by user",
+// long-running `CompositorAnimationObserver` warnings, "Unable to get gpu
+// adapter", etc. Targeted `--disable-*` switches can't cover all of them (the
+// portal and compositor messages aren't feature-gated), so raise the log floor
+// to FATAL by default to hide the noise — matching what Electron production
+// apps do. Set LAUFEY_CEF_LOG_SEVERITY to restore output while debugging:
+// verbose | debug | info | warning | error | fatal | disable | default.
+inline cef_log_severity_t LaufeyCefLogSeverity() {
+  const char* env = getenv("LAUFEY_CEF_LOG_SEVERITY");
+  if (!env || !*env) {
+    return LOGSEVERITY_FATAL;
+  }
+  std::string v(env);
+  for (char& c : v) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (v == "verbose") return LOGSEVERITY_VERBOSE;
+  if (v == "debug") return LOGSEVERITY_DEBUG;
+  if (v == "info") return LOGSEVERITY_INFO;
+  if (v == "warning") return LOGSEVERITY_WARNING;
+  if (v == "error") return LOGSEVERITY_ERROR;
+  if (v == "fatal") return LOGSEVERITY_FATAL;
+  if (v == "disable") return LOGSEVERITY_DISABLE;
+  if (v == "default") return LOGSEVERITY_DEFAULT;
+  return LOGSEVERITY_FATAL;
+}
 
 // Wayland app_id / X11 WM_CLASS for the app's windows. Read at startup from
 // LAUFEY_APP_ID (falling back to LAUFEY_APP_NAME). Empty leaves the
