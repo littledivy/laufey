@@ -115,7 +115,8 @@ class WKWebViewIOSBackend : public LaufeyBackend {
   int ShowDialog(uint32_t, int dialog_type, const std::string& title,
                  const std::string& message, const std::string&,
                  char** out_input_value) override {
-    if (out_input_value) *out_input_value = nullptr;
+    if (out_input_value)
+      *out_input_value = nullptr;
     NSString* t = [NSString stringWithUTF8String:title.c_str()];
     NSString* m = [NSString stringWithUTF8String:message.c_str()];
     __block int result = 0;
@@ -133,23 +134,30 @@ class WKWebViewIOSBackend : public LaufeyBackend {
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction*) {
                                              result = 1;
-                                             if (sem) dispatch_semaphore_signal(sem);
+                                             if (sem)
+                                               dispatch_semaphore_signal(sem);
                                            }]];
       if (dialog_type != LAUFEY_DIALOG_ALERT) {
         [ac addAction:[UIAlertAction actionWithTitle:@"Cancel"
                                                style:UIAlertActionStyleCancel
                                              handler:^(UIAlertAction*) {
                                                result = 0;
-                                               if (sem) dispatch_semaphore_signal(sem);
+                                               if (sem)
+                                                 dispatch_semaphore_signal(sem);
                                              }]];
       }
       UIWindow* key = nil;
       for (UIWindow* w in UIApplication.sharedApplication.windows) {
-        if (w.isKeyWindow) { key = w; break; }
+        if (w.isKeyWindow) {
+          key = w;
+          break;
+        }
       }
-      if (!key) key = UIApplication.sharedApplication.windows.firstObject;
+      if (!key)
+        key = UIApplication.sharedApplication.windows.firstObject;
       UIViewController* vc = key.rootViewController;
-      while (vc.presentedViewController) vc = vc.presentedViewController;
+      while (vc.presentedViewController)
+        vc = vc.presentedViewController;
       [vc presentViewController:ac animated:YES completion:nil];
     };
 
@@ -158,7 +166,9 @@ class WKWebViewIOSBackend : public LaufeyBackend {
       return 1;
     }
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    dispatch_async(dispatch_get_main_queue(), ^{ present(sem); });
+    dispatch_async(dispatch_get_main_queue(), ^{
+      present(sem);
+    });
     dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
     return result;
   }
