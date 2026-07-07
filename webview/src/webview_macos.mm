@@ -820,6 +820,17 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                                                backing:NSBackingStoreBuffered
                                                  defer:NO];
       }
+      // Under ARC this object's lifetime is owned entirely by our strong
+      // references (the windows_ map, the local `win` in CloseWindow, and the
+      // event-monitor / notification blocks that capture it). AppKit's legacy
+      // default is releasedWhenClosed == YES, which makes `[window close]`
+      // perform an *extra* release that ARC never balances. That over-release
+      // deallocates the window while it is still referenced, and the stale
+      // pointer is drained on the next main-thread autorelease-pool cleanup —
+      // an EXC_BAD_ACCESS (freed 0xa1a1a1a1 pattern) seconds after the window
+      // closes. Opt out so ARC is the sole owner of the window's lifetime.
+      [window setReleasedWhenClosed:NO];
+
       [window center];
 
       LaufeyWindowDelegate* delegate = [[LaufeyWindowDelegate alloc] init];
