@@ -15,13 +15,10 @@ class LaufeyRendererApp : public CefApp {
     return render_handler_;
   }
 
-  // Custom schemes must be registered in EVERY process (browser, renderer,
-  // and the network service), not just the browser. This CefApp is the one
-  // passed to CefExecuteProcess for all sub-processes, so it must mirror
-  // LaufeyApp::OnRegisterCustomSchemes — otherwise the network service does
-  // not know the scheme is standard and rejects navigations to it
-  // (VALIDATION_ERROR_DESERIALIZATION_FAILED on network.mojom.NetworkContext),
-  // leaving the page blank.
+  // This CefApp is the one passed to CefExecuteProcess for all sub-processes
+  // (renderer, GPU, network service), which must declare custom standard
+  // schemes just like the browser process; see RegisterLaufeyCustomSchemes in
+  // scheme_handler.h.
   void OnRegisterCustomSchemes(
       CefRawPtr<CefSchemeRegistrar> registrar) override;
 
