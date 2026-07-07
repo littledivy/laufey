@@ -33,8 +33,12 @@ else ifeq ($(HOST_OS),linux)
   endif
   PROJ_ARCH := $(HOST_ARCH)
 else ifeq ($(HOST_OS),windows)
-  CEF_ARCH := windows64
-  PROJ_ARCH := x86_64
+  ifeq ($(HOST_ARCH),aarch64)
+    CEF_ARCH := windowsarm64
+  else
+    CEF_ARCH := windows64
+  endif
+  PROJ_ARCH := $(HOST_ARCH)
 endif
 
 ifeq ($(HOST_OS),windows)
