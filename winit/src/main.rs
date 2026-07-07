@@ -278,7 +278,7 @@ impl ApplicationHandler<UserEvent> for App {
       }
       WindowEvent::Resized(PhysicalSize { width, height }) => {
         state.common.with_window(laufey_id, |ws| {
-          *ws.pending_size.lock().unwrap() =
+          *ws.current_size.lock().unwrap() =
             Some((width as i32, height as i32));
         });
         laufey_backend_winit_common::dispatch_resize_event(

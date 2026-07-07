@@ -117,6 +117,25 @@ fn e2e_main() {
 
     check("window id is nonzero", win.id() != 0);
 
+    // ---- race probe: native handle immediately after creation ------------
+    // Regression guard for denoland/deno#35785. The winit/raw backend creates
+    // the OS window asynchronously, so reading the handle *right now* — with no
+    // wait — is exactly the race that returned an uninitialized type 0
+    // ("unknown Laufey window handle type: 0"). The getter must block until the
+    // window exists and hand back the real type. Capability-probed: backends
+    // that don't expose native handles legitimately return null/UNKNOWN.
+    let early_handle = win.get_window_handle();
+    if early_handle.is_null() {
+      na("early window handle (backend doesn't expose native handles)");
+    } else {
+      let (label, accepted) = expected_handle_type();
+      let ht = win.get_window_handle_type();
+      check(
+        &format!("early handle type resolved without racing (want {label}, got {ht})"),
+        accepted.contains(&ht),
+      );
+    }
+
     // Give the backend a moment to realize the window on screen.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
