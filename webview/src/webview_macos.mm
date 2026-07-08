@@ -782,6 +782,9 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       bool frameless = (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) != 0;
       bool no_activate = (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) != 0;
       bool transparent = (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT) != 0;
+      // Ignored on a frameless window, which has no title bar to begin with.
+      bool transparent_titlebar =
+          !frameless && (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR) != 0;
 
       NSRect frame = NSMakeRect(0, 0, width, height);
       NSWindowStyleMask style = NSWindowStyleMaskClosable |
@@ -792,6 +795,11 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
         style = NSWindowStyleMaskBorderless | NSWindowStyleMaskResizable;
       } else {
         style |= NSWindowStyleMaskTitled;
+      }
+      if (transparent_titlebar) {
+        // Let the content view extend the full height of the window, up under
+        // the title bar (made transparent below).
+        style |= NSWindowStyleMaskFullSizeContentView;
       }
 
       NSWindow* window;
@@ -830,6 +838,17 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       // an EXC_BAD_ACCESS (freed 0xa1a1a1a1 pattern) seconds after the window
       // closes. Opt out so ARC is the sole owner of the window's lifetime.
       [window setReleasedWhenClosed:NO];
+
+      if (transparent_titlebar) {
+        // Hidden/inset title bar (Electron `titleBarStyle: 'hidden'`): the web
+        // content fills the whole window, including the strip behind the title
+        // bar, which is made transparent with its text hidden so the standard
+        // traffic-light buttons float over the page. The app insets its own UI
+        // to clear the buttons. Mirrors the CEF backend's transparent-titlebar
+        // path (ConfigureNSWindowTransparentTitlebarForCefHandle).
+        window.titlebarAppearsTransparent = YES;
+        window.titleVisibility = NSWindowTitleHidden;
+      }
 
       [window center];
 
