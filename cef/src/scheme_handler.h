@@ -14,9 +14,24 @@
 
 // The custom standard scheme laufey registers for in-process app serving
 // (e.g. "app://..."). Declared as a standard, secure, fetch/CORS-enabled
-// scheme in LaufeyApp::OnRegisterCustomSchemes so pages served over it behave
-// like normal https origins.
+// scheme so pages served over it behave like normal https origins.
 #define LAUFEY_APP_SCHEME "app"
+
+// Registers LAUFEY_APP_SCHEME with the given registrar. A custom standard
+// scheme must be declared identically in EVERY process — the browser
+// (LaufeyApp) and all sub-processes including the network service
+// (LaufeyRendererApp, handed to CefExecuteProcess) — otherwise the network
+// service does not know the scheme is standard and rejects navigations to it
+// (VALIDATION_ERROR_DESERIALIZATION_FAILED on network.mojom.NetworkContext),
+// leaving the page blank. Both OnRegisterCustomSchemes overrides call this
+// single definition so the flags cannot drift apart.
+inline void RegisterLaufeyCustomSchemes(
+    CefRawPtr<CefSchemeRegistrar> registrar) {
+  registrar->AddCustomScheme(
+      LAUFEY_APP_SCHEME, CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                             CEF_SCHEME_OPTION_CORS_ENABLED |
+                             CEF_SCHEME_OPTION_FETCH_ENABLED);
+}
 
 // A CefResourceHandler that bridges a single webview request to the laufey
 // runtime's registered scheme handler. The handler object IS the opaque
