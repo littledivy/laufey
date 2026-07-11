@@ -32,6 +32,7 @@
 #include <mutex>
 #include <vector>
 #include <functional>
+#include <fstream>
 
 using namespace Microsoft::WRL;
 
@@ -361,6 +362,9 @@ class WebView2Backend : public LaufeyBackend {
                        void* on_click_data) override;
 
   void OpenDevTools(uint32_t window_id) override;
+
+  void PrintToPdf(uint32_t window_id, const char* path_or_null,
+                  laufey_pdf_result_fn callback, void* callback_data) override;
 
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
@@ -1403,6 +1407,81 @@ void WebView2Backend::OpenDevTools(uint32_t window_id) {
   auto* state = GetWindow(window_id);
   if (state && state->webview) {
     state->webview->OpenDevToolsWindow();
+  }
+}
+
+void WebView2Backend::PrintToPdf(uint32_t window_id, const char* path_or_null,
+                                 laufey_pdf_result_fn callback,
+                                 void* callback_data) {
+  if (!callback)
+    return;
+  std::string path = path_or_null ? path_or_null : "";
+  bool has_path = path_or_null != nullptr;
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, path, has_path, callback, callback_data] {
+      const char* p = has_path ? path.c_str() : nullptr;
+      PrintToPdf(window_id, p, callback, callback_data);
+    });
+    return;
+  }
+  ComPtr<ICoreWebView2> webview;
+  {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (!state || !state->webview_ready || !state->webview) {
+      callback(nullptr, 0, "window not found", callback_data);
+      return;
+    }
+    webview = state->webview;
+  }
+  ComPtr<ICoreWebView2_16> webview16;
+  if (FAILED(webview.As(&webview16)) || !webview16) {
+    callback(nullptr, 0,
+             "print_to_pdf requires a newer WebView2 runtime "
+             "(ICoreWebView2_16)",
+             callback_data);
+    return;
+  }
+  HRESULT hr = webview16->PrintToPdfStream(
+      nullptr,
+      Callback<ICoreWebView2PrintToPdfStreamCompletedHandler>(
+          [path, has_path, callback, callback_data](
+              HRESULT errorCode, IStream* pdfStream) -> HRESULT {
+            if (FAILED(errorCode) || !pdfStream) {
+              callback(nullptr, 0, "failed to create PDF", callback_data);
+              return S_OK;
+            }
+            std::vector<uint8_t> buffer;
+            uint8_t chunk[65536];
+            ULONG bytesRead = 0;
+            for (;;) {
+              HRESULT rhr = pdfStream->Read(chunk, sizeof(chunk), &bytesRead);
+              if (FAILED(rhr)) {
+                callback(nullptr, 0, "failed to read PDF stream",
+                         callback_data);
+                return S_OK;
+              }
+              if (bytesRead == 0)
+                break;
+              buffer.insert(buffer.end(), chunk, chunk + bytesRead);
+            }
+            if (has_path) {
+              std::ofstream out(path, std::ios::binary | std::ios::trunc);
+              if (!out ||
+                  !out.write(reinterpret_cast<const char*>(buffer.data()),
+                             buffer.size())) {
+                callback(nullptr, 0, "failed to write PDF to path",
+                         callback_data);
+                return S_OK;
+              }
+            }
+            callback(buffer.empty() ? nullptr : buffer.data(), buffer.size(),
+                     nullptr, callback_data);
+            return S_OK;
+          })
+          .Get());
+  if (FAILED(hr)) {
+    callback(nullptr, 0, "failed to start PDF print", callback_data);
   }
 }
 

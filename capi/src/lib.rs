@@ -993,6 +993,75 @@ impl Window {
     }
   }
 
+  /// Render this window's current page to a PDF document.
+  ///
+  /// The callback always receives the PDF bytes on success. When `path` is
+  /// `Some`, the backend also writes those bytes to that filesystem path before
+  /// invoking the callback; a write failure surfaces as `Err`. Backends that
+  /// cannot produce a PDF (or that are older than API version 30) invoke the
+  /// callback with an `Err` describing the unsupported operation.
+  pub fn print_to_pdf<F>(&self, path: Option<&str>, callback: F)
+  where
+    F: FnOnce(Result<Vec<u8>, String>) + Send + 'static,
+  {
+    let api = api();
+    let Some(f) = api.print_to_pdf else {
+      callback(Err("print_to_pdf is not supported by this backend".into()));
+      return;
+    };
+
+    unsafe extern "C" fn trampoline(
+      data: *const u8,
+      len: usize,
+      error: *const c_char,
+      user_data: *mut c_void,
+    ) {
+      let cb = Box::from_raw(
+        user_data as *mut Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
+      );
+      if !error.is_null() {
+        let msg = CStr::from_ptr(error).to_string_lossy().into_owned();
+        cb(Err(msg));
+        return;
+      }
+      let bytes = if data.is_null() || len == 0 {
+        Vec::new()
+      } else {
+        std::slice::from_raw_parts(data, len).to_vec()
+      };
+      cb(Ok(bytes));
+    }
+
+    // Validate the path before taking ownership of `callback`, so an interior
+    // NUL (possible from arbitrary caller/JS input) is reported through the
+    // callback's `Err` rather than panicking.
+    let c_path = match path {
+      Some(p) => match CString::new(p) {
+        Ok(c) => Some(c),
+        Err(_) => {
+          callback(Err("path contains an interior NUL byte".into()));
+          return;
+        }
+      },
+      None => None,
+    };
+    let path_ptr = c_path.as_ref().map_or(std::ptr::null(), |p| p.as_ptr());
+
+    let cb: Box<Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>> =
+      Box::new(Box::new(callback));
+    let user_data = Box::into_raw(cb) as *mut c_void;
+
+    unsafe {
+      f(
+        api.backend_data,
+        self.id,
+        path_ptr,
+        Some(trampoline),
+        user_data,
+      )
+    };
+  }
+
   pub fn get_window_handle(&self) -> *mut c_void {
     let api = api();
     if let Some(f) = api.get_window_handle {
@@ -2943,5 +3012,62 @@ mod tests {
       PermissionKind::Notifications as i32,
       LAUFEY_PERMISSION_NOTIFICATIONS
     );
+  }
+
+  // Regression guard for print_to_pdf's argument marshaling, exercised against a
+  // fake backend so it needs no window or display: a successful backend call
+  // must hand the PDF bytes back through the callback, empty output must resolve
+  // to empty bytes (not an error), and an interior NUL in the caller-supplied
+  // path (which can arrive from arbitrary JS) must surface through the callback's
+  // Err rather than panicking.
+  #[test]
+  fn print_to_pdf_marshals_path_and_bytes() {
+    use std::sync::mpsc;
+
+    unsafe extern "C" fn fake_print_to_pdf(
+      _backend_data: *mut c_void,
+      window_id: u32,
+      _path: *const c_char,
+      callback: ffi::laufey_pdf_result_fn,
+      user_data: *mut c_void,
+    ) {
+      let cb = callback.expect("callback must be set");
+      if window_id == 999 {
+        cb(std::ptr::null(), 0, std::ptr::null(), user_data);
+      } else {
+        let bytes: &[u8] = b"%PDF-1.4 fake";
+        cb(bytes.as_ptr(), bytes.len(), std::ptr::null(), user_data);
+      }
+    }
+
+    // Install a fake backend for the whole test process. Only this test touches
+    // the global backend API, so a one-time set is safe.
+    let mut fake: LaufeyBackendApi = unsafe { std::mem::zeroed() };
+    fake.print_to_pdf = Some(fake_print_to_pdf);
+    let _ = BACKEND_API.set(Box::leak(Box::new(fake)));
+
+    // Success without a path: bytes flow back through the trampoline.
+    let (tx, rx) = mpsc::channel();
+    Window::from_id(1).print_to_pdf(None, move |r| tx.send(r).unwrap());
+    assert_eq!(rx.recv().unwrap().unwrap(), b"%PDF-1.4 fake");
+
+    // A valid path is accepted and still returns the bytes.
+    let (tx, rx) = mpsc::channel();
+    Window::from_id(1)
+      .print_to_pdf(Some("/tmp/out.pdf"), move |r| tx.send(r).unwrap());
+    assert_eq!(rx.recv().unwrap().unwrap(), b"%PDF-1.4 fake");
+
+    // Empty backend output resolves to empty bytes, not an error.
+    let (tx, rx) = mpsc::channel();
+    Window::from_id(999).print_to_pdf(None, move |r| tx.send(r).unwrap());
+    assert!(rx.recv().unwrap().unwrap().is_empty());
+
+    // Interior NUL in the path is reported as an error, never a panic, and the
+    // backend is never invoked.
+    let (tx, rx) = mpsc::channel();
+    Window::from_id(1)
+      .print_to_pdf(Some("bad\0path.pdf"), move |r| tx.send(r).unwrap());
+    let err = rx.recv().unwrap().unwrap_err();
+    assert!(err.contains("NUL"), "unexpected error: {err}");
   }
 }
