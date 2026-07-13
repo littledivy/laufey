@@ -184,6 +184,22 @@ static void UnregisterNSWindow(NSWindow* win) {
   g_nswindow_to_laufey_id.erase((__bridge void*)win);
 }
 
+// A borderless NSWindow returns NO from -canBecomeKeyWindow/-canBecomeMainWindow
+// by default, so a frameless window never takes key focus and its WKWebView
+// never becomes first responder — killing all keyboard and mouse input. This
+// subclass forces both to YES so frameless windows behave like normal ones.
+@interface LaufeyKeyableWindow : NSWindow
+@end
+
+@implementation LaufeyKeyableWindow
+- (BOOL)canBecomeKeyWindow {
+  return YES;
+}
+- (BOOL)canBecomeMainWindow {
+  return YES;
+}
+@end
+
 @interface LaufeyScriptMessageHandler : NSObject <WKScriptMessageHandler>
 @property(nonatomic, assign) WKWebViewBackend* backend;
 @property(nonatomic, assign) uint32_t windowId;
@@ -822,6 +838,14 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                                   NSWindowCollectionBehaviorTransient |
                                   NSWindowCollectionBehaviorIgnoresCycle];
         window = panel;
+      } else if (frameless) {
+        // Borderless windows must be told they can become key/main, otherwise
+        // they receive no keyboard or mouse input (see LaufeyKeyableWindow).
+        window = [[LaufeyKeyableWindow alloc]
+            initWithContentRect:frame
+                      styleMask:style
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
       } else {
         window = [[NSWindow alloc] initWithContentRect:frame
                                              styleMask:style
@@ -916,6 +940,8 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       }
 
       [window setContentView:webview];
+      // Route input into the web content once the window becomes key.
+      [window makeFirstResponder:webview];
 
       RegisterNSWindow(window, window_id);
 
@@ -1350,16 +1376,20 @@ void WKWebViewBackend::Show(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
       NSWindow* win = nil;
+      WKWebView* web = nil;
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
         auto* state = GetWindow(window_id);
         if (state) {
           win = state->window;
+          web = state->webview;
         }
       }
       if (!win)
         return;
       [win makeKeyAndOrderFront:nil];
+      if (web)
+        [win makeFirstResponder:web];
     }
   });
 }
@@ -1386,16 +1416,20 @@ void WKWebViewBackend::Focus(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
       NSWindow* win = nil;
+      WKWebView* web = nil;
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
         auto* state = GetWindow(window_id);
         if (state) {
           win = state->window;
+          web = state->webview;
         }
       }
       if (win) {
         [NSApp activateIgnoringOtherApps:YES];
         [win makeKeyAndOrderFront:nil];
+        if (web)
+          [win makeFirstResponder:web];
       }
     }
   });
