@@ -431,6 +431,7 @@ jobs:
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
             cd cef/build/Release && 7z a ../../../laufey-cef-${{ matrix.target }}.zip *
           else
+            strip --strip-unneeded cef/build/Release/libcef.so
             tar czf laufey-cef-${{ matrix.target }}.tar.gz -C cef/build/Release .
           fi
 
