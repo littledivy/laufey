@@ -87,6 +87,13 @@ cef_state_t LaufeyWindowDelegate::AcceptsFirstMouse(
 }
 
 #if defined(__linux__)
+void LaufeyWindowDelegate::OnWindowActivationChanged(
+    CefRefPtr<CefWindow> window, bool active) {
+  if (laufey_id_ > 0) {
+    RuntimeLoader::GetInstance()->DispatchFocusedEvent(laufey_id_, active);
+  }
+}
+
 bool LaufeyWindowDelegate::GetLinuxWindowProperties(
     CefRefPtr<CefWindow> window, CefLinuxWindowProperties& properties) {
   if (g_app_id.empty()) {
