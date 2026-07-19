@@ -24,8 +24,10 @@ make all        # everything
 ```
 
 `make cef` runs `make cef-deps`, which downloads the pinned CEF build into
-`vendor/cef/` and builds `libcef_dll_wrapper`. The CEF version is pinned at the
-top of the `Makefile` (`CEF_VERSION`). Re-download with `make clean-cef-vendor`.
+`vendor/cef/<cef-version>/<cef-platform>/` and builds `libcef_dll_wrapper`. The
+exact CEF build is pinned at the top of the `Makefile` (`CEF_FULL_VERSION`).
+Changing the pin selects a new cache directory; `make clean-cef-vendor` removes
+every downloaded CEF build.
 
 Host OS/arch and the matching CEF archive are detected automatically.
 
