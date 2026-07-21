@@ -351,6 +351,35 @@ fn e2e_main() {
     // loop). It belongs behind a backend test hook; tracked as a follow-up.
     na("menu/tray OS-structure check (Linux: D-Bus driver; macOS/Windows: pending backend hook)");
 
+    // ---- print_to_pdf smoke test (API >= 30) -----------------------------
+    // Render the loaded page to a PDF and assert real PDF bytes come back
+    // (`%PDF-` magic), exercising each backend's actual render path (WKWebView
+    // createPDFWithConfiguration, WebView2 PrintToPdfStream, WebKitGTK memfd,
+    // CEF DevTools Page.printToPDF). Winit has no web engine and reports
+    // "unsupported" through the callback -> N/A. A backend whose completion
+    // handler never fires shows up here as a FAIL on the delivery assertion.
+    let pdf_result =
+      Arc::new(std::sync::Mutex::new(None::<Result<Vec<u8>, String>>));
+    let pr = pdf_result.clone();
+    win.print_to_pdf(None, move |r| *pr.lock().unwrap() = Some(r));
+    let pdf_done =
+      wait_for(|| pdf_result.lock().unwrap().is_some(), 150, 100).await;
+    if !pdf_done {
+      check("print_to_pdf delivers a result within 15s", false);
+    } else {
+      let result = pdf_result.lock().unwrap().take().unwrap();
+      match result {
+        Ok(bytes) => check(
+          &format!("print_to_pdf returns real PDF bytes ({} bytes)", bytes.len()),
+          bytes.starts_with(b"%PDF-"),
+        ),
+        Err(e) if e.contains("not supported") => {
+          na("print_to_pdf (backend has no web engine / PDF support)")
+        }
+        Err(e) => check(&format!("print_to_pdf succeeds (got: {e})"), false),
+      }
+    }
+
     // ---- Layer-1 hold ----------------------------------------------------
     // When driven by the D-Bus observer (native_e2e_driver), stay alive with
     // the tray + menu registered so it can read the StatusNotifierItem, walk

@@ -22,9 +22,14 @@
 #include <vector>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
+#include <fstream>
 
 #include "include/base/cef_callback.h"
 #include "include/cef_app.h"
+#include "include/cef_devtools_message_observer.h"
+#include "include/cef_parser.h"
+#include "include/cef_registration.h"
 #include "include/cef_task.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_window.h"
@@ -1325,6 +1330,152 @@ static void Backend_SetJsNamespace(void* data, const char* name) {
   }
 }
 
+namespace {
+
+// Observes the DevTools "Page.printToPDF" result for a single print request.
+// The PDF is returned in-memory as base64 in the result JSON (no temp file);
+// we decode it, optionally write it to `path_`, and hand the raw bytes to the
+// laufey pdf-result callback. The observer keeps itself alive via its own
+// CefRegistration until the matching result arrives.
+class LaufeyPdfDevToolsObserver : public CefDevToolsMessageObserver {
+ public:
+  LaufeyPdfDevToolsObserver(int message_id, std::string path, bool has_path,
+                            laufey_pdf_result_fn callback, void* callback_data)
+      : message_id_(message_id),
+        path_(std::move(path)),
+        has_path_(has_path),
+        callback_(callback),
+        callback_data_(callback_data) {}
+
+  // Called right after AddDevToolsMessageObserver so the observer can release
+  // its own registration once it is done (which stops observing and drops the
+  // last reference).
+  void SetRegistration(CefRefPtr<CefRegistration> registration) {
+    registration_ = registration;
+  }
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int message_id,
+                              bool success, const void* result,
+                              size_t result_size) override {
+    if (message_id != message_id_)
+      return;
+    if (!success) {
+      Finish(nullptr, 0, "Page.printToPDF failed");
+      return;
+    }
+
+    // `result` is the UTF-8 JSON of the method result: { "data": "<base64>" }.
+    std::string json(static_cast<const char*>(result), result_size);
+    CefRefPtr<CefValue> value =
+        CefParseJSON(CefString(json), JSON_PARSER_ALLOW_TRAILING_COMMAS);
+    if (!value || value->GetType() != VTYPE_DICTIONARY) {
+      Finish(nullptr, 0, "invalid Page.printToPDF result");
+      return;
+    }
+    CefRefPtr<CefDictionaryValue> dict = value->GetDictionary();
+    if (!dict || !dict->HasKey("data")) {
+      Finish(nullptr, 0, "Page.printToPDF result missing data");
+      return;
+    }
+    CefRefPtr<CefBinaryValue> bin = CefBase64Decode(dict->GetString("data"));
+    if (!bin) {
+      Finish(nullptr, 0, "failed to decode PDF data");
+      return;
+    }
+
+    size_t len = bin->GetSize();
+    std::vector<uint8_t> bytes(len);
+    if (len > 0)
+      bin->GetData(bytes.data(), len, 0);
+
+    if (has_path_) {
+      std::ofstream f(path_, std::ios::binary | std::ios::trunc);
+      if (!f ||
+          (len > 0 && !f.write(reinterpret_cast<const char*>(bytes.data()),
+                               static_cast<std::streamsize>(len)))) {
+        Finish(nullptr, 0, "failed to write PDF file");
+        return;
+      }
+    }
+
+    Finish(bytes.empty() ? nullptr : bytes.data(), bytes.size(), nullptr);
+  }
+
+ private:
+  void Finish(const uint8_t* data, size_t len, const char* error) {
+    if (done_)
+      return;
+    done_ = true;
+    callback_(data, len, error, callback_data_);
+    // Releasing the registration drops observation and may destroy `this`;
+    // CEF holds a reference across this call, so doing it last is safe.
+    registration_ = nullptr;
+  }
+
+  int message_id_;
+  std::string path_;
+  bool has_path_;
+  laufey_pdf_result_fn callback_;
+  void* callback_data_;
+  bool done_ = false;
+  CefRefPtr<CefRegistration> registration_;
+
+  IMPLEMENT_REFCOUNTING(LaufeyPdfDevToolsObserver);
+};
+
+}  // namespace
+
+static void Backend_PrintToPdf(void* data, uint32_t window_id,
+                               const char* path_or_null,
+                               laufey_pdf_result_fn callback,
+                               void* callback_data) {
+  if (!callback)
+    return;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  if (!browser) {
+    callback(nullptr, 0, "window not found", callback_data);
+    return;
+  }
+
+  bool has_path = (path_or_null != nullptr);
+  std::string path = has_path ? std::string(path_or_null) : std::string();
+
+  // Unique, positive DevTools message id per request so concurrent PDF
+  // requests don't observe each other's results.
+  static std::atomic<int> next_message_id{1};
+  int message_id = next_message_id.fetch_add(1);
+
+  CefPostTask(
+      TID_UI,
+      base::BindOnce(
+          [](CefRefPtr<CefBrowser> b, int msg_id, std::string out_path,
+             bool has_out_path, laufey_pdf_result_fn cb, void* cb_data) {
+            CefRefPtr<LaufeyPdfDevToolsObserver> observer =
+                new LaufeyPdfDevToolsObserver(msg_id, std::move(out_path),
+                                              has_out_path, cb, cb_data);
+            CefRefPtr<CefRegistration> registration =
+                b->GetHost()->AddDevToolsMessageObserver(observer);
+            if (!registration) {
+              cb(nullptr, 0, "failed to attach DevTools observer", cb_data);
+              return;
+            }
+            observer->SetRegistration(registration);
+
+            // Empty params: default ReturnAsBase64 transfer mode. Returns the
+            // PDF bytes inline in the result JSON.
+            CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+            int sent = b->GetHost()->ExecuteDevToolsMethod(
+                msg_id, "Page.printToPDF", params);
+            if (sent <= 0) {
+              // Result will never arrive; report and drop the observer.
+              cb(nullptr, 0, "failed to invoke Page.printToPDF", cb_data);
+              observer->SetRegistration(nullptr);
+            }
+          },
+          browser, message_id, path, has_path, callback, callback_data));
+}
+
 // --- InitializeBackendApi ---
 
 static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
@@ -1556,6 +1707,7 @@ void RuntimeLoader::InitializeBackendApi() {
 #endif
 
   backend_api_.open_devtools = Backend_OpenDevTools;
+  backend_api_.print_to_pdf = Backend_PrintToPdf;
   backend_api_.set_js_namespace = Backend_SetJsNamespace;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;

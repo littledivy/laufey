@@ -149,6 +149,7 @@ jobs:
           - { os: macos-14, backend: webview }
           - { os: macos-14, backend: cef }
           - { os: windows-latest, backend: winit }
+          - { os: windows-latest, backend: webview }
           - { os: ubuntu-22.04, backend: cef }
     steps:
       - uses: actions/checkout@v4
