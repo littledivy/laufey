@@ -358,8 +358,8 @@ fn e2e_main() {
     // CEF DevTools Page.printToPDF). Winit has no web engine and reports
     // "unsupported" through the callback -> N/A. A backend whose completion
     // handler never fires shows up here as a FAIL on the delivery assertion.
-    let pdf_result: Arc<std::sync::Mutex<Option<Result<Vec<u8>, String>>>> =
-      Arc::new(std::sync::Mutex::new(None));
+    let pdf_result =
+      Arc::new(std::sync::Mutex::new(None::<Result<Vec<u8>, String>>));
     let pr = pdf_result.clone();
     win.print_to_pdf(None, move |r| *pr.lock().unwrap() = Some(r));
     let pdf_done =
