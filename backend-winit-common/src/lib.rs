@@ -528,6 +528,22 @@ pub struct LaufeyBackendApi {
   // --- Test hooks (API >= 30) ---
   pub test_click_menu_item:
     Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> bool>,
+
+  // --- Print to PDF (API >= 30) ---
+  // winit renders no web content, so this stays None and the capi reports
+  // "unsupported". The field MUST still be declared to keep the struct layout
+  // in sync with the `laufey_backend_api` the capi reads through the
+  // backend's pointer. Signature mirrors `print_to_pdf` in laufey.h, with the
+  // callback matching `laufey_pdf_result_fn`.
+  pub print_to_pdf: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      u32,
+      *const c_char,
+      Option<unsafe extern "C" fn(*const u8, usize, *const c_char, *mut c_void)>,
+      *mut c_void,
+    ),
+  >,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1159,6 +1175,8 @@ pub fn create_api_base() -> LaufeyBackendApi {
     get_window_opacity: None,
     // Test hooks (API >= 30).
     test_click_menu_item: None,
+    // Print to PDF (API >= 30): winit renders no web content.
+    print_to_pdf: None,
   }
 }
 

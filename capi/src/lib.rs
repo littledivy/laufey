@@ -719,6 +719,16 @@ impl WindowOptions {
   }
 }
 
+/// How long [`Window::print_to_pdf`] waits for the backend's completion
+/// handler before resolving the callback with a timeout `Err`. Rendering that
+/// takes this long has effectively hung (navigation mid-render, a completion
+/// handler the platform never delivers); the watchdog guarantees the caller's
+/// callback always resolves instead of leaking.
+const PRINT_TO_PDF_TIMEOUT: std::time::Duration =
+  std::time::Duration::from_secs(60);
+
+type PdfCallback = Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>;
+
 impl Window {
   pub fn new(width: i32, height: i32) -> Self {
     Self::new_with_options(width, height, WindowOptions::default())
@@ -1000,8 +1010,32 @@ impl Window {
   /// invoking the callback; a write failure surfaces as `Err`. Backends that
   /// cannot produce a PDF (or that are older than API version 30) invoke the
   /// callback with an `Err` describing the unsupported operation.
+  ///
+  /// On success the callback fires on the UI thread once rendering completes.
+  /// The two early-validation errors — an unsupported backend, or a `path`
+  /// containing an interior NUL — are instead delivered synchronously on the
+  /// calling thread, before any rendering is scheduled.
+  ///
+  /// The callback is guaranteed to be invoked exactly once. If the backend's
+  /// completion handler never fires (a platform edge case: navigation
+  /// mid-render, a completion handler the OS never delivers), a watchdog
+  /// resolves the callback with a timeout `Err` after 60 seconds, delivered
+  /// on a background thread.
   pub fn print_to_pdf<F>(&self, path: Option<&str>, callback: F)
   where
+    F: FnOnce(Result<Vec<u8>, String>) + Send + 'static,
+  {
+    self.print_to_pdf_with_timeout(path, PRINT_TO_PDF_TIMEOUT, callback)
+  }
+
+  // Timeout-injectable body of `print_to_pdf`, split out so unit tests can
+  // exercise the watchdog without waiting the production 60 seconds.
+  fn print_to_pdf_with_timeout<F>(
+    &self,
+    path: Option<&str>,
+    timeout: std::time::Duration,
+    callback: F,
+  ) where
     F: FnOnce(Result<Vec<u8>, String>) + Send + 'static,
   {
     let api = api();
@@ -1016,9 +1050,13 @@ impl Window {
       error: *const c_char,
       user_data: *mut c_void,
     ) {
-      let cb = Box::from_raw(
-        user_data as *mut Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
-      );
+      // Reclaim the slot's raw reference. `take()` makes delivery
+      // exactly-once: if the watchdog already resolved the callback, a late
+      // completion finds `None` and is dropped instead of double-invoking.
+      let slot = Arc::from_raw(user_data as *const Mutex<Option<PdfCallback>>);
+      let Some(cb) = slot.lock().unwrap().take() else {
+        return;
+      };
       if !error.is_null() {
         let msg = CStr::from_ptr(error).to_string_lossy().into_owned();
         cb(Err(msg));
@@ -1047,9 +1085,35 @@ impl Window {
     };
     let path_ptr = c_path.as_ref().map_or(std::ptr::null(), |p| p.as_ptr());
 
-    let cb: Box<Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>> =
-      Box::new(Box::new(callback));
-    let user_data = Box::into_raw(cb) as *mut c_void;
+    let slot: Arc<Mutex<Option<PdfCallback>>> =
+      Arc::new(Mutex::new(Some(Box::new(callback))));
+
+    // Watchdog: guarantee the callback resolves even when the backend's
+    // completion handler never fires. One short-lived thread per call --
+    // print_to_pdf is a low-frequency API and a plain thread works before
+    // any async runtime is up.
+    let watchdog = slot.clone();
+    std::thread::spawn(move || {
+      std::thread::sleep(timeout);
+      // Take the callback in its own statement so the slot's lock is released
+      // before the user callback runs; holding it during `cb` would block a
+      // concurrently-arriving completion inside the trampoline on the UI
+      // thread (and deadlock if `cb` synchronously waits on that thread).
+      let cb = watchdog.lock().unwrap().take();
+      if let Some(cb) = cb {
+        cb(Err(format!(
+          "print_to_pdf timed out after {}s waiting for the backend",
+          timeout.as_secs_f64()
+        )));
+      }
+    });
+
+    // The trampoline reclaims this raw reference. If the backend never
+    // invokes the callback, the reference is leaked deliberately: it holds
+    // only the small slot (the watchdog has already consumed and resolved
+    // the caller's callback), and freeing it here could race a late
+    // completion.
+    let user_data = Arc::into_raw(slot) as *mut c_void;
 
     unsafe {
       f(
@@ -3014,6 +3078,52 @@ mod tests {
     );
   }
 
+  // Fake print_to_pdf backend shared by the pdf tests, dispatching on
+  // window_id: 999 completes with empty bytes, 777 never completes (watchdog
+  // path), 778 completes late from another thread (after the test watchdog's
+  // deadline), anything else completes immediately with fake PDF bytes.
+  unsafe extern "C" fn fake_print_to_pdf(
+    _backend_data: *mut c_void,
+    window_id: u32,
+    _path: *const c_char,
+    callback: ffi::laufey_pdf_result_fn,
+    user_data: *mut c_void,
+  ) {
+    let cb = callback.expect("callback must be set");
+    match window_id {
+      999 => cb(std::ptr::null(), 0, std::ptr::null(), user_data),
+      777 => {}
+      778 => {
+        let ud = user_data as usize;
+        std::thread::spawn(move || {
+          std::thread::sleep(std::time::Duration::from_millis(800));
+          static LATE: &[u8] = b"%PDF-late";
+          unsafe {
+            cb(
+              LATE.as_ptr(),
+              LATE.len(),
+              std::ptr::null(),
+              ud as *mut c_void,
+            )
+          };
+        });
+      }
+      _ => {
+        let bytes: &[u8] = b"%PDF-1.4 fake";
+        cb(bytes.as_ptr(), bytes.len(), std::ptr::null(), user_data);
+      }
+    }
+  }
+
+  // Install the shared fake backend. BACKEND_API is a set-once global and the
+  // pdf tests run concurrently, so every caller installs the *same* fake and
+  // the first one wins.
+  fn install_pdf_fake() {
+    let mut fake: LaufeyBackendApi = unsafe { std::mem::zeroed() };
+    fake.print_to_pdf = Some(fake_print_to_pdf);
+    let _ = BACKEND_API.set(Box::leak(Box::new(fake)));
+  }
+
   // Regression guard for print_to_pdf's argument marshaling, exercised against a
   // fake backend so it needs no window or display: a successful backend call
   // must hand the PDF bytes back through the callback, empty output must resolve
@@ -3024,27 +3134,7 @@ mod tests {
   fn print_to_pdf_marshals_path_and_bytes() {
     use std::sync::mpsc;
 
-    unsafe extern "C" fn fake_print_to_pdf(
-      _backend_data: *mut c_void,
-      window_id: u32,
-      _path: *const c_char,
-      callback: ffi::laufey_pdf_result_fn,
-      user_data: *mut c_void,
-    ) {
-      let cb = callback.expect("callback must be set");
-      if window_id == 999 {
-        cb(std::ptr::null(), 0, std::ptr::null(), user_data);
-      } else {
-        let bytes: &[u8] = b"%PDF-1.4 fake";
-        cb(bytes.as_ptr(), bytes.len(), std::ptr::null(), user_data);
-      }
-    }
-
-    // Install a fake backend for the whole test process. Only this test touches
-    // the global backend API, so a one-time set is safe.
-    let mut fake: LaufeyBackendApi = unsafe { std::mem::zeroed() };
-    fake.print_to_pdf = Some(fake_print_to_pdf);
-    let _ = BACKEND_API.set(Box::leak(Box::new(fake)));
+    install_pdf_fake();
 
     // Success without a path: bytes flow back through the trampoline.
     let (tx, rx) = mpsc::channel();
@@ -3069,5 +3159,49 @@ mod tests {
       .print_to_pdf(Some("bad\0path.pdf"), move |r| tx.send(r).unwrap());
     let err = rx.recv().unwrap().unwrap_err();
     assert!(err.contains("NUL"), "unexpected error: {err}");
+  }
+
+  // The watchdog must resolve the callback when the backend's completion
+  // handler never fires, and a completion arriving after the timeout must be
+  // dropped instead of double-invoking the already-consumed callback.
+  #[test]
+  fn print_to_pdf_times_out_and_ignores_late_completion() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    install_pdf_fake();
+
+    // Backend never calls back -> the watchdog fires with a timeout Err.
+    let (tx, rx) = mpsc::channel();
+    Window::from_id(777).print_to_pdf_with_timeout(
+      None,
+      Duration::from_millis(100),
+      move |r| tx.send(r).unwrap(),
+    );
+    let err = rx
+      .recv_timeout(Duration::from_secs(10))
+      .expect("watchdog should resolve the callback")
+      .unwrap_err();
+    assert!(err.contains("timed out"), "unexpected error: {err}");
+
+    // Backend calls back *after* the timeout -> the caller sees exactly one
+    // (timeout) result; the late completion is discarded safely.
+    let (tx, rx) = mpsc::channel();
+    Window::from_id(778).print_to_pdf_with_timeout(
+      None,
+      Duration::from_millis(100),
+      move |r| tx.send(r).unwrap(),
+    );
+    let first = rx
+      .recv_timeout(Duration::from_secs(10))
+      .expect("watchdog should resolve the callback");
+    assert!(first.unwrap_err().contains("timed out"));
+    // Let the late completion arrive and be discarded; a second delivery
+    // would double-invoke a consumed FnOnce (crash) or send on this channel.
+    std::thread::sleep(Duration::from_millis(1200));
+    assert!(
+      rx.try_recv().is_err(),
+      "late completion must not invoke the callback a second time"
+    );
   }
 }
