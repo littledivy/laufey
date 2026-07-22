@@ -804,6 +804,7 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
             RECT bounds;
             GetClientRect(hwnd, &bounds);
             controller->put_Bounds(bounds);
+            controller->put_IsVisible(TRUE);
 
             std::string initScript = BuildInitScript(
                 RuntimeLoader::GetInstance()->GetJsNamespace(),
@@ -1211,10 +1212,15 @@ bool WebView2Backend::IsVisible(uint32_t window_id) {
 }
 
 void WebView2Backend::Show(uint32_t window_id) {
-  std::lock_guard<std::mutex> lock(windows_mutex_);
-  auto* state = GetWindow(window_id);
-  if (state)
-    ShowWindow(state->hwnd, SW_SHOW);
+  HWND hwnd = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state)
+      hwnd = state->hwnd;
+  }
+  if (hwnd)
+    ShowWindow(hwnd, SW_SHOW);
 }
 
 void WebView2Backend::Hide(uint32_t window_id) {
