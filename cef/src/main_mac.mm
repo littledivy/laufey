@@ -354,6 +354,7 @@ int main(int argc, char* argv[]) {
 
     CefSettings settings;
     settings.no_sandbox = true;
+    settings.log_severity = LaufeyCefLogSeverity();
     // Run [NSApp run] as the message loop (see LaufeyPumpTarget) so the main
     // libdispatch queue is serviced — required for tray/status items.
     settings.external_message_pump = true;

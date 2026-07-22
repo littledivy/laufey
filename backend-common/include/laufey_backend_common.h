@@ -410,6 +410,23 @@ void SetTrayDoubleClickHandlerLinux(uint32_t tray_id,
                                     void* user_data);
 #endif
 
+// ---------------------------------------------------------------------------
+// Test hooks (API >= 30)
+// ---------------------------------------------------------------------------
+
+// Records the on_click handler for a menu/tray item id when a menu is built, so
+// TestClickMenuItem can synthesize a click. Called by the menu builders; no-op
+// for empty id or null fn. Later registrations for the same id win (matching
+// the "last menu wins" behavior of a re-set menu).
+void RegisterMenuClick(const std::string& id, laufey_menu_click_fn fn,
+                       void* data, uint32_t window_id);
+
+// Test-only. Synthesizes a click on the menu/tray item with id `item_id` by
+// invoking its registered on_click handler with the right window id. Returns
+// true if an item with that id was registered. Backs the C ABI
+// `test_click_menu_item` hook used by automated e2e tests.
+bool TestClickMenuItem(const char* item_id);
+
 }  // namespace laufey_common
 
 #endif  // LAUFEY_BACKEND_COMMON_H_

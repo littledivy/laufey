@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 29
+#define LAUFEY_API_VERSION 30
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -726,6 +726,16 @@ struct laufey_backend_api {
   // unknown or the backend can't report it. NULL on backends older than API
   // version 28.
   double (*get_window_opacity)(void* backend_data, uint32_t window_id);
+
+  // --- Test hooks (API >= 30) ---
+  //
+  // Test-only. Synthesizes a click on the menu/tray item with id `item_id` by
+  // invoking the same click-dispatch path a real click uses (looking up the
+  // registered on_click handler by id and calling it). Returns true if an item
+  // with that id was registered and its handler ran. Lets automated e2e tests
+  // exercise menu/tray click round-trips without OS-level input injection or
+  // main-thread UI access. NULL on backends that don't implement it.
+  bool (*test_click_menu_item)(void* backend_data, const char* item_id);
 };
 
 #ifdef __cplusplus

@@ -216,6 +216,7 @@ NSMenu* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* ap
       wrap.clickData = on_click_data;
       wrap.windowId = window_id;
       [nsItem setRepresentedObject:wrap];
+      RegisterMenuClick(idStr, on_click, on_click_data, window_id);
     }
 
     laufey_value_t* enabledVal = api->value_dict_get(itemVal, "enabled");

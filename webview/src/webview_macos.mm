@@ -435,6 +435,35 @@ class MacSchemeExchange : public SchemeExchangeBase {
   }
 }
 
+// `<input type="file">`. WKWebView has no default handler; the host must
+// present the open panel or the input stays inert. Honor multiple-selection and
+// directory flags from the parameters, and attach as a sheet to the window.
+- (void)webView:(WKWebView*)webView
+    runOpenPanelWithParameters:(WKOpenPanelParameters*)parameters
+              initiatedByFrame:(WKFrameInfo*)frame
+             completionHandler:
+                 (void (^)(NSArray<NSURL*>* _Nullable))completionHandler {
+  NSOpenPanel* panel = [NSOpenPanel openPanel];
+  [panel setAllowsMultipleSelection:parameters.allowsMultipleSelection];
+  [panel setCanChooseDirectories:parameters.allowsDirectories];
+  [panel setCanChooseFiles:!parameters.allowsDirectories];
+
+  void (^handler)(NSModalResponse) = ^(NSModalResponse response) {
+    if (response == NSModalResponseOK) {
+      completionHandler([panel URLs]);
+    } else {
+      completionHandler(nil);
+    }
+  };
+
+  NSWindow* window = webView.window;
+  if (window) {
+    [panel beginSheetModalForWindow:window completionHandler:handler];
+  } else {
+    handler([panel runModal]);
+  }
+}
+
 @end
 
 @interface LaufeyWindowDelegate : NSObject <NSWindowDelegate>
@@ -753,6 +782,9 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       bool frameless = (flags & LAUFEY_WINDOW_FLAG_FRAMELESS) != 0;
       bool no_activate = (flags & LAUFEY_WINDOW_FLAG_NO_ACTIVATE) != 0;
       bool transparent = (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT) != 0;
+      // Ignored on a frameless window, which has no title bar to begin with.
+      bool transparent_titlebar =
+          !frameless && (flags & LAUFEY_WINDOW_FLAG_TRANSPARENT_TITLEBAR) != 0;
 
       NSRect frame = NSMakeRect(0, 0, width, height);
       NSWindowStyleMask style = NSWindowStyleMaskClosable |
@@ -763,6 +795,11 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
         style = NSWindowStyleMaskBorderless | NSWindowStyleMaskResizable;
       } else {
         style |= NSWindowStyleMaskTitled;
+      }
+      if (transparent_titlebar) {
+        // Let the content view extend the full height of the window, up under
+        // the title bar (made transparent below).
+        style |= NSWindowStyleMaskFullSizeContentView;
       }
 
       NSWindow* window;
@@ -791,6 +828,28 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                                                backing:NSBackingStoreBuffered
                                                  defer:NO];
       }
+      // Under ARC this object's lifetime is owned entirely by our strong
+      // references (the windows_ map, the local `win` in CloseWindow, and the
+      // event-monitor / notification blocks that capture it). AppKit's legacy
+      // default is releasedWhenClosed == YES, which makes `[window close]`
+      // perform an *extra* release that ARC never balances. That over-release
+      // deallocates the window while it is still referenced, and the stale
+      // pointer is drained on the next main-thread autorelease-pool cleanup —
+      // an EXC_BAD_ACCESS (freed 0xa1a1a1a1 pattern) seconds after the window
+      // closes. Opt out so ARC is the sole owner of the window's lifetime.
+      [window setReleasedWhenClosed:NO];
+
+      if (transparent_titlebar) {
+        // Hidden/inset title bar (Electron `titleBarStyle: 'hidden'`): the web
+        // content fills the whole window, including the strip behind the title
+        // bar, which is made transparent with its text hidden so the standard
+        // traffic-light buttons float over the page. The app insets its own UI
+        // to clear the buttons. Mirrors the CEF backend's transparent-titlebar
+        // path (ConfigureNSWindowTransparentTitlebarForCefHandle).
+        window.titlebarAppearsTransparent = YES;
+        window.titleVisibility = NSWindowTitleHidden;
+      }
+
       [window center];
 
       LaufeyWindowDelegate* delegate = [[LaufeyWindowDelegate alloc] init];

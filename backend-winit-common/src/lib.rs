@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use std::env;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use libloading::{Library, Symbol};
 use muda::MenuEvent;
@@ -32,7 +33,7 @@ use winit::window::{Window, WindowLevel};
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
 // below must match the v29 `laufey_backend_api`.
-pub const LAUFEY_API_VERSION: u32 = 29;
+pub const LAUFEY_API_VERSION: u32 = 30;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -523,6 +524,10 @@ pub struct LaufeyBackendApi {
   // the v28 `laufey_backend_api` the capi reads through the backend's pointer.
   pub set_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32, f64)>,
   pub get_window_opacity: Option<unsafe extern "C" fn(*mut c_void, u32) -> f64>,
+
+  // --- Test hooks (API >= 30) ---
+  pub test_click_menu_item:
+    Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> bool>,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1152,6 +1157,8 @@ pub fn create_api_base() -> LaufeyBackendApi {
     // Window opacity (API >= 28): winit has no runtime opacity API.
     set_window_opacity: None,
     get_window_opacity: None,
+    // Test hooks (API >= 30).
+    test_click_menu_item: None,
   }
 }
 
@@ -1165,16 +1172,50 @@ pub fn allocate_window_id() -> u32 {
 
 // --- Per-window handle storage ---
 
-static WINDOW_HANDLES: Mutex<Option<HashMap<u32, WindowHandleInfo>>> =
-  Mutex::new(None);
-static DISPLAY_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
-static WINDOW_HANDLE_TYPE: AtomicI32 = AtomicI32::new(0);
-
+/// Native handles for a single window. Stored per `window_id` (not as
+/// process-wide globals) so multi-window setups return the right handle, and
+/// populated by `store_window_handles` only once the OS window actually
+/// exists.
 struct WindowHandleInfo {
   handle: *mut c_void,
+  display: *mut c_void,
+  handle_type: c_int,
 }
 
 unsafe impl Send for WindowHandleInfo {}
+
+static WINDOW_HANDLES: Mutex<Option<HashMap<u32, WindowHandleInfo>>> =
+  Mutex::new(None);
+/// Signalled by `store_window_handles` so getters blocked in
+/// `wait_for_window_handle` wake as soon as an entry appears.
+static WINDOW_HANDLES_CV: Condvar = Condvar::new();
+
+/// The winit/raw backend creates OS windows asynchronously: `create_window`
+/// posts a `CreateWindow` event and returns immediately, while the actual
+/// `winit::Window` (and its native handle) is built later on the event-loop
+/// thread. The runtime thread that answers `getNativeWindow()` therefore races
+/// window creation. Rather than returning an uninitialised handle (which
+/// surfaced as "unknown Laufey window handle type: 0"), block the caller until
+/// `store_window_handles` has recorded this window, up to a bounded timeout.
+fn wait_for_window_handle<R>(
+  window_id: u32,
+  f: impl FnOnce(&WindowHandleInfo) -> R,
+  default: R,
+) -> R {
+  // Bounded so a window that never materialises (e.g. a create event that was
+  // dropped, or a getter called after close) can't wedge the runtime thread.
+  let timeout = Duration::from_secs(5);
+  let guard = WINDOW_HANDLES.lock().unwrap();
+  let (guard, _timed_out) = WINDOW_HANDLES_CV
+    .wait_timeout_while(guard, timeout, |map| {
+      map.as_ref().is_none_or(|m| !m.contains_key(&window_id))
+    })
+    .unwrap();
+  match guard.as_ref().and_then(|m| m.get(&window_id)) {
+    Some(info) => f(info),
+    None => default,
+  }
+}
 
 /// # Safety
 /// Caller must pass valid pointers as defined by the LAUFEY C API contract.
@@ -1182,58 +1223,73 @@ pub unsafe extern "C" fn backend_get_window_handle(
   _data: *mut c_void,
   window_id: u32,
 ) -> *mut c_void {
-  let map = WINDOW_HANDLES.lock().unwrap();
-  map
-    .as_ref()
-    .and_then(|m| m.get(&window_id))
-    .map(|info| info.handle)
-    .unwrap_or(std::ptr::null_mut())
+  wait_for_window_handle(window_id, |info| info.handle, std::ptr::null_mut())
 }
 
 /// # Safety
 /// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn backend_get_display_handle(
   _data: *mut c_void,
-  _window_id: u32,
+  window_id: u32,
 ) -> *mut c_void {
-  DISPLAY_HANDLE.load(Ordering::Acquire)
+  wait_for_window_handle(window_id, |info| info.display, std::ptr::null_mut())
 }
 
 /// # Safety
 /// Caller must pass valid pointers as defined by the LAUFEY C API contract.
 pub unsafe extern "C" fn backend_get_window_handle_type(
   _data: *mut c_void,
-  _window_id: u32,
+  window_id: u32,
 ) -> c_int {
-  WINDOW_HANDLE_TYPE.load(Ordering::Acquire)
+  wait_for_window_handle(
+    window_id,
+    |info| info.handle_type,
+    LAUFEY_WINDOW_HANDLE_UNKNOWN,
+  )
 }
 
 pub fn store_window_handles(window_id: u32, window: &Window) {
   let mut handle_ptr = std::ptr::null_mut();
+  let mut display_ptr = std::ptr::null_mut();
+  let mut handle_type = LAUFEY_WINDOW_HANDLE_UNKNOWN;
 
   if let Ok(wh) = window.window_handle() {
     match wh.as_raw() {
       #[cfg(target_os = "macos")]
       RawWindowHandle::AppKit(handle) => {
         handle_ptr = handle.ns_view.as_ptr();
-        WINDOW_HANDLE_TYPE
-          .store(LAUFEY_WINDOW_HANDLE_APPKIT, Ordering::Release);
+        handle_type = LAUFEY_WINDOW_HANDLE_APPKIT;
       }
       #[cfg(target_os = "windows")]
       RawWindowHandle::Win32(handle) => {
         handle_ptr = handle.hwnd.get() as *mut c_void;
-        WINDOW_HANDLE_TYPE.store(LAUFEY_WINDOW_HANDLE_WIN32, Ordering::Release);
+        handle_type = LAUFEY_WINDOW_HANDLE_WIN32;
       }
       #[cfg(target_os = "linux")]
       RawWindowHandle::Xlib(handle) => {
         handle_ptr = handle.window as *mut c_void;
-        WINDOW_HANDLE_TYPE.store(LAUFEY_WINDOW_HANDLE_X11, Ordering::Release);
+        handle_type = LAUFEY_WINDOW_HANDLE_X11;
       }
       #[cfg(target_os = "linux")]
       RawWindowHandle::Wayland(handle) => {
         handle_ptr = handle.surface.as_ptr();
-        WINDOW_HANDLE_TYPE
-          .store(LAUFEY_WINDOW_HANDLE_WAYLAND, Ordering::Release);
+        handle_type = LAUFEY_WINDOW_HANDLE_WAYLAND;
+      }
+      _ => {}
+    }
+  }
+
+  if let Ok(dh) = window.display_handle() {
+    match dh.as_raw() {
+      #[cfg(target_os = "linux")]
+      RawDisplayHandle::Xlib(handle) => {
+        if let Some(display) = handle.display {
+          display_ptr = display.as_ptr();
+        }
+      }
+      #[cfg(target_os = "linux")]
+      RawDisplayHandle::Wayland(handle) => {
+        display_ptr = handle.display.as_ptr();
       }
       _ => {}
     }
@@ -1242,24 +1298,17 @@ pub fn store_window_handles(window_id: u32, window: &Window) {
   {
     let mut map = WINDOW_HANDLES.lock().unwrap();
     let map = map.get_or_insert_with(HashMap::new);
-    map.insert(window_id, WindowHandleInfo { handle: handle_ptr });
+    map.insert(
+      window_id,
+      WindowHandleInfo {
+        handle: handle_ptr,
+        display: display_ptr,
+        handle_type,
+      },
+    );
   }
-
-  if let Ok(dh) = window.display_handle() {
-    match dh.as_raw() {
-      #[cfg(target_os = "linux")]
-      RawDisplayHandle::Xlib(handle) => {
-        if let Some(display) = handle.display {
-          DISPLAY_HANDLE.store(display.as_ptr(), Ordering::Release);
-        }
-      }
-      #[cfg(target_os = "linux")]
-      RawDisplayHandle::Wayland(handle) => {
-        DISPLAY_HANDLE.store(handle.display.as_ptr(), Ordering::Release);
-      }
-      _ => {}
-    }
-  }
+  // Wake any getter blocked waiting for this window to be created.
+  WINDOW_HANDLES_CV.notify_all();
 }
 
 pub fn remove_window_handles(window_id: u32) {
@@ -1416,13 +1465,26 @@ pub fn register_menu_callbacks(
   };
   let mut store = MENU_CLICK_STORE.lock().unwrap();
   let store = store.get_or_insert_with(HashMap::new);
+  // Traverse without re-locking: the recursion must not re-acquire the store
+  // mutex (std Mutex is not reentrant — doing so self-deadlocks on menus that
+  // contain submenus).
+  insert_menu_ids(items, cb, callback_data, window_id, store);
+}
+
+fn insert_menu_ids(
+  items: &[ParsedMenuItem],
+  callback: LaufeyMenuClickFn,
+  callback_data: usize,
+  window_id: u32,
+  store: &mut HashMap<String, MenuCallbackInfo>,
+) {
   for item in items {
     match item {
       ParsedMenuItem::Item { id, .. } => {
         store.insert(
           id.clone(),
           MenuCallbackInfo {
-            callback: cb,
+            callback,
             callback_data,
             window_id,
           },
@@ -1431,7 +1493,7 @@ pub fn register_menu_callbacks(
       ParsedMenuItem::Submenu {
         items: children, ..
       } => {
-        register_menu_callbacks(children, callback, callback_data, window_id);
+        insert_menu_ids(children, callback, callback_data, window_id, store);
       }
       _ => {}
     }
@@ -1584,22 +1646,34 @@ fn build_muda_context_menu(items: &[ParsedMenuItem]) -> muda::Menu {
 /// Poll muda menu events and dispatch callbacks. Call from the event loop.
 pub fn poll_menu_events() {
   while let Ok(event) = MenuEvent::receiver().try_recv() {
-    let id_str = event.id().0.clone();
-    let store = MENU_CLICK_STORE.lock().unwrap();
-    if let Some(store) = store.as_ref() {
-      if let Some(info) = store.get(&id_str) {
-        if let Ok(c_id) = CString::new(id_str.as_str()) {
-          unsafe {
-            (info.callback)(
-              info.callback_data as *mut c_void,
-              info.window_id,
-              c_id.as_ptr(),
-            );
-          }
-        }
-      }
-    }
+    dispatch_menu_click_by_id(&event.id().0);
   }
+}
+
+/// Invoke the registered `on_click` handler for `item_id` (app menu, tray menu,
+/// or context menu — all share `MENU_CLICK_STORE`), exactly as
+/// `poll_menu_events` does for a real muda event. Returns true if an item with
+/// that id was registered. Backs the `test_click_menu_item` C ABI test hook.
+pub fn dispatch_menu_click_by_id(item_id: &str) -> bool {
+  let store = MENU_CLICK_STORE.lock().unwrap();
+  let Some(store) = store.as_ref() else {
+    return false;
+  };
+  let Some(info) = store.get(item_id) else {
+    return false;
+  };
+  let Ok(c_id) = CString::new(item_id) else {
+    return false;
+  };
+  // SAFETY: `c_id` outlives the call; the callback only reads the string.
+  unsafe {
+    (info.callback)(
+      info.callback_data as *mut c_void,
+      info.window_id,
+      c_id.as_ptr(),
+    );
+  }
+  true
 }
 
 // --- Per-window common state ---
@@ -1607,6 +1681,12 @@ pub fn poll_menu_events() {
 pub struct WindowState {
   pub pending_title: Mutex<Option<String>>,
   pub pending_size: Mutex<Option<(i32, i32)>>,
+  /// Authoritative current window size in physical pixels. Unlike
+  /// `pending_size` (a one-shot *requested* size that's consumed when applied),
+  /// this tracks the window's real dimensions: seeded at creation from
+  /// `inner_size()` and refreshed on every resize. Backs `get_window_size` so
+  /// it never reports 0x0 (which produced a 0x0 wgpu surface).
+  pub current_size: Mutex<Option<(i32, i32)>>,
   pub pending_position: Mutex<Option<(i32, i32)>>,
   pub pending_resizable: Mutex<Option<bool>>,
   pub pending_always_on_top: Mutex<Option<bool>>,
@@ -1627,6 +1707,7 @@ impl WindowState {
     Self {
       pending_title: Mutex::new(None),
       pending_size: Mutex::new(None),
+      current_size: Mutex::new(None),
       pending_position: Mutex::new(None),
       pending_resizable: Mutex::new(None),
       pending_always_on_top: Mutex::new(None),
@@ -1903,7 +1984,14 @@ macro_rules! define_common_backend_fns {
       let mut found = false;
       if let Some(state) = <$B as $crate::BackendAccess>::get() {
         if let Some(()) = state.common().with_window(window_id, |ws| {
-          if let Some((w, h)) = *ws.pending_size.lock().unwrap() {
+          // Prefer the authoritative current size; fall back to a not-yet-
+          // applied requested size (e.g. a `set_size` before the window exists).
+          let size = ws
+            .current_size
+            .lock()
+            .unwrap()
+            .or(*ws.pending_size.lock().unwrap());
+          if let Some((w, h)) = size {
             if !width.is_null() {
               *width = w;
             }
@@ -2316,6 +2404,19 @@ macro_rules! define_common_backend_fns {
           .into_owned()
       };
       $crate::write_clipboard_text_native(&text_str);
+    }
+
+    unsafe extern "C" fn backend_test_click_menu_item(
+      _data: *mut ::std::ffi::c_void,
+      item_id: *const ::std::ffi::c_char,
+    ) -> bool {
+      if item_id.is_null() {
+        return false;
+      }
+      let id = unsafe { ::std::ffi::CStr::from_ptr(item_id) }
+        .to_string_lossy()
+        .into_owned();
+      $crate::dispatch_menu_click_by_id(&id)
     }
 
     unsafe extern "C" fn backend_set_application_menu(
@@ -2747,6 +2848,7 @@ macro_rules! fill_common_api {
     $api.request_permission = Some(backend_request_permission);
     $api.read_clipboard_text = Some(backend_read_clipboard_text);
     $api.write_clipboard_text = Some(backend_write_clipboard_text);
+    $api.test_click_menu_item = Some(backend_test_click_menu_item);
   };
 }
 
@@ -2972,6 +3074,18 @@ pub fn apply_pending_attrs(
 
 /// Apply post-creation pending state (e.g. always-on-top).
 pub fn apply_pending_post_create(ws: &WindowState, window: &Window) {
+  // Seed the authoritative size from the window's real dimensions so
+  // `get_window_size` returns a valid value immediately after creation.
+  // Without this it read `pending_size` as 0x0 until a `Resized` event happened
+  // to arrive — reliable on X11, racy on Wayland — which left
+  // `getNativeWindow()` handing wgpu a 0x0 surface ("surface is not configured
+  // for presentation").
+  let size = window.inner_size();
+  if size.width > 0 && size.height > 0 {
+    *ws.current_size.lock().unwrap() =
+      Some((size.width as i32, size.height as i32));
+  }
+
   if let Some(true) = *ws.pending_always_on_top.lock().unwrap() {
     window.set_window_level(WindowLevel::AlwaysOnTop);
   }

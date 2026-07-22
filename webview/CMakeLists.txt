@@ -14,6 +14,21 @@ elseif(WIN32)
   set(PLATFORM_WINDOWS TRUE)
 endif()
 
+# Pin the macOS deployment target so the binary's LC_BUILD_VERSION minos matches
+# the LSMinimumSystemVersion declared in macos/Info.plist.in. Without this the
+# compiler stamps the build machine's SDK version (e.g. 14.0) as the minimum,
+# and macOS enforces that Mach-O field at launch — refusing to start on older
+# systems regardless of the Info.plist value (denoland/deno#35764). The CEF
+# backend gets this for free via cef_variables; the webview backend must set it
+# explicitly. Set before add_subdirectory(backend-common) so the shared static
+# lib inherits the same target (see backend-common/CMakeLists.txt).
+# The webview code uses runtime feature detection (respondsToSelector:,
+# valueForKey:/@try) rather than compile-time @available, so a low floor is safe.
+if(PLATFORM_MACOS)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING
+      "Minimum macOS version" FORCE)
+endif()
+
 # Shared native-API implementations (notifications, tray, dock, dialogs, ...).
 # Each platform branch links laufey_backend_common below. iOS doesn't use it
 # (those are desktop-only AppKit/GTK surfaces); it compiles just the value
@@ -184,15 +199,30 @@ elseif(PLATFORM_WINDOWS)
     target_include_directories(${LAUFEY_TARGET} PRIVATE
       ${WEBVIEW2_ROOT}/build/native/include
     )
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-      target_link_directories(${LAUFEY_TARGET} PRIVATE
-        ${WEBVIEW2_ROOT}/build/native/x64
-      )
+    # WebView2's NuGet package ships a separate loader import lib per arch under
+    # build/native/{x64,x86,arm64}. Pointer size can't tell x64 from arm64 (both
+    # 64-bit), so key off the compiler's actual target arch. MSVC_CXX_ARCHITECTURE_ID
+    # (X64/X86/ARM64) comes straight from cl.exe's target; fall back to the VS
+    # generator platform, then the system processor, then pointer size.
+    if(MSVC_CXX_ARCHITECTURE_ID)
+      set(_wv2_arch "${MSVC_CXX_ARCHITECTURE_ID}")
+    elseif(CMAKE_GENERATOR_PLATFORM)
+      set(_wv2_arch "${CMAKE_GENERATOR_PLATFORM}")
     else()
-      target_link_directories(${LAUFEY_TARGET} PRIVATE
-        ${WEBVIEW2_ROOT}/build/native/x86
-      )
+      set(_wv2_arch "${CMAKE_SYSTEM_PROCESSOR}")
     endif()
+    string(TOLOWER "${_wv2_arch}" _wv2_arch)
+    if(_wv2_arch MATCHES "arm64|aarch64")
+      set(_wv2_arch_dir "arm64")
+    elseif(_wv2_arch MATCHES "x64|amd64|x86_64" OR CMAKE_SIZEOF_VOID_P EQUAL 8)
+      set(_wv2_arch_dir "x64")
+    else()
+      set(_wv2_arch_dir "x86")
+    endif()
+    message(STATUS "WebView2 loader arch: ${_wv2_arch_dir}")
+    target_link_directories(${LAUFEY_TARGET} PRIVATE
+      ${WEBVIEW2_ROOT}/build/native/${_wv2_arch_dir}
+    )
   endif()
 
   target_link_libraries(${LAUFEY_TARGET}

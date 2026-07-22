@@ -112,9 +112,65 @@ class WKWebViewIOSBackend : public LaufeyBackend {
                        const laufey_backend_api_t*, laufey_menu_click_fn,
                        void*) override {}
   void OpenDevTools(uint32_t) override {}
-  int ShowDialog(uint32_t, int, const std::string&, const std::string&,
-                 const std::string&, char**) override {
-    return 0;
+  int ShowDialog(uint32_t, int dialog_type, const std::string& title,
+                 const std::string& message, const std::string&,
+                 char** out_input_value) override {
+    if (out_input_value)
+      *out_input_value = nullptr;
+    NSString* t = [NSString stringWithUTF8String:title.c_str()];
+    NSString* m = [NSString stringWithUTF8String:message.c_str()];
+    __block int result = 0;
+
+    // UIAlertController presents asynchronously and must run on the main
+    // thread; the caller (runtime worker thread) blocks on a semaphore until
+    // the user dismisses it. If we're already on the main thread we can't
+    // block, so present without waiting and report the default (OK) result.
+    void (^present)(dispatch_semaphore_t) = ^(dispatch_semaphore_t sem) {
+      UIAlertController* ac = [UIAlertController
+          alertControllerWithTitle:t
+                           message:m
+                    preferredStyle:UIAlertControllerStyleAlert];
+      [ac addAction:[UIAlertAction actionWithTitle:@"OK"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction*) {
+                                             result = 1;
+                                             if (sem)
+                                               dispatch_semaphore_signal(sem);
+                                           }]];
+      if (dialog_type != LAUFEY_DIALOG_ALERT) {
+        [ac addAction:[UIAlertAction actionWithTitle:@"Cancel"
+                                               style:UIAlertActionStyleCancel
+                                             handler:^(UIAlertAction*) {
+                                               result = 0;
+                                               if (sem)
+                                                 dispatch_semaphore_signal(sem);
+                                             }]];
+      }
+      UIWindow* key = nil;
+      for (UIWindow* w in UIApplication.sharedApplication.windows) {
+        if (w.isKeyWindow) {
+          key = w;
+          break;
+        }
+      }
+      if (!key)
+        key = UIApplication.sharedApplication.windows.firstObject;
+      UIViewController* vc = key.rootViewController;
+      while (vc.presentedViewController)
+        vc = vc.presentedViewController;
+      [vc presentViewController:ac animated:YES completion:nil];
+    };
+
+    if ([NSThread isMainThread]) {
+      present(nil);
+      return 1;
+    }
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      present(sem);
+    });
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    return result;
   }
 
   char* ReadClipboardText() override {
@@ -262,8 +318,12 @@ void WKWebViewIOSBackend::CreateWindowEx(uint32_t window_id, int width,
       vc.view.backgroundColor = UIColor.blackColor;
       [vc.view addSubview:webview];
 
-      // Pin to the view's full bounds (not the safe area) so the webview is
-      // truly full-screen; autoresizing alone left a one-shot frame.
+      // Edge-to-edge: pin to the view's full bounds so the webview (and the
+      // page background) fills the entire screen — no dead strips above/below.
+      // The page is served with `viewport-fit=cover` (injected above), so it
+      // can keep *content* clear of the status bar / home indicator via
+      // `env(safe-area-inset-*)` while the background stays full-bleed — the
+      // standard iOS approach.
       [NSLayoutConstraint activateConstraints:@[
         [webview.topAnchor constraintEqualToAnchor:vc.view.topAnchor],
         [webview.bottomAnchor constraintEqualToAnchor:vc.view.bottomAnchor],

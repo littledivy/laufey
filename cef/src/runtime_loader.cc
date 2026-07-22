@@ -165,6 +165,9 @@ static void Backend_Navigate(void* data, uint32_t window_id, const char* url) {
 static void Backend_SetTitle(void* data, uint32_t window_id,
                              const char* title) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  // The embedder set an explicit title; keep the page's document.title / URL
+  // from overwriting it later (see LaufeyHandler::OnTitleChange).
+  loader->MarkExplicitTitle(window_id);
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (browser && title) {
     std::string title_str(title);
@@ -1441,10 +1444,17 @@ static void Backend_WriteClipboardText(void* /*data*/, const char* text) {
 #endif
 }
 
+// Test hook (API >= 30): synthesize a click on a menu/tray item by id. Platform
+// independent — the shared registry in backend-common holds the handlers.
+static bool Backend_TestClickMenuItem(void* /*data*/, const char* item_id) {
+  return laufey_common::TestClickMenuItem(item_id);
+}
+
 void RuntimeLoader::InitializeBackendApi() {
   memset(&backend_api_, 0, sizeof(backend_api_));
   backend_api_.version = LAUFEY_API_VERSION;
   backend_api_.backend_data = this;
+  backend_api_.test_click_menu_item = Backend_TestClickMenuItem;
 
   backend_api_.create_window = Backend_CreateWindow;
   backend_api_.create_window_ex = Backend_CreateWindowEx;

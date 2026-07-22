@@ -801,6 +801,7 @@ int main(int argc, char* argv[]) {
 
   CefSettings settings;
   settings.no_sandbox = true;
+  settings.log_severity = LaufeyCefLogSeverity();
 
   // Set cache path
   std::string cache_path = "/tmp/laufey_cef_" + std::to_string(getpid());

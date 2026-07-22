@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <queue>
 #include <map>
+#include <set>
 
 #include "include/cef_browser.h"
 #include "include/cef_values.h"
@@ -102,6 +103,19 @@ class RuntimeLoader {
       return wid;
     }
     return 0;
+  }
+
+  // Records that the embedder explicitly set this window's title via the C
+  // API. Once set, the page's document.title / URL must not clobber it (see
+  // LaufeyHandler::OnTitleChange).
+  void MarkExplicitTitle(uint32_t window_id) {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    explicit_title_windows_.insert(window_id);
+  }
+
+  bool HasExplicitTitle(uint32_t window_id) {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    return explicit_title_windows_.count(window_id) > 0;
   }
 
   void RegisterNSWindow(void* nswindow, uint32_t window_id) {
@@ -358,6 +372,9 @@ class RuntimeLoader {
       call_to_window_;  // call_id -> window_id for JsCallRespond
   std::map<void*, uint32_t> nswindow_to_laufey_id_;
   std::map<void*, uint32_t> native_handle_to_laufey_id_;
+  // Windows whose title was explicitly set by the embedder; their titles are
+  // not overwritten by the page's document.title / URL.
+  std::set<uint32_t> explicit_title_windows_;
   std::mutex windows_mutex_;
   std::condition_variable browser_ready_cv_;
   std::atomic<uint32_t> next_window_id_{1};
