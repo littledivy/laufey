@@ -164,7 +164,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/cef
-          key: cef-${{ matrix.os }}-${{ runner.arch }}
+          key: cef-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
 
       # Per-backend deps mirror the proven build-{winit,webview,cef} jobs, plus
       # the runtime libs the *run* step needs (xvfb, dbus, libxkbcommon-x11 for
@@ -344,7 +344,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/cef
-          key: cef-ubuntu-latest-${{ runner.arch }}
+          key: cef-ubuntu-latest-${{ runner.arch }}-${{ hashFiles('Makefile') }}
 
       - name: Build CEF backend
         run: make cef
@@ -368,10 +368,17 @@ jobs:
             ls cef/build/Release || true
             exit 1
           fi
-          timeout 90 \
+          log_file="$RUNNER_TEMP/laufey-cef-e2e.log"
+          LAUFEY_CEF_LOG_SEVERITY=error timeout 90 \
             xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
             dbus-launch --exit-with-session \
-            "$LAUFEY_BIN" --runtime "$PWD/target/release/libcef_e2e_runtime.so"
+            "$LAUFEY_BIN" --runtime "$PWD/target/release/libcef_e2e_runtime.so" \
+            2>&1 | tee "$log_file"
+
+          if grep -Eq 'google_apis/gcm/engine/registration_request|DEPRECATED_ENDPOINT' "$log_file"; then
+            echo "::error::CEF attempted legacy GCM registration"
+            exit 1
+          fi
 
   build-cef:
     name: cef / ${{ matrix.target }}
@@ -419,7 +426,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/cef
-          key: cef-${{ matrix.os }}-${{ runner.arch }}
+          key: cef-${{ matrix.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
 
       - run: make cef
 
