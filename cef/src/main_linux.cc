@@ -158,20 +158,6 @@ static bool ResolveWindow(XIDeviceEvent* dev, uint32_t* out_wid, double* out_x,
   return true;
 }
 
-// Resolve a window XID from an XI2 enter/focus event to a laufey ID.
-static uint32_t ResolveLaufeyId(Window xid) {
-  if (!xid)
-    return 0;
-  RuntimeLoader* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetLaufeyIdForNativeHandle((void*)(uintptr_t)xid);
-  if (wid == 0) {
-    auto it = g_frame_cache.find(xid);
-    if (it != g_frame_cache.end())
-      wid = it->second.laufey_id;
-  }
-  return wid;
-}
-
 static void ProcessXI2Event(XEvent* xev) {
   if (!XGetEventData(xev->xcookie.display, &xev->xcookie))
     return;
@@ -285,13 +271,6 @@ static void ProcessXI2Event(XEvent* xev) {
             g_hover_wid, LAUFEY_MOUSE_RELEASED, laufey_button, g_hover_x,
             g_hover_y, g_hover_modifiers, g_click_tracker.count);
       }
-    }
-  } else if (evtype == XI_FocusIn || evtype == XI_FocusOut) {
-    XIEnterEvent* enter = static_cast<XIEnterEvent*>(xev->xcookie.data);
-    Window target = enter->child ? enter->child : enter->event;
-    uint32_t wid = ResolveLaufeyId(target);
-    if (wid > 0) {
-      loader->DispatchFocusedEvent(wid, evtype == XI_FocusIn ? 1 : 0);
     }
   }
 
@@ -562,8 +541,6 @@ void MonitorLinuxWindowEvents(unsigned long xid) {
   XISetMask(mask_bits, XI_Motion);
   XISetMask(mask_bits, XI_Enter);
   XISetMask(mask_bits, XI_Leave);
-  XISetMask(mask_bits, XI_FocusIn);
-  XISetMask(mask_bits, XI_FocusOut);
 
   XIEventMask xi_mask;
   xi_mask.deviceid = XIAllMasterDevices;

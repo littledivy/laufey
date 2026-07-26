@@ -97,6 +97,11 @@ class LaufeyWindowDelegate : public CefWindowDelegate {
   cef_state_t AcceptsFirstMouse(CefRefPtr<CefWindow> window) override;
 
 #if defined(__linux__)
+  // CEF Views reports activation on both X11 and Wayland. Use this instead of
+  // the X11-only XI2 monitor so focus events work with either Ozone backend.
+  void OnWindowActivationChanged(CefRefPtr<CefWindow> window,
+                                 bool active) override;
+
   // Advertise the Wayland app_id / X11 WM_CLASS (from g_app_id) so window
   // managers can attribute the right `.desktop` file — and therefore the right
   // taskbar/overview icon — to our windows. Without this the app_id defaults to
