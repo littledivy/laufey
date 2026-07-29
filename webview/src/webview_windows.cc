@@ -824,6 +824,29 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                     [this, wid](ICoreWebView2* sender,
                                 ICoreWebView2WebMessageReceivedEventArgs* args)
                         -> HRESULT {
+                      // The injected bridge script runs in every frame
+                      // (AddScriptToExecuteOnDocumentCreated cannot be scoped
+                      // to the main frame), so validate the message source
+                      // here: only accept messages whose document URI matches
+                      // the top-level document. This stops cross-origin/sub
+                      // frames from invoking bindings that run with the host
+                      // process's permissions.
+                      LPWSTR msgSource = nullptr;
+                      LPWSTR topSource = nullptr;
+                      args->get_Source(&msgSource);
+                      sender->get_Source(&topSource);
+                      bool from_main_frame = msgSource && topSource &&
+                                             wcscmp(msgSource, topSource) == 0;
+                      if (msgSource) {
+                        CoTaskMemFree(msgSource);
+                      }
+                      if (topSource) {
+                        CoTaskMemFree(topSource);
+                      }
+                      if (!from_main_frame) {
+                        return S_OK;
+                      }
+
                       LPWSTR messageRaw;
                       args->TryGetWebMessageAsString(&messageRaw);
                       if (messageRaw) {

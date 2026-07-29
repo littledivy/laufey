@@ -735,8 +735,12 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
         "            method: path.join('.'),\n"
         "            args: processedArgs\n"
         "          }));");
+    // Inject the bridge into the top frame only. Cross-origin/sub frames must
+    // not inherit it; otherwise embedded content could invoke bindings running
+    // with the host process's permissions. Matches the macOS/iOS
+    // forMainFrameOnly:YES behavior.
     WebKitUserScript* script = webkit_user_script_new(
-        initScript.c_str(), WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
+        initScript.c_str(), WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
         WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, nullptr, nullptr);
     webkit_user_content_manager_add_script(content_manager, script);
     webkit_user_script_unref(script);

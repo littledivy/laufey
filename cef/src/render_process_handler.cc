@@ -157,6 +157,14 @@ void LaufeyRenderProcessHandler::OnBrowserCreated(
 void LaufeyRenderProcessHandler::OnContextCreated(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     CefRefPtr<CefV8Context> context) {
+  // Only the main frame receives the bridge. Cross-origin (or any sub-) frames
+  // must not inherit `window[ns]`; otherwise embedded content could invoke
+  // bindings that run with the host process's permissions. Mirrors the
+  // macOS/iOS WebView backends, which inject with forMainFrameOnly:YES.
+  if (!frame || !frame->IsMain()) {
+    return;
+  }
+
   CefRefPtr<CefV8Value> global = context->GetGlobal();
 
   std::string ns = "Laufey";

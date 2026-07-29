@@ -404,6 +404,15 @@ bool LaufeyHandler::OnProcessMessageReceived(
   const std::string& name = message->GetName().ToString();
 
   if (name == "laufey_call") {
+    // Defense in depth: even though the renderer only installs the bridge in
+    // the main frame, a compromised renderer could forge a laufey_call from a
+    // sub-frame. Frame provenance is discarded once dispatched to the runtime
+    // (only the browser maps to a window id), so drop anything that is not the
+    // main frame here.
+    if (!frame || !frame->IsMain()) {
+      return true;
+    }
+
     CefRefPtr<CefListValue> args = message->GetArgumentList();
     uint64_t call_id = static_cast<uint64_t>(args->GetDouble(0));
     std::string method_path = args->GetString(1).ToString();
