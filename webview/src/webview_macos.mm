@@ -1538,9 +1538,15 @@ void WKWebViewBackend::ShowContextMenu(uint32_t window_id, int x, int y,
       return;
 
     NSView* view = [win contentView];
-    // Convert from top-left origin (laufey coordinates) to bottom-left origin
-    // (NSView)
-    NSPoint loc = NSMakePoint(x, [view frame].size.height - y);
+    // LAUFEY coordinates are window-relative with a top-left origin (the web
+    // convention). -popUpMenuPositioningItem:atLocation:inView: reads the
+    // location in the view's *own* coordinate system, which is top-left only
+    // when the view is flipped. The content view here is the WKWebView, and
+    // -[WKWebView isFlipped] is YES, so flipping unconditionally put the menu
+    // at (height - y) — mirrored about the window's midline. Only convert for
+    // views that really are bottom-left.
+    NSPoint loc =
+        NSMakePoint(x, [view isFlipped] ? y : [view frame].size.height - y);
     [menu popUpMenuPositioningItem:nil atLocation:loc inView:view];
   });
 }
