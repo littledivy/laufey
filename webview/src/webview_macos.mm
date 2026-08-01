@@ -184,10 +184,11 @@ static void UnregisterNSWindow(NSWindow* win) {
   g_nswindow_to_laufey_id.erase((__bridge void*)win);
 }
 
-// A borderless NSWindow returns NO from -canBecomeKeyWindow/-canBecomeMainWindow
-// by default, so a frameless window never takes key focus and its WKWebView
-// never becomes first responder — killing all keyboard and mouse input. This
-// subclass forces both to YES so frameless windows behave like normal ones.
+// A borderless NSWindow returns NO from
+// -canBecomeKeyWindow/-canBecomeMainWindow by default, so a frameless window
+// never takes key focus and its WKWebView never becomes first responder —
+// killing all keyboard and mouse input. This subclass forces both to YES so
+// frameless windows behave like normal ones.
 @interface LaufeyKeyableWindow : NSWindow
 @end
 
