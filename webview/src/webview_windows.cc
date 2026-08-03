@@ -71,9 +71,11 @@ inline uint32_t GetLaufeyModifiers() {
 static std::wstring Utf8ToWide(const std::string& str) {
   if (str.empty())
     return std::wstring();
-  int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-  std::wstring result(size - 1, 0);
-  MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &result[0], size);
+  int size = MultiByteToWideChar(CP_UTF8, 0, str.data(),
+                                 static_cast<int>(str.size()), nullptr, 0);
+  std::wstring result(size, 0);
+  MultiByteToWideChar(CP_UTF8, 0, str.data(), static_cast<int>(str.size()),
+                      result.data(), size);
   return result;
 }
 
@@ -81,11 +83,12 @@ static std::wstring Utf8ToWide(const std::string& str) {
 static std::string WideToUtf8(const std::wstring& wstr) {
   if (wstr.empty())
     return std::string();
-  int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0,
+  int size = WideCharToMultiByte(CP_UTF8, 0, wstr.data(),
+                                 static_cast<int>(wstr.size()), nullptr, 0,
                                  nullptr, nullptr);
-  std::string result(size - 1, 0);
-  WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &result[0], size, nullptr,
-                      nullptr);
+  std::string result(size, 0);
+  WideCharToMultiByte(CP_UTF8, 0, wstr.data(), static_cast<int>(wstr.size()),
+                      result.data(), size, nullptr, nullptr);
   return result;
 }
 
