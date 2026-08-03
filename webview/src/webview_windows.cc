@@ -585,7 +585,7 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
     }
   }
 
-  return DefWindowProc(hwnd, msg, wParam, lParam);
+  return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 WebView2Backend::WebView2Backend() {
