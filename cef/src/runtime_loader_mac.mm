@@ -445,9 +445,13 @@ void Backend_ShowContextMenu_Mac(void* data, uint32_t window_id, int x, int y,
       return;
 
     NSView* contentView = [win contentView];
-    // Convert from top-left origin (laufey coordinates) to bottom-left origin
-    // (NSView)
-    NSPoint loc = NSMakePoint(x, [contentView frame].size.height - y);
+    // LAUFEY coordinates are window-relative with a top-left origin (the web
+    // convention). -popUpMenuPositioningItem:atLocation:inView: reads the
+    // location in the view's *own* coordinate system, which is top-left only
+    // when the view is flipped. Flipping unconditionally mirrors the menu
+    // about the window's midline whenever the content view already is.
+    NSPoint loc = NSMakePoint(
+        x, [contentView isFlipped] ? y : [contentView frame].size.height - y);
     [menu popUpMenuPositioningItem:nil atLocation:loc inView:contentView];
   });
 }
