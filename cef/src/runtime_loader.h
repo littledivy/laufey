@@ -302,11 +302,17 @@ class RuntimeLoader {
     close_requested_user_data_ = user_data;
   }
 
-  void DispatchCloseRequestedEvent(uint32_t window_id) {
+  // Returns true if the caller should proceed to actually close. A
+  // registered handler always defers the close (API >= 31): the app
+  // decides later, out of band, by calling close_window. No handler means
+  // proceed, unchanged from backends predating API 31.
+  bool DispatchCloseRequestedEvent(uint32_t window_id) {
     std::lock_guard<std::mutex> lock(close_requested_mutex_);
     if (close_requested_handler_) {
       close_requested_handler_(close_requested_user_data_, window_id);
+      return false;
     }
+    return true;
   }
 
   // --- Custom URL scheme handler (API >= 26) ---

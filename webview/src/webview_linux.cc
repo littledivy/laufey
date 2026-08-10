@@ -463,10 +463,12 @@ static void on_script_message(WebKitUserContentManager* manager,
   }
 }
 
+// "destroy" fires only after the widget is already being torn down -- too
+// late to veto anything, so it's just final cleanup. The close-requested
+// dispatch (and any veto) happens earlier, from "delete-event" below.
 static void on_window_destroy(GtkWidget* widget, gpointer user_data) {
   uint32_t wid = LaufeyIdForWidget(widget);
   if (wid > 0) {
-    RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
     UnregisterWidget(widget);
   }
   // If no more windows, quit
@@ -476,6 +478,23 @@ static void on_window_destroy(GtkWidget* widget, gpointer user_data) {
       gtk_main_quit();
     }
   }
+}
+
+// "delete-event" fires when the user requests a close (e.g. clicks the
+// titlebar close button) and, unlike "destroy", can veto it: returning TRUE
+// blocks GTK's default handler from calling gtk_widget_destroy. A registered
+// handler always defers (returns TRUE here); no handler falls through to
+// the unchanged default flow (proceeds to destroy, which fires
+// on_window_destroy above).
+static gboolean on_window_delete_event(GtkWidget* widget, GdkEvent* event,
+                                       gpointer user_data) {
+  uint32_t wid = LaufeyIdForWidget(widget);
+  if (wid == 0) {
+    return FALSE;
+  }
+  bool proceed =
+      RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
+  return proceed ? FALSE : TRUE;
 }
 
 WebKitGTKBackend::WebKitGTKBackend() {
@@ -672,6 +691,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     }
     gtk_window_set_default_size(GTK_WINDOW(window), width, height);
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), nullptr);
+    g_signal_connect(window, "delete-event",
+                     G_CALLBACK(on_window_delete_event), nullptr);
     g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_event),
                      nullptr);
     g_signal_connect(window, "key-release-event", G_CALLBACK(on_key_event),

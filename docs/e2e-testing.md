@@ -24,7 +24,12 @@ matrix over the C ABI surface, and a phased rollout.
 > by CEF/WebView. The macOS self-accessibility approach (`§7.2`) is verified
 > standalone but not yet embedded (it needs the backend's main thread — see
 > `§8`). Implementing the hook exposed and fixed a pre-existing self-deadlock in
-> the Winit menu-callback registration.
+> the Winit menu-callback registration. The `test_trigger_close_requested`
+> hook (API 31, `§8`) for `set_close_requested_handler`'s
+> defer-until-close_window contract is implemented for all backends and
+> verified green under Winit and WebView on macOS; it rides the same
+> pre-existing CI exclusions above for CEF and the Windows/Linux webview
+> combos, so those aren't gated by it yet.
 
 ---
 
@@ -363,6 +368,39 @@ Doing this surfaced and fixed a pre-existing self-deadlock in Winit:
 submenus (std `Mutex` is not reentrant), freezing the main thread on any menu
 containing a submenu.
 
+**Implemented (API 31):**
+
+```c
+// Synthesizes a close-requested event on window_id through the same
+// dispatch path a real OS close click uses. Returns true if the window is
+// still open afterward (a registered set_close_requested_handler deferred
+// the close), false if it closed immediately (no handler was registered).
+bool (*test_trigger_close_requested)(void* backend_data, uint32_t window_id);
+```
+
+Implemented for both native-chrome codebases, reusing each backend's existing
+close dispatch rather than a new registry (unlike the click hook, there's
+nothing to "look up by id" — a window has at most one pending close):
+
+- **Winit** (`backend-winit-common`): dispatches via the same
+  `dispatch_close_requested_event`, then queues the same
+  `CommonEvent::CloseWindow` `close_window` uses if the dispatch says to
+  proceed.
+- **CEF + WebView** (each backend's `RuntimeLoader`): dispatches via
+  `DispatchCloseRequestedEvent`, then calls `CloseWindow`/`Backend_CloseWindow`
+  directly if it says to proceed.
+
+The capi exposes `laufey::test_trigger_close_requested(window_id)`. The
+`native_e2e` runtime registers an `on_close_requested` handler that *stashes* the
+window_id instead of resolving inline, calls the hook to confirm the window
+stays open, then closes it from outside the handler and confirms it
+actually closes — proving resolution genuinely works from outside the
+handler (not just that a bool threads through) round-trips.
+Verified green under Winit and WebView on macOS; CEF and the Windows/Linux
+webview backends implement the same plumbing but ride the pre-existing
+`native-e2e` CI exclusions for those combos (`§` status note above) — not
+gated by this change, but not covered by CI for it either.
+
 **Not yet added** (future hooks, same append-and-`N/A` pattern):
 
 ```c
@@ -390,6 +428,7 @@ per-OS (`Linux/macOS/Windows`); WebView's web-layer cells differ by engine.
 | -------------------------------------- | --------- | --- | ------- | ---------------- | ---------------------- |
 | Window geometry/state/opacity readback | A         | ✅  | ✅      | ✅ (Rust)        | ✅                     |
 | Window lifecycle events                | B         | ✅  | ✅      | ✅               | ✅                     |
+| Close handler (defer-until-close)      | B (`§8`)  | ✅ (Linux/Win nightly-only) | ✅ (Linux nightly-only) | ✅ | ✅ (macOS; see `§8`) |
 | Clipboard round-trip                   | A         | ✅  | ✅      | ✅               | ✅                     |
 | Window handles / types                 | A         | ✅  | ✅      | ✅               | ✅                     |
 | Application / context menu             | D + B     | ✅  | ✅      | ✅ (`muda`)      | ✅                     |

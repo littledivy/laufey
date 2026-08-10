@@ -636,6 +636,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "confirm_before_quit_runtime"
+version = "0.1.0"
+dependencies = [
+ "laufey",
+ "tokio",
+]
+
+[[package]]
 name = "cooked-waker"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

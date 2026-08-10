@@ -179,6 +179,18 @@ bool LaufeyHandler::OnBeforePopup(
 
 bool LaufeyHandler::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+  auto* loader = RuntimeLoader::GetInstance();
+  uint32_t wid = loader->GetLaufeyIdForBrowser(browser);
+  bool proceed = (wid == 0) || loader->DispatchCloseRequestedEvent(wid);
+  if (!proceed) {
+    // A registered handler always defers: the app decides later, out of
+    // band, by calling close_window() -- which force-closes via
+    // CloseBrowser(true) and bypasses this negotiation entirely.
+    // is_closing_ is deliberately NOT set here so a later close attempt
+    // (e.g. Cmd+Q) runs this sequence fresh instead of silently no-op'ing
+    // (see IsClosing() in main_mac.mm).
+    return true;
+  }
   if (browser_list_.size() == 1) {
     is_closing_ = true;
   }
@@ -187,12 +199,6 @@ bool LaufeyHandler::DoClose(CefRefPtr<CefBrowser> browser) {
 
 void LaufeyHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-
-  auto* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetLaufeyIdForBrowser(browser);
-  if (wid > 0) {
-    loader->DispatchCloseRequestedEvent(wid);
-  }
 
   for (auto it = browser_list_.begin(); it != browser_list_.end(); ++it) {
     if ((*it)->IsSame(browser)) {
@@ -390,6 +396,13 @@ void LaufeyHandler::CloseAllBrowsers(bool force_close) {
     CefPostTask(TID_UI, base::BindOnce(&LaufeyHandler::CloseAllBrowsers, this,
                                        force_close));
     return;
+  }
+  // A forced close bypasses DoClose (see close_window's CloseBrowser(true)),
+  // so it never sets is_closing_ there. Set it here instead -- the only
+  // caller is terminate:'s app-quit path, which checks IsClosing() as a
+  // reentry guard against a second quit attempt.
+  if (force_close) {
+    is_closing_ = true;
   }
   for (const auto& browser : browser_list_) {
     browser->GetHost()->CloseBrowser(force_close);

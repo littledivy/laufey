@@ -1392,6 +1392,20 @@ static void Backend_SetCloseRequestedHandler(void* data,
   loader->SetCloseRequestedHandler(handler, user_data);
 }
 
+// Test hook (API >= 31): synthesize a close-requested event through the same
+// dispatch path a real OS close click uses (see DoClose in app.cc). Returns
+// true if the window is still open afterward (a registered handler
+// deferred the close).
+static bool Backend_TestTriggerCloseRequested(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  bool proceed = loader->DispatchCloseRequestedEvent(window_id);
+  if (proceed) {
+    Backend_CloseWindow(data, window_id);
+    return false;
+  }
+  return true;
+}
+
 static int Backend_ShowDialog(void* /*data*/, uint32_t /*window_id*/,
                               int dialog_type, const char* title,
                               const char* message, const char* default_value,
@@ -1518,6 +1532,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_resize_handler = Backend_SetResizeHandler;
   backend_api_.set_move_handler = Backend_SetMoveHandler;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
+  backend_api_.test_trigger_close_requested = Backend_TestTriggerCloseRequested;
 
   backend_api_.poll_js_calls = [](void* data) {
     RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);

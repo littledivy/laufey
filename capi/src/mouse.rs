@@ -463,6 +463,8 @@ pub struct CloseRequestedEvent {
   pub window_id: u32,
 }
 
+// See `Window::on_close_requested` for the public contract; this just dispatches to
+// the registered handler for `window_id`, if any.
 unsafe extern "C" fn close_requested_trampoline(
   _user_data: *mut c_void,
   window_id: u32,
@@ -721,5 +723,83 @@ mod tests {
     };
     assert!(focused.focused);
     assert!(!blurred.focused);
+  }
+
+  // --- Close requested trampoline / handler map ---
+  //
+  // These call `close_requested_trampoline` directly rather than going
+  // through `on_close_requested`/`ensure_close_requested`, which call
+  // `crate::api()` and would panic without a real backend API table
+  // registered. The trampoline itself only touches the handler map, so it's
+  // testable in isolation.
+
+  #[test]
+  fn close_requested_no_handler_is_noop() {
+    // No handler registered for this window_id: dispatching must not panic
+    // and must not touch any other window's handler.
+    close_requested_handlers().lock().unwrap().clear();
+    unsafe { close_requested_trampoline(std::ptr::null_mut(), 9001) };
+  }
+
+  #[test]
+  fn close_requested_dispatches_to_registered_handler_once() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let window_id = 4242;
+    let calls = Arc::new(AtomicU32::new(0));
+    let seen_window_id = Arc::new(AtomicU32::new(0));
+
+    {
+      let calls = calls.clone();
+      let seen_window_id = seen_window_id.clone();
+      close_requested_handlers().lock().unwrap().insert(
+        window_id,
+        Box::new(move |event: CloseRequestedEvent| {
+          calls.fetch_add(1, Ordering::SeqCst);
+          seen_window_id.store(event.window_id, Ordering::SeqCst);
+        }),
+      );
+    }
+
+    unsafe { close_requested_trampoline(std::ptr::null_mut(), window_id) };
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(seen_window_id.load(Ordering::SeqCst), window_id);
+
+    close_requested_handlers()
+      .lock()
+      .unwrap()
+      .remove(&window_id);
+  }
+
+  #[test]
+  fn close_requested_only_fires_handler_for_matching_window_id() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let registered_window_id = 1;
+    let other_window_id = 2;
+    let fired = Arc::new(AtomicBool::new(false));
+
+    {
+      let fired = fired.clone();
+      close_requested_handlers().lock().unwrap().insert(
+        registered_window_id,
+        Box::new(move |_event: CloseRequestedEvent| {
+          fired.store(true, Ordering::SeqCst);
+        }),
+      );
+    }
+
+    unsafe {
+      close_requested_trampoline(std::ptr::null_mut(), other_window_id)
+    };
+    assert!(!fired.load(Ordering::SeqCst));
+
+    close_requested_handlers()
+      .lock()
+      .unwrap()
+      .remove(&registered_window_id);
   }
 }

@@ -554,9 +554,15 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
           false);
       break;
     }
-    case WM_CLOSE:
+    case WM_CLOSE: {
+      bool proceed = true;
       if (wid > 0) {
-        RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
+        proceed = RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
+      }
+      if (!proceed) {
+        // A close-requested handler deferred the close: leave the window open.
+        // Not calling DestroyWindow is the standard Win32 idiom for this.
+        return 0;
       }
       // Check if any windows remain
       {
@@ -569,6 +575,7 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       }
       DestroyWindow(hwnd);
       return 0;
+    }
     case WM_COMMAND:
       if (win32_menu::HandleMenuCommand(hwnd, wParam))
         return 0;

@@ -10,9 +10,11 @@
 //!   [e2e] FAIL <name>   supported here but wrong  -> process exits 1
 //!   [e2e] N/A  <name>   capability absent on this backend (not a failure)
 //!
-//! This covers Layer 0 (in-process readback + event-callback round-trips) and
+//! This covers Layer 0 (in-process readback + event-callback round-trips),
 //! menu/tray *click* round-trips via the `test_click_menu_item` C ABI hook
-//! (API 30+; `N/A` on backends without it). OS-observer *structure* checks
+//! (API 30+; `N/A` on backends without it), and the close-handler round-trip
+//! via `test_trigger_close_requested` (API 31+; `N/A` on backends without
+//! it). OS-observer *structure* checks
 //! (Layer 1: the Linux D-Bus driver; macOS/Windows pending a backend hook)
 //! live outside this runtime. See docs/e2e-testing.md.
 //!
@@ -350,6 +352,72 @@ fn e2e_main() {
     // (a dispatch_sync to the main queue deadlocks against the backend event
     // loop). It belongs behind a backend test hook; tracked as a follow-up.
     na("menu/tray OS-structure check (Linux: D-Bus driver; macOS/Windows: pending backend hook)");
+
+    // ---- close-requested handler round-trip --------------------------------
+    // A second window (kept separate from `win`, which must survive to
+    // shutdown). Registers an on_close_requested handler that *stashes* the
+    // window_id instead of resolving inline — proving resolution genuinely
+    // works from outside the handler (any thread, any time), not just
+    // synchronously inline. Synthesizes the close via
+    // test_trigger_close_requested (API >= 31); N/A on backends without it.
+    let close_win = Window::new(200, 150)
+      .title("native-e2e-close")
+      .load("data:text/html,<!doctype html><title>close</title>");
+    let close_win_id = close_win.id();
+    let baseline_sized = wait_for(
+      || {
+        let (w, _h) = close_win.get_size();
+        w != 0
+      },
+      50,
+      40,
+    )
+    .await;
+
+    let close_handler_fired = Arc::new(AtomicBool::new(false));
+    let pending_close: Arc<std::sync::Mutex<Option<u32>>> =
+      Arc::new(std::sync::Mutex::new(None));
+    let close_win = {
+      let fired = close_handler_fired.clone();
+      let pending = pending_close.clone();
+      close_win.on_close_requested(move |event| {
+        fired.store(true, Ordering::SeqCst);
+        *pending.lock().unwrap() = Some(event.window_id);
+      })
+    };
+
+    let still_open_after_defer =
+      laufey::test_trigger_close_requested(close_win_id);
+    if !baseline_sized || !close_handler_fired.load(Ordering::SeqCst) {
+      na("close handler (backend has no test_trigger_close_requested hook, API < 31)");
+    } else {
+      check(
+        "close handler defers — window stays open",
+        still_open_after_defer,
+      );
+      let (w, _h) = close_win.get_size();
+      check("window state still readable after deferred close", w != 0);
+
+      // Resolve the stashed window_id — from here, not from inside the
+      // handler — and confirm the window actually closes.
+      let pending_id = pending_close.lock().unwrap().take();
+      if let Some(id) = pending_id {
+        Window::from_id(id).close();
+      }
+      let closed = wait_for(
+        || {
+          let (w, h) = close_win.get_size();
+          w == 0 && h == 0
+        },
+        50,
+        40,
+      )
+      .await;
+      check(
+        "closing from outside the on_close_requested handler actually closes the window",
+        closed,
+      );
+    }
 
     // ---- Layer-1 hold ----------------------------------------------------
     // When driven by the D-Bus observer (native_e2e_driver), stay alive with

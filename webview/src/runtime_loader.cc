@@ -493,6 +493,21 @@ static void Backend_SetCloseRequestedHandler(void* data,
   loader->SetCloseRequestedHandler(handler, user_data);
 }
 
+// Test hook (API >= 31): synthesize a close-requested event through the same
+// dispatch path a real OS close click uses. Returns true if the window is
+// still open afterward (a registered handler deferred the close).
+static bool Backend_TestTriggerCloseRequested(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  bool proceed = loader->DispatchCloseRequestedEvent(window_id);
+  if (proceed) {
+    if (LaufeyBackend* backend = loader->GetBackend()) {
+      backend->CloseWindow(window_id);
+    }
+    return false;
+  }
+  return true;
+}
+
 static void Backend_SetPageLoadHandler(void* data, laufey_page_load_fn handler,
                                        void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
@@ -755,6 +770,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.create_window_ex = Backend_CreateWindowEx;
   backend_api_.close_window = Backend_CloseWindow;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
+  backend_api_.test_trigger_close_requested = Backend_TestTriggerCloseRequested;
   backend_api_.set_page_load_handler = Backend_SetPageLoadHandler;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;

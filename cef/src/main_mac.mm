@@ -53,9 +53,13 @@ void LaufeyOpenExternalURL(const std::string& url) {
 }
 
 - (void)terminate:(id)sender {
+  // Force-close (bypass DoClose/the close-requested hook) -- app-level quit
+  // (the "quit" menu role routes here) is intentionally not interceptable
+  // by a window's on_close hook, only the window's own close control is.
+  // Matches close_window()'s CloseBrowser(true), the same bypass path.
   LaufeyHandler* handler = LaufeyHandler::GetInstance();
   if (handler && !handler->IsClosing()) {
-    handler->CloseAllBrowsers(false);
+    handler->CloseAllBrowsers(true);
   }
 }
 @end

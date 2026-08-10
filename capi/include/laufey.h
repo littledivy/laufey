@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 30
+#define LAUFEY_API_VERSION 31
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -244,7 +244,15 @@ typedef void (*laufey_keyboard_event_fn)(
     uint32_t modifiers,  // bitmask of LAUFEY_MOD_* flags
     bool repeat);
 
-// Callback for window close requested events.
+// Callback for window close requested events. Registering this handler
+// (API >= 31) makes the backend WAIT: the window does not close on its own
+// when the user clicks the close button. Do whatever work is needed --
+// flush writes, close file handles, ask the user -- then call
+// close_window(window_id) -- the existing API, safe to call from any
+// thread, at any later time, synchronously or asynchronously -- to
+// actually close it. Doing nothing leaves the window open indefinitely.
+// With no handler registered, the window closes immediately on click, same
+// as backends predating API 31.
 typedef void (*laufey_close_requested_fn)(void* user_data, uint32_t window_id);
 
 // Callback fired when a window finishes loading a navigation (the document and
@@ -435,7 +443,9 @@ struct laufey_backend_api {
   void (*set_move_handler)(void* backend_data, laufey_move_fn handler,
                            void* user_data);
 
-  // Register a handler for window close requested events.
+  // Register a handler for window close requested events. See
+  // laufey_close_requested_fn's doc comment for the defer-until-close_window
+  // contract (API >= 31).
   void (*set_close_requested_handler)(void* backend_data,
                                       laufey_close_requested_fn handler,
                                       void* user_data);
@@ -736,6 +746,16 @@ struct laufey_backend_api {
   // exercise menu/tray click round-trips without OS-level input injection or
   // main-thread UI access. NULL on backends that don't implement it.
   bool (*test_click_menu_item)(void* backend_data, const char* item_id);
+
+  // Test-only. Synthesizes a close-requested event on window_id through the
+  // same dispatch path a real OS close click uses. Returns true if the
+  // window is still open afterward (a registered close_requested_handler
+  // deferred the close), false if it closed immediately (no handler was
+  // registered). Same best-effort-probe convention as test_click_menu_item:
+  // also returns true (indistinguishable from "still open") if the backend
+  // doesn't implement this hook (API < 31) or window_id is unknown. NULL on
+  // backends that don't implement it.
+  bool (*test_trigger_close_requested)(void* backend_data, uint32_t window_id);
 };
 
 #ifdef __cplusplus

@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 30;
+pub const LAUFEY_API_VERSION: u32 = 31;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -1084,6 +1084,24 @@ impl Window {
     self
   }
 
+  /// Registering this holds the window open: it won't close on its own
+  /// once this fires. Doing nothing in the handler leaves it open; call
+  /// `Window::close()` (synchronously in the handler, or later from any
+  /// thread, e.g. after a confirm dialog) to actually close it.
+  ///
+  /// Fires only for the window's own close control (title bar button,
+  /// `Alt+F4`, a window manager's close action) -- never `Cmd+Q`, a "Quit"
+  /// menu/tray item, or any other app-level termination. See `docs/c-abi.md`
+  /// for why that's deliberate.
+  ///
+  /// The handler fires synchronously on the platform's native UI thread
+  /// (e.g. AppKit's `windowShouldClose:`), which has **no ambient Tokio
+  /// reactor** -- a bare `tokio::spawn` inside it panics. To resolve
+  /// asynchronously, capture a `tokio::runtime::Handle` from inside your
+  /// runtime beforehand and call `handle.spawn(...)` from the handler
+  /// instead; a `Handle` works from any thread, including this one. For a
+  /// synchronous confirm dialog, `Window::confirm()` can be called directly
+  /// in the handler instead.
   pub fn on_close_requested<F>(self, handler: F) -> Self
   where
     F: Fn(CloseRequestedEvent) + Send + Sync + 'static,
@@ -1376,6 +1394,23 @@ pub fn test_click_menu_item(item_id: &str) -> bool {
   };
   // SAFETY: `c_id` outlives the call; the backend only reads the string.
   unsafe { f(api.backend_data, c_id.as_ptr()) }
+}
+
+/// Test-only. Synthesizes a close-requested event on `window_id` through the
+/// same dispatch path a real OS close click uses. Returns `true` if the
+/// window is still open afterward (an [`Window::on_close_requested`] handler
+/// deferred the close), `false` if it closed immediately (no handler was
+/// registered, or the backend does not implement the test hook, API < 31 --
+/// indistinguishable from "closed").
+///
+/// Intended for automated e2e tests. See `examples/native_e2e` and
+/// `docs/e2e-testing.md`.
+pub fn test_trigger_close_requested(window_id: u32) -> bool {
+  let api = api();
+  let Some(f) = api.test_trigger_close_requested else {
+    return false;
+  };
+  unsafe { f(api.backend_data, window_id) }
 }
 
 /// A menu item in an application menu template.

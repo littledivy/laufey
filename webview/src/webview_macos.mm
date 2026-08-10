@@ -473,8 +473,10 @@ class MacSchemeExchange : public SchemeExchangeBase {
 @implementation LaufeyWindowDelegate
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
-  RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(self.windowId);
-  return NO;
+  return RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(
+             self.windowId)
+             ? YES
+             : NO;
 }
 
 @end
