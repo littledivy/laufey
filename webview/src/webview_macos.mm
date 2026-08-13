@@ -38,6 +38,7 @@ struct MacWindowState {
   NSMenu* menu = nil;  // per-window menu (nil = no custom menu)
   LaufeyUIDelegate* ui_delegate;
   LaufeyNavigationDelegate* navigation_delegate;
+  id title_observer = nil;  // KVO observer mirroring document.title
 };
 
 class WKWebViewBackend : public LaufeyBackend {
@@ -479,6 +480,33 @@ class MacSchemeExchange : public SchemeExchangeBase {
 
 @end
 
+// Mirrors the page's `document.title` onto the NSWindow title via KVO on
+// WKWebView.title, matching the Windows (DocumentTitleChanged) and Linux
+// (notify::title) backends — macOS was the only backend where a page setting
+// `document.title` never reached the OS-level window title
+// (denoland/deno#35711). An empty title (page without <title>) is ignored so
+// it doesn't clobber the host-set default (app name).
+@interface LaufeyTitleObserver : NSObject
+@property(nonatomic, weak) NSWindow* window;
+@end
+
+@implementation LaufeyTitleObserver
+
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary*)change
+                       context:(void*)context {
+  if (![keyPath isEqualToString:@"title"]) {
+    return;
+  }
+  NSString* title = change[NSKeyValueChangeNewKey];
+  if ([title isKindOfClass:[NSString class]] && title.length > 0) {
+    [self.window setTitle:title];
+  }
+}
+
+@end
+
 @interface LaufeyNavigationDelegate : NSObject <WKNavigationDelegate>
 @property(nonatomic, assign) uint32_t windowId;
 @end
@@ -591,6 +619,8 @@ void WKWebViewBackend::RemoveWindowState(uint32_t window_id) {
           removeObserver:state.resize_observer];
     if (state.move_observer)
       [[NSNotificationCenter defaultCenter] removeObserver:state.move_observer];
+    if (state.webview && state.title_observer)
+      [state.webview removeObserver:state.title_observer forKeyPath:@"title"];
     if (state.webview)
       [state.webview.configuration.userContentController
           removeScriptMessageHandlerForName:@"laufey"];
@@ -970,6 +1000,13 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                     }
                   }];
 
+      LaufeyTitleObserver* titleObserver = [[LaufeyTitleObserver alloc] init];
+      titleObserver.window = window;
+      [webview addObserver:titleObserver
+                forKeyPath:@"title"
+                   options:NSKeyValueObservingOptionNew
+                   context:nil];
+
       MacWindowState state;
       state.window_id = window_id;
       state.window = window;
@@ -982,6 +1019,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       state.blur_observer = blur_obs;
       state.resize_observer = resize_obs;
       state.move_observer = move_obs;
+      state.title_observer = titleObserver;
 
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
