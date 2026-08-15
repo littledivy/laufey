@@ -264,9 +264,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   if (g_runtime_path.empty()) {
-    char envPath[MAX_PATH];
-    if (GetEnvironmentVariableA("LAUFEY_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
-      g_runtime_path = envPath;
+    // Read as UTF-16 and convert to UTF-8; the ANSI variant would garble
+    // non-ASCII paths in the active codepage.
+    wchar_t envPath[MAX_PATH];
+    DWORD envLen =
+        GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", envPath, MAX_PATH);
+    if (envLen > 0 && envLen < MAX_PATH) {
+      int size = WideCharToMultiByte(CP_UTF8, 0, envPath, -1, nullptr, 0,
+                                     nullptr, nullptr);
+      g_runtime_path.resize(size - 1);
+      WideCharToMultiByte(CP_UTF8, 0, envPath, -1, &g_runtime_path[0], size,
+                          nullptr, nullptr);
     }
   }
 

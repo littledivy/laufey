@@ -36,9 +36,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   if (runtimePath.empty()) {
-    char envPath[MAX_PATH];
-    if (GetEnvironmentVariableA("LAUFEY_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
-      runtimePath = envPath;
+    // Read as UTF-16 and convert to UTF-8; the ANSI variant would garble
+    // non-ASCII paths in the active codepage.
+    wchar_t envPath[MAX_PATH];
+    DWORD envLen =
+        GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", envPath, MAX_PATH);
+    if (envLen > 0 && envLen < MAX_PATH) {
+      int size = WideCharToMultiByte(CP_UTF8, 0, envPath, -1, nullptr, 0,
+                                     nullptr, nullptr);
+      runtimePath.resize(size - 1);
+      WideCharToMultiByte(CP_UTF8, 0, envPath, -1, &runtimePath[0], size,
+                          nullptr, nullptr);
     }
   }
 
@@ -73,9 +81,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   loader->SetBackend(backend);
 
   if (!loader->Load(runtimePath)) {
-    MessageBoxA(nullptr,
-                ("Failed to load runtime from: " + runtimePath).c_str(),
-                "LAUFEY Webview Error", MB_OK | MB_ICONERROR);
+    // The path is UTF-8; show it through the wide API so non-ASCII
+    // characters render correctly in the dialog.
+    int wlen =
+        MultiByteToWideChar(CP_UTF8, 0, runtimePath.c_str(), -1, nullptr, 0);
+    std::wstring wpath(wlen > 0 ? wlen - 1 : 0, L'\0');
+    if (wlen > 0) {
+      MultiByteToWideChar(CP_UTF8, 0, runtimePath.c_str(), -1, &wpath[0], wlen);
+    }
+    MessageBoxW(nullptr, (L"Failed to load runtime from: " + wpath).c_str(),
+                L"LAUFEY Webview Error", MB_OK | MB_ICONERROR);
     delete backend;
     CoUninitialize();
     return 1;
