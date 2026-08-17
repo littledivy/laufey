@@ -306,6 +306,24 @@ uint64_t LaufeyRenderProcessHandler::GetNextCallId() {
   return next_call_id_++;
 }
 
+// CefV8Value has no native typed-array introspection, so detect
+// ArrayBufferViews structurally: anything whose `buffer` property is an
+// ArrayBuffer and that carries numeric byteOffset/byteLength is (or is
+// indistinguishable from) a typed array / DataView.
+static bool IsArrayBufferView(CefRefPtr<CefV8Value> v8val) {
+  if (!v8val || !v8val->IsObject()) {
+    return false;
+  }
+  CefRefPtr<CefV8Value> buffer = v8val->GetValue("buffer");
+  if (!buffer || !buffer->IsArrayBuffer()) {
+    return false;
+  }
+  CefRefPtr<CefV8Value> off = v8val->GetValue("byteOffset");
+  CefRefPtr<CefV8Value> len = v8val->GetValue("byteLength");
+  return off && len && (off->IsInt() || off->IsUInt() || off->IsDouble()) &&
+         (len->IsInt() || len->IsUInt() || len->IsDouble());
+}
+
 CefRefPtr<CefValue> LaufeyRenderProcessHandler::V8ValueToCefValue(
     CefRefPtr<CefV8Value> v8val) {
   CefRefPtr<CefValue> value = CefValue::Create();
@@ -327,6 +345,34 @@ CefRefPtr<CefValue> LaufeyRenderProcessHandler::V8ValueToCefValue(
       list->SetValue(i, V8ValueToCefValue(v8val->GetValue(i)));
     }
     value->SetList(list);
+  } else if (v8val->IsArrayBuffer()) {
+    // Must be checked before IsObject: an ArrayBuffer satisfies IsObject
+    // too, so the old object-branch-first ordering objectified binary
+    // arguments into {} (denoland/deno#36498).
+    void* data = v8val->GetArrayBufferData();
+    size_t len = v8val->GetArrayBufferByteLength();
+    if (data && len > 0) {
+      value->SetBinary(CefBinaryValue::Create(data, len));
+    } else {
+      value->SetNull();
+    }
+  } else if (IsArrayBufferView(v8val)) {
+    // Typed arrays (Uint8Array et al.) and DataView: copy the viewed byte
+    // range out of the underlying buffer. Without this they fell into the
+    // object branch and arrived as index-keyed dictionaries — wrong shape,
+    // and pathologically slow for large views (denoland/deno#36498).
+    CefRefPtr<CefV8Value> ab = v8val->GetValue("buffer");
+    auto* data = static_cast<uint8_t*>(ab->GetArrayBufferData());
+    size_t ab_len = ab->GetArrayBufferByteLength();
+    size_t off =
+        static_cast<size_t>(v8val->GetValue("byteOffset")->GetUIntValue());
+    size_t len =
+        static_cast<size_t>(v8val->GetValue("byteLength")->GetUIntValue());
+    if (data && len > 0 && off <= ab_len && len <= ab_len - off) {
+      value->SetBinary(CefBinaryValue::Create(data + off, len));
+    } else {
+      value->SetNull();
+    }
   } else if (v8val->IsObject()) {
     CefRefPtr<CefDictionaryValue> dict = CefDictionaryValue::Create();
     std::vector<CefString> keys;
@@ -335,14 +381,6 @@ CefRefPtr<CefValue> LaufeyRenderProcessHandler::V8ValueToCefValue(
       dict->SetValue(key, V8ValueToCefValue(v8val->GetValue(key)));
     }
     value->SetDictionary(dict);
-  } else if (v8val->IsArrayBuffer()) {
-    void* data = v8val->GetArrayBufferData();
-    size_t len = v8val->GetArrayBufferByteLength();
-    if (data && len > 0) {
-      value->SetBinary(CefBinaryValue::Create(data, len));
-    } else {
-      value->SetNull();
-    }
   } else {
     value->SetNull();
   }
@@ -372,9 +410,37 @@ CefRefPtr<CefV8Value> LaufeyRenderProcessHandler::CefValueToV8Value(
       size_t size = binary->GetSize();
       std::vector<uint8_t> buffer(size);
       binary->GetData(buffer.data(), size, 0);
+      // WithCopy: the plain CreateArrayBuffer externalizes the caller's
+      // memory without copying, and `buffer` dies at the end of this scope —
+      // the resulting ArrayBuffer pointed at freed stack memory.
       CefRefPtr<CefV8Value> arrayBuffer =
-          CefV8Value::CreateArrayBuffer(buffer.data(), size, nullptr);
-      return arrayBuffer ? arrayBuffer : CefV8Value::CreateNull();
+          CefV8Value::CreateArrayBufferWithCopy(buffer.data(), size);
+      if (!arrayBuffer) {
+        return CefV8Value::CreateNull();
+      }
+      // Wrap in a Uint8Array so pages receive the documented binding type
+      // (denoland/deno#36498). CefV8Value cannot construct typed arrays
+      // directly; Reflect.construct(Uint8Array, [ab]) does it without eval.
+      if (context) {
+        CefRefPtr<CefV8Value> global = context->GetGlobal();
+        CefRefPtr<CefV8Value> reflect =
+            global ? global->GetValue("Reflect") : nullptr;
+        CefRefPtr<CefV8Value> construct = reflect && reflect->IsObject()
+                                              ? reflect->GetValue("construct")
+                                              : nullptr;
+        CefRefPtr<CefV8Value> uint8_ctor = global->GetValue("Uint8Array");
+        if (construct && construct->IsFunction() && uint8_ctor &&
+            uint8_ctor->IsFunction()) {
+          CefRefPtr<CefV8Value> args_arr = CefV8Value::CreateArray(1);
+          args_arr->SetValue(0, arrayBuffer);
+          CefRefPtr<CefV8Value> view =
+              construct->ExecuteFunction(reflect, {uint8_ctor, args_arr});
+          if (view && !view->IsUndefined() && !view->IsNull()) {
+            return view;
+          }
+        }
+      }
+      return arrayBuffer;
     }
     case VTYPE_DICTIONARY: {
       CefRefPtr<CefDictionaryValue> dict = value->GetDictionary();
