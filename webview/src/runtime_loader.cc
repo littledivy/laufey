@@ -64,25 +64,12 @@ std::string GetExecutablePath() {
 #endif
 }
 
-#if defined(_WIN32)
-// Paths flow through this file as UTF-8 (see GetExecutablePath), so the
-// ANSI (*A) APIs would misread any non-ASCII characters in the active
-// codepage. Convert back to UTF-16 for the wide (*W) APIs.
-std::wstring Utf8ToWidePath(const std::string& s) {
-  if (s.empty())
-    return std::wstring();
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-  if (n <= 0)
-    return std::wstring();
-  std::wstring w(static_cast<size_t>(n - 1), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-  return w;
-}
-#endif
-
 bool PathExists(const std::string& path) {
 #if defined(_WIN32)
-  return GetFileAttributesW(Utf8ToWidePath(path).c_str()) !=
+  // Paths flow through this file as UTF-8 (see GetExecutablePath), so the
+  // ANSI (*A) APIs would misread any non-ASCII characters in the active
+  // codepage. Convert back to UTF-16 for the wide (*W) APIs.
+  return GetFileAttributesW(laufey_common::Utf8ToWide(path).c_str()) !=
          INVALID_FILE_ATTRIBUTES;
 #else
   return access(path.c_str(), F_OK) == 0;
@@ -858,7 +845,7 @@ bool RuntimeLoader::Load(const std::string& path) {
     return false;
   }
 #else
-  library_handle_ = LoadLibraryW(Utf8ToWidePath(path).c_str());
+  library_handle_ = LoadLibraryW(laufey_common::Utf8ToWide(path).c_str());
   if (!library_handle_) {
     std::cerr << "Failed to load runtime: " << GetLastError() << std::endl;
     return false;

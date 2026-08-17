@@ -1,5 +1,6 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
+#include "laufey_backend_common.h"
 #include "runtime_loader.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -24,12 +25,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (argv) {
     for (int i = 1; i < argc; ++i) {
       if (wcscmp(argv[i], L"--runtime") == 0 && i + 1 < argc) {
-        ++i;
-        int size = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0,
-                                       nullptr, nullptr);
-        runtimePath.resize(size - 1);
-        WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, &runtimePath[0], size,
-                            nullptr, nullptr);
+        runtimePath = laufey_common::WideToUtf8(argv[++i]);
       }
     }
     LocalFree(argv);
@@ -38,15 +34,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (runtimePath.empty()) {
     // Read as UTF-16 and convert to UTF-8; the ANSI variant would garble
     // non-ASCII paths in the active codepage.
-    wchar_t envPath[MAX_PATH];
-    DWORD envLen =
-        GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", envPath, MAX_PATH);
-    if (envLen > 0 && envLen < MAX_PATH) {
-      int size = WideCharToMultiByte(CP_UTF8, 0, envPath, -1, nullptr, 0,
-                                     nullptr, nullptr);
-      runtimePath.resize(size - 1);
-      WideCharToMultiByte(CP_UTF8, 0, envPath, -1, &runtimePath[0], size,
-                          nullptr, nullptr);
+    std::wstring envPath(MAX_PATH, L'\0');
+    DWORD envLen = GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", &envPath[0],
+                                           static_cast<DWORD>(envPath.size()));
+    if (envLen >= envPath.size()) {
+      // Buffer too small; envLen is the required size including the NUL.
+      envPath.resize(envLen);
+      envLen = GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", &envPath[0],
+                                       static_cast<DWORD>(envPath.size()));
+    }
+    if (envLen > 0 && envLen < envPath.size()) {
+      envPath.resize(envLen);
+      runtimePath = laufey_common::WideToUtf8(envPath);
     }
   }
 
@@ -55,22 +54,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   if (runtimePath.empty()) {
-    const char* searchPaths[] = {".\\runtime.dll",
-                                 ".\\target\\debug\\hello.dll",
-                                 ".\\target\\release\\hello.dll"};
-    for (const char* path : searchPaths) {
-      if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) {
-        runtimePath = path;
+    const wchar_t* searchPaths[] = {L".\\runtime.dll",
+                                    L".\\target\\debug\\hello.dll",
+                                    L".\\target\\release\\hello.dll"};
+    for (const wchar_t* path : searchPaths) {
+      if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES) {
+        runtimePath = laufey_common::WideToUtf8(path);
         break;
       }
     }
   }
 
   if (runtimePath.empty()) {
-    MessageBoxA(nullptr,
-                "No runtime library found.\nSet LAUFEY_RUNTIME_PATH or use "
-                "--runtime <path>",
-                "LAUFEY Webview Error", MB_OK | MB_ICONERROR);
+    MessageBoxW(nullptr,
+                L"No runtime library found.\nSet LAUFEY_RUNTIME_PATH or use "
+                L"--runtime <path>",
+                L"LAUFEY Webview Error", MB_OK | MB_ICONERROR);
     CoUninitialize();
     return 1;
   }
@@ -83,13 +82,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (!loader->Load(runtimePath)) {
     // The path is UTF-8; show it through the wide API so non-ASCII
     // characters render correctly in the dialog.
-    int wlen =
-        MultiByteToWideChar(CP_UTF8, 0, runtimePath.c_str(), -1, nullptr, 0);
-    std::wstring wpath(wlen > 0 ? wlen - 1 : 0, L'\0');
-    if (wlen > 0) {
-      MultiByteToWideChar(CP_UTF8, 0, runtimePath.c_str(), -1, &wpath[0], wlen);
-    }
-    MessageBoxW(nullptr, (L"Failed to load runtime from: " + wpath).c_str(),
+    MessageBoxW(nullptr,
+                (L"Failed to load runtime from: " +
+                 laufey_common::Utf8ToWide(runtimePath))
+                    .c_str(),
                 L"LAUFEY Webview Error", MB_OK | MB_ICONERROR);
     delete backend;
     CoUninitialize();
@@ -97,7 +93,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   if (!loader->Start()) {
-    MessageBoxA(nullptr, "Failed to start runtime", "LAUFEY Webview Error",
+    MessageBoxW(nullptr, L"Failed to start runtime", L"LAUFEY Webview Error",
                 MB_OK | MB_ICONERROR);
     delete backend;
     CoUninitialize();

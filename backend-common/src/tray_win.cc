@@ -252,17 +252,6 @@ HICON DecodePngToHicon(const void* bytes, size_t len, int desired) {
   return hicon;
 }
 
-std::wstring Utf8ToWide(const char* s) {
-  if (!s || !*s) return std::wstring();
-  int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
-  std::wstring out;
-  if (n > 0) {
-    out.resize(n - 1);
-    MultiByteToWideChar(CP_UTF8, 0, s, -1, out.data(), n);
-  }
-  return out;
-}
-
 HMENU BuildWinMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* api,
                              std::map<UINT, std::string>& cmd_to_id) {
   if (!val || !api->value_is_list(val)) return nullptr;
@@ -420,7 +409,7 @@ void SetTrayIconDarkWin(uint32_t tray_id, const void* png_bytes, size_t len) {
 void SetTrayTooltipWin(uint32_t tray_id, const char* tooltip_or_null) {
   HWND hwnd = g_tray_msg_hwnd;
   if (!hwnd) return;
-  std::wstring wtip = Utf8ToWide(tooltip_or_null);
+  std::wstring wtip = Utf8ToWide(tooltip_or_null ? tooltip_or_null : "");
   NOTIFYICONDATAW nid = {};
   nid.cbSize = sizeof(nid);
   nid.hWnd = hwnd;
