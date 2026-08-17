@@ -743,8 +743,8 @@ mod tests {
 
   #[test]
   fn close_requested_dispatches_to_registered_handler_once() {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
 
     let window_id = 4242;
     let calls = Arc::new(AtomicU32::new(0));
@@ -775,8 +775,8 @@ mod tests {
 
   #[test]
   fn close_requested_only_fires_handler_for_matching_window_id() {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let registered_window_id = 1;
     let other_window_id = 2;

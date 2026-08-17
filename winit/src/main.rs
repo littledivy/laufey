@@ -267,10 +267,11 @@ impl ApplicationHandler<UserEvent> for App {
 
     match event {
       WindowEvent::CloseRequested => {
-        let proceed = laufey_backend_winit_common::dispatch_close_requested_event(
-          &state.common.handlers,
-          laufey_id,
-        );
+        let proceed =
+          laufey_backend_winit_common::dispatch_close_requested_event(
+            &state.common.handlers,
+            laufey_id,
+          );
         if proceed {
           self.close_window(laufey_id);
           if self.windows.is_empty() {
