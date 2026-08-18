@@ -318,8 +318,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   wchar_t port_buf[16];
-  DWORD port_len = GetEnvironmentVariableW(L"LAUFEY_REMOTE_DEBUGGING_PORT",
-                                           port_buf, 16);
+  DWORD port_len =
+      GetEnvironmentVariableW(L"LAUFEY_REMOTE_DEBUGGING_PORT", port_buf, 16);
   // On a value of 16+ chars the API returns the required size and leaves the
   // buffer untouched, so the upper bound is load-bearing.
   if (port_len > 0 && port_len < 16) {
