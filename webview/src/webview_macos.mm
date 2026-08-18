@@ -966,9 +966,16 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                   usingBlock:^(NSNotification* note) {
                     NSWindow* w = [note object];
                     if (w) {
+                      // Report top-left global coordinates, matching the
+                      // convention SetWindowPosition/GetWindowPosition use —
+                      // the raw Cocoa bottom-left origin previously leaked
+                      // through here (denoland/deno#36119).
                       NSRect f = [w frame];
+                      NSScreen* primary = [[NSScreen screens] firstObject];
+                      CGFloat screenH = primary ? primary.frame.size.height : 0;
                       RuntimeLoader::GetInstance()->DispatchMoveEvent(
-                          window_id, (int)f.origin.x, (int)f.origin.y);
+                          window_id, (int)f.origin.x,
+                          (int)(screenH - f.origin.y - f.size.height));
                     }
                   }];
 
@@ -1186,6 +1193,17 @@ void WKWebViewBackend::Quit() {
   });
 }
 
+// AppKit's global coordinate space is bottom-left-anchored to the *primary*
+// screen ([[NSScreen screens] firstObject], the one with the menu bar), while
+// the laufey API speaks top-left global coordinates. Converting against the
+// window's *current* screen — its local height, ignoring its global origin
+// offset — lands windows in the wrong place on any multi-display setup
+// (denoland/deno#36119). Always convert against the primary screen.
+static CGFloat PrimaryScreenHeight() {
+  NSScreen* primary = [[NSScreen screens] firstObject];
+  return primary ? primary.frame.size.height : 0;
+}
+
 void WKWebViewBackend::SetWindowSize(uint32_t window_id, int width,
                                      int height) {
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -1193,9 +1211,11 @@ void WKWebViewBackend::SetWindowSize(uint32_t window_id, int width,
       std::lock_guard<std::mutex> lock(windows_mutex_);
       auto* state = GetWindow(window_id);
       if (state) {
-        NSRect frame = [state->window frame];
-        frame.size = NSMakeSize(width, height);
-        [state->window setFrame:frame display:YES];
+        // Content size, matching CreateWindow's initWithContentRect: —
+        // setting the *frame* size here made setSize(w, h) produce a window
+        // whose page area was smaller than an identically-sized CreateWindow
+        // by the title-bar height (denoland/deno#36119).
+        [state->window setContentSize:NSMakeSize(width, height)];
       }
     }
   });
@@ -1208,9 +1228,12 @@ void WKWebViewBackend::GetWindowSize(uint32_t window_id, int* width,
     std::lock_guard<std::mutex> lock(windows_mutex_);
     auto* state = GetWindow(window_id);
     if (state) {
-      NSRect frame = [state->window frame];
-      w = static_cast<int>(frame.size.width);
-      h = static_cast<int>(frame.size.height);
+      // Content size, for symmetry with CreateWindow / SetWindowSize and the
+      // resize event.
+      NSRect content =
+          [state->window contentRectForFrameRect:[state->window frame]];
+      w = static_cast<int>(content.size.width);
+      h = static_cast<int>(content.size.height);
     }
   });
   if (width)
@@ -1226,8 +1249,7 @@ void WKWebViewBackend::SetWindowPosition(uint32_t window_id, int x, int y) {
       auto* state = GetWindow(window_id);
       if (state) {
         NSRect frame = [state->window frame];
-        NSRect screenFrame = [[state->window screen] frame];
-        CGFloat flippedY = screenFrame.size.height - y - frame.size.height;
+        CGFloat flippedY = PrimaryScreenHeight() - y - frame.size.height;
         [state->window setFrameOrigin:NSMakePoint(x, flippedY)];
       }
     }
@@ -1241,9 +1263,8 @@ void WKWebViewBackend::GetWindowPosition(uint32_t window_id, int* x, int* y) {
     auto* state = GetWindow(window_id);
     if (state) {
       NSRect frame = [state->window frame];
-      NSRect screenFrame = [[state->window screen] frame];
       px = static_cast<int>(frame.origin.x);
-      py = static_cast<int>(screenFrame.size.height - frame.origin.y -
+      py = static_cast<int>(PrimaryScreenHeight() - frame.origin.y -
                             frame.size.height);
     }
   });

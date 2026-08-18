@@ -113,7 +113,10 @@ inline std::string BuildInitScript(const std::string& ns,
               for (let i = 0; i < binary.length; i++) {
                 bytes[i] = binary.charCodeAt(i);
               }
-              return bytes.buffer;
+              // Deliver a Uint8Array, not its underlying ArrayBuffer —
+              // callers are documented to receive the same type they sent
+              // (denoland/deno#36498).
+              return bytes;
             }
             if (Array.isArray(obj)) {
               return obj.map(convertBinary);
