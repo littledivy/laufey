@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <string>
+#include <cstdlib>
 #include <cstring>
 
 #include "include/base/cef_callback.h"
@@ -17,15 +18,14 @@
 #include "include/wrapper/cef_helpers.h"
 
 #include "app.h"
+#include "laufey_backend_common.h"
 #include "renderer_app.h"
 #include "runtime_loader.h"
 
 void LaufeyOpenExternalURL(const std::string& url) {
-  int wlen = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
-  if (wlen <= 0)
+  std::wstring wurl = laufey_common::Utf8ToWide(url);
+  if (wurl.empty())
     return;
-  std::wstring wurl(static_cast<size_t>(wlen - 1), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, &wurl[0], wlen);
   ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr,
                 SW_SHOWNORMAL);
 }
@@ -208,7 +208,15 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
 
     if (!g_runtime_path.empty()) {
       if (!RuntimeLoader::GetInstance()->Load(g_runtime_path)) {
-        std::cerr << "Failed to load runtime, exiting" << std::endl;
+        // WIN32 subsystem: stderr is usually detached, so also show a
+        // dialog (matches the webview binary's load-failure behavior).
+        std::cerr << "Failed to load runtime from: " << g_runtime_path
+                  << std::endl;
+        MessageBoxW(nullptr,
+                    (L"Failed to load runtime from: " +
+                     laufey_common::Utf8ToWide(g_runtime_path))
+                        .c_str(),
+                    L"LAUFEY Error", MB_OK | MB_ICONERROR);
         CefQuitMessageLoop();
         return;
       }
@@ -253,20 +261,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   if (argv) {
     for (int i = 1; i < argc; ++i) {
       if (wcscmp(argv[i], L"--runtime") == 0 && i + 1 < argc) {
-        ++i;
-        int size = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0,
-                                       nullptr, nullptr);
-        g_runtime_path.resize(size - 1);
-        WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, &g_runtime_path[0], size,
-                            nullptr, nullptr);
+        g_runtime_path = laufey_common::WideToUtf8(argv[++i]);
+      } else if (wcsncmp(argv[i], L"--runtime=", 10) == 0) {
+        g_runtime_path = laufey_common::WideToUtf8(argv[i] + 10);
       }
     }
   }
 
   if (g_runtime_path.empty()) {
-    char envPath[MAX_PATH];
-    if (GetEnvironmentVariableA("LAUFEY_RUNTIME_PATH", envPath, MAX_PATH) > 0) {
-      g_runtime_path = envPath;
+    // Read as UTF-16 and convert to UTF-8; the ANSI variant would garble
+    // non-ASCII paths in the active codepage.
+    std::wstring envPath(MAX_PATH, L'\0');
+    DWORD envLen = GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", &envPath[0],
+                                           static_cast<DWORD>(envPath.size()));
+    if (envLen >= envPath.size()) {
+      // Buffer too small; envLen is the required size including the NUL.
+      envPath.resize(envLen);
+      envLen = GetEnvironmentVariableW(L"LAUFEY_RUNTIME_PATH", &envPath[0],
+                                       static_cast<DWORD>(envPath.size()));
+    }
+    if (envLen > 0 && envLen < envPath.size()) {
+      envPath.resize(envLen);
+      g_runtime_path = laufey_common::WideToUtf8(envPath);
     }
   }
 
@@ -287,17 +303,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   settings.no_sandbox = true;
   settings.log_severity = LaufeyCefLogSeverity();
 
-  // Set cache path
-  char tempPath[MAX_PATH];
-  GetTempPathA(MAX_PATH, tempPath);
-  std::string cache_path = std::string(tempPath) + "laufey_cef_" +
-                           std::to_string(GetCurrentProcessId());
-  CefString(&settings.root_cache_path) = cache_path;
+  // Set cache path. CefString decodes std::string as UTF-8, so read the
+  // temp dir wide and convert; GetTempPathA would hand over active-codepage
+  // bytes that garble non-ASCII profile names. On failure leave the cache
+  // path unset (CEF then runs with its in-memory default) rather than
+  // pointing it at garbage.
+  wchar_t tempPath[MAX_PATH + 2];
+  DWORD tempLen = GetTempPathW(MAX_PATH + 2, tempPath);
+  if (tempLen > 0 && tempLen < MAX_PATH + 2) {
+    std::string cache_path = laufey_common::WideToUtf8(tempPath) +
+                             "laufey_cef_" +
+                             std::to_string(GetCurrentProcessId());
+    CefString(&settings.root_cache_path) = cache_path;
+  }
 
-  char port_buf[16];
-  if (GetEnvironmentVariableA("LAUFEY_REMOTE_DEBUGGING_PORT", port_buf,
-                              sizeof(port_buf)) > 0) {
-    int port = atoi(port_buf);
+  wchar_t port_buf[16];
+  DWORD port_len =
+      GetEnvironmentVariableW(L"LAUFEY_REMOTE_DEBUGGING_PORT", port_buf, 16);
+  // On a value of 16+ chars the API returns the required size and leaves the
+  // buffer untouched, so the upper bound is load-bearing.
+  if (port_len > 0 && port_len < 16) {
+    int port = _wtoi(port_buf);
     if (port > 0 && port < 65536) {
       settings.remote_debugging_port = port;
     }

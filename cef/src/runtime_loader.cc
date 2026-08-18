@@ -74,7 +74,11 @@ std::string GetExecutablePath() {
 
 bool PathExists(const std::string& path) {
 #if defined(_WIN32)
-  return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+  // Paths flow through this file as UTF-8 (see GetExecutablePath), so the
+  // ANSI (*A) APIs would misread any non-ASCII characters in the active
+  // codepage. Convert back to UTF-16 for the wide (*W) APIs.
+  return GetFileAttributesW(laufey_common::Utf8ToWide(path).c_str()) !=
+         INVALID_FILE_ATTRIBUTES;
 #else
   return access(path.c_str(), F_OK) == 0;
 #endif
@@ -1698,7 +1702,7 @@ bool RuntimeLoader::Load(const std::string& path) {
     return false;
   }
 #else
-  library_handle_ = LoadLibraryA(path.c_str());
+  library_handle_ = LoadLibraryW(laufey_common::Utf8ToWide(path).c_str());
   if (!library_handle_) {
     std::cerr << "Failed to load runtime: error " << GetLastError()
               << std::endl;

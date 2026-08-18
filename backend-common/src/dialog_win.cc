@@ -14,22 +14,6 @@
 
 namespace laufey_common {
 
-namespace {
-
-std::wstring Utf8ToWide(const std::string& s) {
-  if (s.empty())
-    return std::wstring();
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-  std::wstring out;
-  if (n > 0) {
-    out.resize(n - 1);
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
-  }
-  return out;
-}
-
-}  // namespace
-
 int ShowDialogWin(int dialog_type, const std::string& title,
                   const std::string& message,
                   const std::string& default_value, char** out_input_value) {

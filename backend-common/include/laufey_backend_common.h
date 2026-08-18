@@ -21,6 +21,20 @@
 
 namespace laufey_common {
 
+#ifdef _WIN32
+// ---------------------------------------------------------------------------
+// Win32 string conversion
+// ---------------------------------------------------------------------------
+//
+// Strings cross the C API and flow through both backends as UTF-8, while the
+// wide (*W) Win32 APIs want UTF-16; the ANSI (*A) APIs would garble non-ASCII
+// text in the active codepage. Every conversion goes through this one pair of
+// helpers so a future fix (e.g. long-path prefixing) lands in one place.
+
+std::wstring Utf8ToWide(const std::string& s);
+std::string WideToUtf8(const std::wstring& w);
+#endif
+
 // ---------------------------------------------------------------------------
 // Notifications
 // ---------------------------------------------------------------------------

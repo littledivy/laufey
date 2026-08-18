@@ -230,18 +230,6 @@ HWND EnsureNotifMessageWindow() {
   return g_notif_msg_hwnd;
 }
 
-std::wstring Utf8ToWide(const std::string& s) {
-  if (s.empty())
-    return std::wstring();
-  int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-  std::wstring out;
-  if (n > 0) {
-    out.resize(n - 1);
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, out.data(), n);
-  }
-  return out;
-}
-
 }  // namespace
 
 uint32_t ShowNotificationWin(const NotificationOptions& opts,
