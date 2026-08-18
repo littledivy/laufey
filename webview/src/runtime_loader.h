@@ -440,8 +440,8 @@ class LaufeyBackend {
   // once rendering completes, and implementations must invoke it exactly once
   // on every path. Default: report "unsupported" through the callback rather
   // than crashing; platform backends override.
-  virtual void PrintToPdf(uint32_t /*window_id*/,
-                          laufey_pdf_result_fn callback, void* callback_data) {
+  virtual void PrintToPdf(uint32_t /*window_id*/, laufey_pdf_result_fn callback,
+                          void* callback_data) {
     if (callback)
       callback(nullptr, 0, "print_to_pdf is not supported by this backend",
                callback_data);
