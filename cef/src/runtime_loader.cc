@@ -23,7 +23,6 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
-#include <fstream>
 
 #include "include/base/cef_callback.h"
 #include "include/cef_app.h"
@@ -1334,16 +1333,15 @@ namespace {
 
 // Observes the DevTools "Page.printToPDF" result for a single print request.
 // The PDF is returned in-memory as base64 in the result JSON (no temp file);
-// we decode it, optionally write it to `path_`, and hand the raw bytes to the
-// laufey pdf-result callback. The observer keeps itself alive via its own
-// CefRegistration until the matching result arrives.
+// we decode it and hand the raw bytes to the laufey pdf-result callback (the
+// capi layer owns any file output). The observer keeps itself alive via its
+// own CefRegistration until the matching result arrives or the DevTools agent
+// detaches.
 class LaufeyPdfDevToolsObserver : public CefDevToolsMessageObserver {
  public:
-  LaufeyPdfDevToolsObserver(int message_id, std::string path, bool has_path,
-                            laufey_pdf_result_fn callback, void* callback_data)
+  LaufeyPdfDevToolsObserver(int message_id, laufey_pdf_result_fn callback,
+                            void* callback_data)
       : message_id_(message_id),
-        path_(std::move(path)),
-        has_path_(has_path),
         callback_(callback),
         callback_data_(callback_data) {}
 
@@ -1388,17 +1386,16 @@ class LaufeyPdfDevToolsObserver : public CefDevToolsMessageObserver {
     if (len > 0)
       bin->GetData(bytes.data(), len, 0);
 
-    if (has_path_) {
-      std::ofstream f(path_, std::ios::binary | std::ios::trunc);
-      if (!f ||
-          (len > 0 && !f.write(reinterpret_cast<const char*>(bytes.data()),
-                               static_cast<std::streamsize>(len)))) {
-        Finish(nullptr, 0, "failed to write PDF file");
-        return;
-      }
-    }
-
     Finish(bytes.empty() ? nullptr : bytes.data(), bytes.size(), nullptr);
+  }
+
+  // If the browser is destroyed while the request is in flight, CEF never
+  // delivers the pending method result ("pending method results will not be
+  // delivered", cef_devtools_message_observer.h). Without this override the
+  // observer would keep itself alive through its own registration forever and
+  // the callback would never fire, breaking the exactly-once contract.
+  void OnDevToolsAgentDetached(CefRefPtr<CefBrowser> browser) override {
+    Finish(nullptr, 0, "browser was closed before the PDF result arrived");
   }
 
  private:
@@ -1413,8 +1410,6 @@ class LaufeyPdfDevToolsObserver : public CefDevToolsMessageObserver {
   }
 
   int message_id_;
-  std::string path_;
-  bool has_path_;
   laufey_pdf_result_fn callback_;
   void* callback_data_;
   bool done_ = false;
@@ -1426,34 +1421,33 @@ class LaufeyPdfDevToolsObserver : public CefDevToolsMessageObserver {
 }  // namespace
 
 static void Backend_PrintToPdf(void* data, uint32_t window_id,
-                               const char* path_or_null,
                                laufey_pdf_result_fn callback,
                                void* callback_data) {
   if (!callback)
     return;
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
-  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
-  if (!browser) {
-    callback(nullptr, 0, "window not found", callback_data);
-    return;
-  }
-
-  bool has_path = (path_or_null != nullptr);
-  std::string path = has_path ? std::string(path_or_null) : std::string();
 
   // Unique, positive DevTools message id per request so concurrent PDF
   // requests don't observe each other's results.
   static std::atomic<int> next_message_id{1};
   int message_id = next_message_id.fetch_add(1);
 
-  CefPostTask(
+  // Everything — including the window lookup, whose "window not found" the
+  // capi contract requires on the UI thread — runs in the posted task. This
+  // also closes the race where a freshly created window's browser has not yet
+  // been recorded (browsers_ is populated from a posted task itself).
+  bool posted = CefPostTask(
       TID_UI,
       base::BindOnce(
-          [](CefRefPtr<CefBrowser> b, int msg_id, std::string out_path,
-             bool has_out_path, laufey_pdf_result_fn cb, void* cb_data) {
+          [](RuntimeLoader* loader, uint32_t win_id, int msg_id,
+             laufey_pdf_result_fn cb, void* cb_data) {
+            CefRefPtr<CefBrowser> b = loader->GetBrowserForWindow(win_id);
+            if (!b) {
+              cb(nullptr, 0, "window not found", cb_data);
+              return;
+            }
             CefRefPtr<LaufeyPdfDevToolsObserver> observer =
-                new LaufeyPdfDevToolsObserver(msg_id, std::move(out_path),
-                                              has_out_path, cb, cb_data);
+                new LaufeyPdfDevToolsObserver(msg_id, cb, cb_data);
             CefRefPtr<CefRegistration> registration =
                 b->GetHost()->AddDevToolsMessageObserver(observer);
             if (!registration) {
@@ -1473,7 +1467,13 @@ static void Backend_PrintToPdf(void* data, uint32_t window_id,
               observer->SetRegistration(nullptr);
             }
           },
-          browser, message_id, path, has_path, callback, callback_data));
+          loader, window_id, message_id, callback, callback_data));
+  if (!posted) {
+    // The UI task runner is gone (shutdown): the task was destroyed unrun, so
+    // deliver the mandatory exactly-once callback here instead of never.
+    callback(nullptr, 0, "failed to schedule print on the UI thread",
+             callback_data);
+  }
 }
 
 // --- InitializeBackendApi ---

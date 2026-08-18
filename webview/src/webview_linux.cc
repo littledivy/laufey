@@ -12,7 +12,6 @@
 #include <gio/gunixinputstream.h>
 
 #include <errno.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -391,8 +390,8 @@ class WebKitGTKBackend : public LaufeyBackend {
 
   void OpenDevTools(uint32_t window_id) override;
 
-  void PrintToPdf(uint32_t window_id, const char* path_or_null,
-                  laufey_pdf_result_fn callback, void* callback_data) override;
+  void PrintToPdf(uint32_t window_id, laufey_pdf_result_fn callback,
+                  void* callback_data) override;
 
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
@@ -1260,18 +1259,17 @@ void WebKitGTKBackend::OpenDevTools(uint32_t window_id) {
 }
 
 // WebKitGTK has no in-memory PDF API; WebKitPrintOperation only writes to a
-// GtkPrintSettings output URI. When the caller supplies a path we print
-// straight to it. When bytes are requested without a path we print into an
-// anonymous in-memory file (memfd_create) exposed to WebKit as
-// file:///proc/self/fd/N, then read the bytes back out of that fd -- nothing
-// ever touches disk and there is no temp file to clean up. The memfd is a
-// symlink target under /proc, so GIO opens it directly for writing rather than
-// attempting an atomic replace in the (unwritable) /proc parent directory.
+// GtkPrintSettings output URI, and the write happens in the separate
+// WebKitWebProcess -- so the target must be a real filesystem path that
+// process can open by name (an fd owned by this UI process, e.g. a memfd's
+// /proc/self/fd/N, would resolve against the web process's own fd table and
+// name the wrong file or none at all). We print into a private temp file,
+// read the bytes back, and delete it; the capi layer owns writing the
+// caller's requested output path.
 struct PdfPrintData {
   laufey_pdf_result_fn callback;
   void* callback_data;
-  std::string output_path;  // filesystem path, or /proc/self/fd/N for the memfd
-  int memfd;                // >= 0 when printing into an in-memory fd, else -1
+  std::string output_path;  // temp file the print job writes into
   bool has_error = false;
   std::string error_message;
 };
@@ -1288,27 +1286,7 @@ static void on_pdf_print_finished(WebKitPrintOperation* op,
   auto* d = static_cast<PdfPrintData*>(user_data);
   if (d->has_error) {
     d->callback(nullptr, 0, d->error_message.c_str(), d->callback_data);
-  } else if (d->memfd >= 0) {
-    // Bytes-only: read the PDF straight back out of the in-memory fd.
-    std::string bytes;
-    bool read_ok = lseek(d->memfd, 0, SEEK_SET) != static_cast<off_t>(-1);
-    if (read_ok) {
-      char buf[65536];
-      ssize_t n;
-      while ((n = read(d->memfd, buf, sizeof(buf))) > 0)
-        bytes.append(buf, static_cast<size_t>(n));
-      read_ok = n == 0;
-    }
-    if (read_ok) {
-      d->callback(bytes.empty()
-                      ? nullptr
-                      : reinterpret_cast<const uint8_t*>(bytes.data()),
-                  bytes.size(), nullptr, d->callback_data);
-    } else {
-      d->callback(nullptr, 0, g_strerror(errno), d->callback_data);
-    }
   } else {
-    // Caller supplied a path: read it back so we still return the bytes.
     gchar* contents = nullptr;
     gsize length = 0;
     GError* read_error = nullptr;
@@ -1326,52 +1304,57 @@ static void on_pdf_print_finished(WebKitPrintOperation* op,
     if (read_error)
       g_error_free(read_error);
   }
-  if (d->memfd >= 0)
-    close(d->memfd);
+  unlink(d->output_path.c_str());
   g_object_unref(op);
   delete d;
 }
 
-void WebKitGTKBackend::PrintToPdf(uint32_t window_id, const char* path_or_null,
+void WebKitGTKBackend::PrintToPdf(uint32_t window_id,
                                   laufey_pdf_result_fn callback,
                                   void* callback_data) {
   if (!callback)
     return;
-  std::string user_path = path_or_null ? path_or_null : "";
-  bool has_path = path_or_null != nullptr;
   gtk_invoke_sync([&] {
-    std::lock_guard<std::mutex> lock(windows_mutex_);
-    auto* state = GetWindow(window_id);
-    if (!state || !state->webview) {
+    // Scope the lock to the lookup only: the callback is an arbitrary user
+    // FnOnce that may re-enter backend APIs taking this same non-recursive
+    // mutex on this thread (the "failed" signal can fire synchronously from
+    // webkit_print_operation_print below). Using the webview after unlock is
+    // safe because window teardown also runs on this (main) thread.
+    WebKitWebView* webview = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(windows_mutex_);
+      auto* state = GetWindow(window_id);
+      if (state)
+        webview = state->webview;
+    }
+    if (!webview) {
       callback(nullptr, 0, "window not found", callback_data);
       return;
     }
 
-    auto* d = new PdfPrintData{callback, callback_data, "", -1, false, ""};
-    if (has_path) {
-      d->output_path = user_path;
-    } else {
-      int fd = memfd_create("laufey-pdf", MFD_CLOEXEC);
-      if (fd < 0) {
-        callback(nullptr, 0, g_strerror(errno), callback_data);
-        delete d;
-        return;
-      }
-      d->memfd = fd;
-      d->output_path = "/proc/self/fd/" + std::to_string(fd);
-    }
-
-    GError* uri_error = nullptr;
-    gchar* uri = g_filename_to_uri(d->output_path.c_str(), nullptr, &uri_error);
-    if (!uri) {
+    // Private (0600, unpredictable name) temp file for the print output;
+    // close the fd right away -- the web process opens the file by path.
+    gchar* tmp_path = nullptr;
+    GError* tmp_error = nullptr;
+    int tmp_fd = g_file_open_tmp("laufey-pdf-XXXXXX", &tmp_path, &tmp_error);
+    if (tmp_fd < 0) {
       callback(nullptr, 0,
-               uri_error && uri_error->message ? uri_error->message
-                                               : "invalid output path",
+               tmp_error && tmp_error->message ? tmp_error->message
+                                               : "failed to create temp file",
                callback_data);
-      if (uri_error)
-        g_error_free(uri_error);
-      if (d->memfd >= 0)
-        close(d->memfd);
+      if (tmp_error)
+        g_error_free(tmp_error);
+      return;
+    }
+    close(tmp_fd);
+
+    auto* d = new PdfPrintData{callback, callback_data, tmp_path, false, ""};
+    gchar* uri = g_filename_to_uri(tmp_path, nullptr, nullptr);
+    g_free(tmp_path);
+    if (!uri) {
+      // Cannot happen for g_file_open_tmp's absolute path, but stay safe.
+      callback(nullptr, 0, "invalid temp file path", callback_data);
+      unlink(d->output_path.c_str());
       delete d;
       return;
     }
@@ -1382,7 +1365,7 @@ void WebKitGTKBackend::PrintToPdf(uint32_t window_id, const char* path_or_null,
                            "pdf");
     g_free(uri);
 
-    WebKitPrintOperation* op = webkit_print_operation_new(state->webview);
+    WebKitPrintOperation* op = webkit_print_operation_new(webview);
     webkit_print_operation_set_print_settings(op, settings);
     g_object_unref(settings);
 
@@ -1390,9 +1373,9 @@ void WebKitGTKBackend::PrintToPdf(uint32_t window_id, const char* path_or_null,
     // emitted for every terminated operation, and always AFTER "failed" when an
     // error occurred (WebKit forwards GtkPrintOperation's always-emitted "done"
     // signal). So on_pdf_print_finished is the single owner of invoking the
-    // callback, unref-ing `op`, closing the memfd, and freeing `d` -- the same
-    // "completion callback always fires" contract the macOS backend relies on.
-    // "failed" only records the error for that finish handler to report.
+    // callback, deleting the temp file, unref-ing `op`, and freeing `d` -- the
+    // same "completion callback always fires" contract the macOS backend
+    // relies on. "failed" only records the error for that handler to report.
     g_signal_connect(op, "failed", G_CALLBACK(on_pdf_print_failed), d);
     g_signal_connect(op, "finished", G_CALLBACK(on_pdf_print_finished), d);
 

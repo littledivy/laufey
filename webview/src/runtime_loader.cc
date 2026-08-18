@@ -442,7 +442,6 @@ static void Backend_OpenDevTools(void* data, uint32_t window_id) {
 }
 
 static void Backend_PrintToPdf(void* data, uint32_t window_id,
-                               const char* path_or_null,
                                laufey_pdf_result_fn callback,
                                void* callback_data) {
   if (!callback)
@@ -450,7 +449,7 @@ static void Backend_PrintToPdf(void* data, uint32_t window_id,
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   LaufeyBackend* backend = loader->GetBackend();
   if (backend) {
-    backend->PrintToPdf(window_id, path_or_null, callback, callback_data);
+    backend->PrintToPdf(window_id, callback, callback_data);
   } else {
     callback(nullptr, 0, "backend not initialized", callback_data);
   }

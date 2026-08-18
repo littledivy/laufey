@@ -32,8 +32,8 @@ use winit::window::{Window, WindowLevel};
 // Must match `LAUFEY_API_VERSION` in capi/include/laufey.h (and capi/src/lib.rs).
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
-// below must match the v29 `laufey_backend_api`.
-pub const LAUFEY_API_VERSION: u32 = 30;
+// below must match the current `laufey_backend_api`.
+pub const LAUFEY_API_VERSION: u32 = 31;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -529,7 +529,7 @@ pub struct LaufeyBackendApi {
   pub test_click_menu_item:
     Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> bool>,
 
-  // --- Print to PDF (API >= 30) ---
+  // --- Print to PDF (API >= 31) ---
   // winit renders no web content, so this stays None and the capi reports
   // "unsupported". The field MUST still be declared to keep the struct layout
   // in sync with the `laufey_backend_api` the capi reads through the
@@ -539,7 +539,6 @@ pub struct LaufeyBackendApi {
     unsafe extern "C" fn(
       *mut c_void,
       u32,
-      *const c_char,
       Option<unsafe extern "C" fn(*const u8, usize, *const c_char, *mut c_void)>,
       *mut c_void,
     ),
@@ -1175,7 +1174,7 @@ pub fn create_api_base() -> LaufeyBackendApi {
     get_window_opacity: None,
     // Test hooks (API >= 30).
     test_click_menu_item: None,
-    // Print to PDF (API >= 30): winit renders no web content.
+    // Print to PDF (API >= 31): winit renders no web content.
     print_to_pdf: None,
   }
 }

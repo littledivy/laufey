@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 30
+#define LAUFEY_API_VERSION 31
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -84,7 +84,7 @@ typedef void (*laufey_js_call_fn)(void* user_data, uint32_t window_id,
 typedef void (*laufey_js_result_fn)(laufey_value_t* result,
                                     laufey_value_t* error, void* user_data);
 
-// Callback for print_to_pdf results (API >= 30). On success `data`/`len` carry
+// Callback for print_to_pdf results (API >= 31). On success `data`/`len` carry
 // the PDF bytes and `error` is NULL; on failure `data` is NULL, `len` is 0 and
 // `error` is a NUL-terminated UTF-8 message. The bytes are owned by the backend
 // and valid only for the duration of the call -- copy them if you need them
@@ -745,20 +745,20 @@ struct laufey_backend_api {
   // main-thread UI access. NULL on backends that don't implement it.
   bool (*test_click_menu_item)(void* backend_data, const char* item_id);
 
-  // --- Print to PDF (API >= 30) ----------------------------------------------
+  // --- Print to PDF (API >= 31) ----------------------------------------------
   //
   // Render window `window_id`'s current page to a PDF document. The result is
-  // ALWAYS delivered as bytes through `callback`: on success `data`/`len` hold
-  // the PDF and the callback's `error` is NULL. When `path_or_null` is non-NULL
-  // the backend ALSO writes those bytes to that filesystem path before invoking
-  // the callback; a write failure is reported through the callback's `error`.
-  // Rendering is asynchronous: the callback fires on the UI thread once it
-  // completes. Backends that cannot produce a PDF invoke the callback with an
+  // delivered as bytes through `callback`: on success `data`/`len` hold the
+  // PDF and the callback's `error` is NULL. Backends never touch the
+  // filesystem — writing the bytes to a caller-requested path is handled
+  // entirely by the capi layer above this API. Rendering is asynchronous: the
+  // callback fires on the UI thread once it completes, and the backend MUST
+  // invoke it exactly once on every path, including internal scheduling
+  // failures. Backends that cannot produce a PDF invoke the callback with an
   // "unsupported" error rather than crashing. NULL on backends older than API
-  // version 30; callers must null-check.
+  // version 31; callers must null-check.
   void (*print_to_pdf)(void* backend_data, uint32_t window_id,
-                       const char* path_or_null, laufey_pdf_result_fn callback,
-                       void* callback_data);
+                       laufey_pdf_result_fn callback, void* callback_data);
 };
 
 #ifdef __cplusplus

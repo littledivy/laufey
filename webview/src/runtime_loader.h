@@ -418,13 +418,13 @@ class LaufeyBackend {
 
   virtual void OpenDevTools(uint32_t window_id) = 0;
 
-  // Render the window's current page to a PDF (API >= 30). The PDF bytes are
-  // always delivered through `callback` on success; when `path_or_null` is
-  // non-null the backend also writes those same bytes to that filesystem path.
-  // Asynchronous: `callback` fires on the UI thread once rendering completes.
-  // Default: report "unsupported" through the callback rather than crashing;
-  // platform backends override.
-  virtual void PrintToPdf(uint32_t /*window_id*/, const char* /*path_or_null*/,
+  // Render the window's current page to a PDF (API >= 31). The PDF bytes are
+  // delivered through `callback` on success; file output is handled by the
+  // capi layer, never here. Asynchronous: `callback` fires on the UI thread
+  // once rendering completes, and implementations must invoke it exactly once
+  // on every path. Default: report "unsupported" through the callback rather
+  // than crashing; platform backends override.
+  virtual void PrintToPdf(uint32_t /*window_id*/,
                           laufey_pdf_result_fn callback, void* callback_data) {
     if (callback)
       callback(nullptr, 0, "print_to_pdf is not supported by this backend",

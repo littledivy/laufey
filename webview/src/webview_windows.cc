@@ -32,7 +32,6 @@
 #include <mutex>
 #include <vector>
 #include <functional>
-#include <fstream>
 
 using namespace Microsoft::WRL;
 
@@ -363,8 +362,8 @@ class WebView2Backend : public LaufeyBackend {
 
   void OpenDevTools(uint32_t window_id) override;
 
-  void PrintToPdf(uint32_t window_id, const char* path_or_null,
-                  laufey_pdf_result_fn callback, void* callback_data) override;
+  void PrintToPdf(uint32_t window_id, laufey_pdf_result_fn callback,
+                  void* callback_data) override;
 
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
@@ -1410,17 +1409,14 @@ void WebView2Backend::OpenDevTools(uint32_t window_id) {
   }
 }
 
-void WebView2Backend::PrintToPdf(uint32_t window_id, const char* path_or_null,
+void WebView2Backend::PrintToPdf(uint32_t window_id,
                                  laufey_pdf_result_fn callback,
                                  void* callback_data) {
   if (!callback)
     return;
-  std::string path = path_or_null ? path_or_null : "";
-  bool has_path = path_or_null != nullptr;
   if (GetCurrentThreadId() != ui_thread_id_) {
-    RunOnUiThread([this, window_id, path, has_path, callback, callback_data] {
-      const char* p = has_path ? path.c_str() : nullptr;
-      PrintToPdf(window_id, p, callback, callback_data);
+    RunOnUiThread([this, window_id, callback, callback_data] {
+      PrintToPdf(window_id, callback, callback_data);
     });
     return;
   }
@@ -1445,8 +1441,8 @@ void WebView2Backend::PrintToPdf(uint32_t window_id, const char* path_or_null,
   HRESULT hr = webview16->PrintToPdfStream(
       nullptr,
       Callback<ICoreWebView2PrintToPdfStreamCompletedHandler>(
-          [path, has_path, callback, callback_data](
-              HRESULT errorCode, IStream* pdfStream) -> HRESULT {
+          [callback, callback_data](HRESULT errorCode,
+                                    IStream* pdfStream) -> HRESULT {
             if (FAILED(errorCode) || !pdfStream) {
               callback(nullptr, 0, "failed to create PDF", callback_data);
               return S_OK;
@@ -1464,16 +1460,6 @@ void WebView2Backend::PrintToPdf(uint32_t window_id, const char* path_or_null,
               if (bytesRead == 0)
                 break;
               buffer.insert(buffer.end(), chunk, chunk + bytesRead);
-            }
-            if (has_path) {
-              std::ofstream out(path, std::ios::binary | std::ios::trunc);
-              if (!out ||
-                  !out.write(reinterpret_cast<const char*>(buffer.data()),
-                             buffer.size())) {
-                callback(nullptr, 0, "failed to write PDF to path",
-                         callback_data);
-                return S_OK;
-              }
             }
             callback(buffer.empty() ? nullptr : buffer.data(), buffer.size(),
                      nullptr, callback_data);

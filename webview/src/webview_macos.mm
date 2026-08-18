@@ -94,8 +94,8 @@ class WKWebViewBackend : public LaufeyBackend {
 
   void OpenDevTools(uint32_t window_id) override;
 
-  void PrintToPdf(uint32_t window_id, const char* path_or_null,
-                  laufey_pdf_result_fn callback, void* callback_data) override;
+  void PrintToPdf(uint32_t window_id, laufey_pdf_result_fn callback,
+                  void* callback_data) override;
 
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
@@ -1171,24 +1171,31 @@ void WKWebViewBackend::ExecuteJs(uint32_t window_id, const std::string& script,
   });
 }
 
-void WKWebViewBackend::PrintToPdf(uint32_t window_id, const char* path_or_null,
+void WKWebViewBackend::PrintToPdf(uint32_t window_id,
                                   laufey_pdf_result_fn callback,
                                   void* callback_data) {
   if (!callback)
     return;
-  std::string path = path_or_null ? path_or_null : "";
-  bool has_path = path_or_null != nullptr;
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
-      std::lock_guard<std::mutex> lock(windows_mutex_);
-      auto* state = GetWindow(window_id);
-      if (!state) {
+      // Scope the lock to the lookup only: the callback is an arbitrary user
+      // FnOnce that may re-enter backend APIs taking this same non-recursive
+      // mutex on this thread. Using the webview after unlock is safe because
+      // window teardown also runs on this (main) thread.
+      WKWebView* webview = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state)
+          webview = state->webview;
+      }
+      if (!webview) {
         callback(nullptr, 0, "window not found", callback_data);
         return;
       }
       if (@available(macOS 11.0, *)) {
         WKPDFConfiguration* config = [[WKPDFConfiguration alloc] init];
-        [state->webview
+        [webview
             createPDFWithConfiguration:config
                      completionHandler:^(NSData* pdfData, NSError* error) {
                        if (error || !pdfData) {
@@ -1201,21 +1208,6 @@ void WKWebViewBackend::PrintToPdf(uint32_t window_id, const char* path_or_null,
                        const uint8_t* bytes =
                            static_cast<const uint8_t*>([pdfData bytes]);
                        size_t len = [pdfData length];
-                       if (has_path) {
-                         NSString* nsPath =
-                             [NSString stringWithUTF8String:path.c_str()];
-                         NSError* writeError = nil;
-                         if (![pdfData writeToFile:nsPath
-                                           options:NSDataWritingAtomic
-                                             error:&writeError]) {
-                           std::string msg =
-                               writeError ? [[writeError localizedDescription]
-                                                UTF8String]
-                                          : "failed to write PDF to path";
-                           callback(nullptr, 0, msg.c_str(), callback_data);
-                           return;
-                         }
-                       }
                        callback(len ? bytes : nullptr, len, nullptr,
                                 callback_data);
                      }];

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use tokio::sync::Notify;
 
@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 30;
+pub const LAUFEY_API_VERSION: u32 = 31;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -729,6 +729,16 @@ const PRINT_TO_PDF_TIMEOUT: std::time::Duration =
 
 type PdfCallback = Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>;
 
+// Shared completion slot for one `print_to_pdf` call: the backend trampoline
+// and the watchdog race to `take()` the callback (that is what makes delivery
+// exactly-once), and the trampoline signals `done` so the watchdog thread
+// exits as soon as the result arrives instead of sleeping out the full
+// timeout.
+struct PdfSlot {
+  callback: Mutex<Option<PdfCallback>>,
+  done: Condvar,
+}
+
 impl Window {
   pub fn new(width: i32, height: i32) -> Self {
     Self::new_with_options(width, height, WindowOptions::default())
@@ -1006,15 +1016,15 @@ impl Window {
   /// Render this window's current page to a PDF document.
   ///
   /// The callback always receives the PDF bytes on success. When `path` is
-  /// `Some`, the backend also writes those bytes to that filesystem path before
-  /// invoking the callback; a write failure surfaces as `Err`. Backends that
-  /// cannot produce a PDF (or that are older than API version 30) invoke the
+  /// `Some`, those bytes are also written to that filesystem path before the
+  /// callback is invoked; a write failure surfaces as `Err`. Backends that
+  /// cannot produce a PDF (or that are older than API version 31) invoke the
   /// callback with an `Err` describing the unsupported operation.
   ///
   /// On success the callback fires on the UI thread once rendering completes.
-  /// The two early-validation errors — an unsupported backend, or a `path`
-  /// containing an interior NUL — are instead delivered synchronously on the
-  /// calling thread, before any rendering is scheduled.
+  /// The single early-validation error — an unsupported backend — is instead
+  /// delivered synchronously on the calling thread, before any rendering is
+  /// scheduled.
   ///
   /// The callback is guaranteed to be invoked exactly once. If the backend's
   /// completion handler never fires (a platform edge case: navigation
@@ -1053,8 +1063,16 @@ impl Window {
       // Reclaim the slot's raw reference. `take()` makes delivery
       // exactly-once: if the watchdog already resolved the callback, a late
       // completion finds `None` and is dropped instead of double-invoking.
-      let slot = Arc::from_raw(user_data as *const Mutex<Option<PdfCallback>>);
-      let Some(cb) = slot.lock().unwrap().take() else {
+      let slot = Arc::from_raw(user_data as *const PdfSlot);
+      let cb = {
+        let mut guard = slot.callback.lock().unwrap();
+        let cb = guard.take();
+        // Wake the watchdog so its thread exits now rather than waiting out
+        // the remainder of the timeout.
+        slot.done.notify_all();
+        cb
+      };
+      let Some(cb) = cb else {
         return;
       };
       if !error.is_null() {
@@ -1070,36 +1088,45 @@ impl Window {
       cb(Ok(bytes));
     }
 
-    // Validate the path before taking ownership of `callback`, so an interior
-    // NUL (possible from arbitrary caller/JS input) is reported through the
-    // callback's `Err` rather than panicking.
-    let c_path = match path {
-      Some(p) => match CString::new(p) {
-        Ok(c) => Some(c),
-        Err(_) => {
-          callback(Err("path contains an interior NUL byte".into()));
-          return;
-        }
-      },
-      None => None,
+    // Backends only ever deliver bytes; writing the caller's requested path
+    // happens here, once, rather than divergently in every backend. The write
+    // runs on whichever thread delivers the success result (normally the UI
+    // thread — the same place backends used to do the write).
+    let path = path.map(str::to_owned);
+    let callback = move |result: Result<Vec<u8>, String>| {
+      let result = match (result, path) {
+        (Ok(bytes), Some(p)) => match std::fs::write(&p, &bytes) {
+          Ok(()) => Ok(bytes),
+          Err(e) => Err(format!("failed to write PDF to {p}: {e}")),
+        },
+        (result, _) => result,
+      };
+      callback(result)
     };
-    let path_ptr = c_path.as_ref().map_or(std::ptr::null(), |p| p.as_ptr());
 
-    let slot: Arc<Mutex<Option<PdfCallback>>> =
-      Arc::new(Mutex::new(Some(Box::new(callback))));
+    let slot = Arc::new(PdfSlot {
+      callback: Mutex::new(Some(Box::new(callback) as PdfCallback)),
+      done: Condvar::new(),
+    });
 
     // Watchdog: guarantee the callback resolves even when the backend's
     // completion handler never fires. One short-lived thread per call --
     // print_to_pdf is a low-frequency API and a plain thread works before
-    // any async runtime is up.
+    // any async runtime is up. The trampoline signals `done` on delivery, so
+    // this thread exits as soon as the result arrives.
     let watchdog = slot.clone();
     std::thread::spawn(move || {
-      std::thread::sleep(timeout);
-      // Take the callback in its own statement so the slot's lock is released
-      // before the user callback runs; holding it during `cb` would block a
+      let guard = watchdog.callback.lock().unwrap();
+      let (mut guard, _) = watchdog
+        .done
+        .wait_timeout_while(guard, timeout, |cb| cb.is_some())
+        .unwrap();
+      // Take the callback and release the slot's lock before the user
+      // callback runs; holding it during `cb` would block a
       // concurrently-arriving completion inside the trampoline on the UI
       // thread (and deadlock if `cb` synchronously waits on that thread).
-      let cb = watchdog.lock().unwrap().take();
+      let cb = guard.take();
+      drop(guard);
       if let Some(cb) = cb {
         cb(Err(format!(
           "print_to_pdf timed out after {}s waiting for the backend",
@@ -1115,15 +1142,7 @@ impl Window {
     // completion.
     let user_data = Arc::into_raw(slot) as *mut c_void;
 
-    unsafe {
-      f(
-        api.backend_data,
-        self.id,
-        path_ptr,
-        Some(trampoline),
-        user_data,
-      )
-    };
+    unsafe { f(api.backend_data, self.id, Some(trampoline), user_data) };
   }
 
   pub fn get_window_handle(&self) -> *mut c_void {
@@ -3085,7 +3104,6 @@ mod tests {
   unsafe extern "C" fn fake_print_to_pdf(
     _backend_data: *mut c_void,
     window_id: u32,
-    _path: *const c_char,
     callback: ffi::laufey_pdf_result_fn,
     user_data: *mut c_void,
   ) {
@@ -3124,14 +3142,15 @@ mod tests {
     let _ = BACKEND_API.set(Box::leak(Box::new(fake)));
   }
 
-  // Regression guard for print_to_pdf's argument marshaling, exercised against a
-  // fake backend so it needs no window or display: a successful backend call
-  // must hand the PDF bytes back through the callback, empty output must resolve
-  // to empty bytes (not an error), and an interior NUL in the caller-supplied
-  // path (which can arrive from arbitrary JS) must surface through the callback's
-  // Err rather than panicking.
+  // Regression guard for print_to_pdf's marshaling and file handling,
+  // exercised against a fake backend so it needs no window or display: a
+  // successful backend call must hand the PDF bytes back through the callback,
+  // a `Some(path)` must make the capi (not the backend) write those bytes to
+  // disk, empty output must resolve to empty bytes (not an error), and an
+  // unwritable path (e.g. an interior NUL, which can arrive from arbitrary JS)
+  // must surface through the callback's Err rather than panicking.
   #[test]
-  fn print_to_pdf_marshals_path_and_bytes() {
+  fn print_to_pdf_marshals_bytes_and_writes_path() {
     use std::sync::mpsc;
 
     install_pdf_fake();
@@ -3141,24 +3160,30 @@ mod tests {
     Window::from_id(1).print_to_pdf(None, move |r| tx.send(r).unwrap());
     assert_eq!(rx.recv().unwrap().unwrap(), b"%PDF-1.4 fake");
 
-    // A valid path is accepted and still returns the bytes.
+    // A path makes the capi write the bytes to disk and still return them.
+    let out = std::env::temp_dir().join("laufey_print_to_pdf_test.pdf");
     let (tx, rx) = mpsc::channel();
     Window::from_id(1)
-      .print_to_pdf(Some("/tmp/out.pdf"), move |r| tx.send(r).unwrap());
+      .print_to_pdf(Some(out.to_str().unwrap()), move |r| tx.send(r).unwrap());
     assert_eq!(rx.recv().unwrap().unwrap(), b"%PDF-1.4 fake");
+    assert_eq!(std::fs::read(&out).unwrap(), b"%PDF-1.4 fake");
+    let _ = std::fs::remove_file(&out);
 
     // Empty backend output resolves to empty bytes, not an error.
     let (tx, rx) = mpsc::channel();
     Window::from_id(999).print_to_pdf(None, move |r| tx.send(r).unwrap());
     assert!(rx.recv().unwrap().unwrap().is_empty());
 
-    // Interior NUL in the path is reported as an error, never a panic, and the
-    // backend is never invoked.
+    // An unwritable path (interior NUL) is reported through the callback's
+    // Err, never a panic.
     let (tx, rx) = mpsc::channel();
     Window::from_id(1)
       .print_to_pdf(Some("bad\0path.pdf"), move |r| tx.send(r).unwrap());
     let err = rx.recv().unwrap().unwrap_err();
-    assert!(err.contains("NUL"), "unexpected error: {err}");
+    assert!(
+      err.contains("failed to write PDF"),
+      "unexpected error: {err}"
+    );
   }
 
   // The watchdog must resolve the callback when the backend's completion
