@@ -16,14 +16,13 @@ let win = Window::new(800, 600)
   .load("index.html");
 ```
 
-`on_close_requested` fires when the user clicks the window's own close
-control (title bar button, `Alt+F4`, a window manager's close action) —
-never for `Cmd+Q`, a "Quit" menu/tray item, or any other app-level
-termination. Registering it holds the window open: it won't close on its
-own until you call `Window::close()`, synchronously in the handler or later
-from any thread, e.g. after a confirm dialog or once unsaved work is
-flushed. Doing nothing leaves it open — which is also how you'd implement
-"hide to tray" instead of closing:
+`on_close_requested` fires when the user clicks the window's own close control
+(title bar button, `Alt+F4`, a window manager's close action) — never for
+`Cmd+Q`, a "Quit" menu/tray item, or any other app-level termination.
+Registering it holds the window open: it won't close on its own until you call
+`Window::close()`, synchronously in the handler or later from any thread, e.g.
+after a confirm dialog or once unsaved work is flushed. Doing nothing leaves it
+open — which is also how you'd implement "hide to tray" instead of closing:
 
 ```rust
 .on_close_requested(|event| {
@@ -31,8 +30,8 @@ flushed. Doing nothing leaves it open — which is also how you'd implement
 })
 ```
 
-Or, for a synchronous confirm dialog, call `Window::confirm()` directly in
-the handler — it blocks (pumping OS events) until the user answers:
+Or, for a synchronous confirm dialog, call `Window::confirm()` directly in the
+handler — it blocks (pumping OS events) until the user answers:
 
 ```rust
 .on_close_requested(|event| {
@@ -43,7 +42,7 @@ the handler — it blocks (pumping OS events) until the user answers:
 })
 ```
 
-See [c-abi.md](c-abi.md), "Close-requested handler defers the close", for
-the full contract, including why app-level quit paths are deliberately out
-of scope, and `examples/confirm_before_quit` for a complete runnable
-version of the confirm-dialog pattern above.
+See [c-abi.md](c-abi.md), "Close-requested handler defers the close", for the
+full contract, including why app-level quit paths are deliberately out of scope,
+and `examples/confirm_before_quit` for a complete runnable version of the
+confirm-dialog pattern above.

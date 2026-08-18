@@ -492,8 +492,7 @@ static gboolean on_window_delete_event(GtkWidget* widget, GdkEvent* event,
   if (wid == 0) {
     return FALSE;
   }
-  bool proceed =
-      RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
+  bool proceed = RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
   return proceed ? FALSE : TRUE;
 }
 
@@ -691,8 +690,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     }
     gtk_window_set_default_size(GTK_WINDOW(window), width, height);
     g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), nullptr);
-    g_signal_connect(window, "delete-event",
-                     G_CALLBACK(on_window_delete_event), nullptr);
+    g_signal_connect(window, "delete-event", G_CALLBACK(on_window_delete_event),
+                     nullptr);
     g_signal_connect(window, "key-press-event", G_CALLBACK(on_key_event),
                      nullptr);
     g_signal_connect(window, "key-release-event", G_CALLBACK(on_key_event),

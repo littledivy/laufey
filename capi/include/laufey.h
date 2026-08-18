@@ -253,6 +253,13 @@ typedef void (*laufey_keyboard_event_fn)(
 // actually close it. Doing nothing leaves the window open indefinitely.
 // With no handler registered, the window closes immediately on click, same
 // as backends predating API 31.
+//
+// The defer is PROCESS-WIDE, not per-window: once registered, the handler
+// receives (and holds open) EVERY window's close click. A handler that only
+// wants to intercept some windows must call close_window(window_id) itself
+// for the rest, or they become unclosable. (The Rust capi's per-window
+// on_close_requested wrapper does this automatically for windows without a
+// registered handler.)
 typedef void (*laufey_close_requested_fn)(void* user_data, uint32_t window_id);
 
 // Callback fired when a window finishes loading a navigation (the document and
@@ -748,13 +755,18 @@ struct laufey_backend_api {
   bool (*test_click_menu_item)(void* backend_data, const char* item_id);
 
   // Test-only. Synthesizes a close-requested event on window_id through the
-  // same dispatch path a real OS close click uses. Returns true if the
-  // window is still open afterward (a registered close_requested_handler
-  // deferred the close), false if it closed immediately (no handler was
-  // registered). Same best-effort-probe convention as test_click_menu_item:
-  // also returns true (indistinguishable from "still open") if the backend
-  // doesn't implement this hook (API < 31) or window_id is unknown. NULL on
-  // backends that don't implement it.
+  // same dispatch code a real OS close click runs. Returns true if a
+  // registered close_requested_handler deferred the close (the window is
+  // still open), false if the close proceeded (no handler was registered).
+  // "Proceeded" means initiated, not necessarily completed: some backends
+  // (winit, CEF) queue the actual close, so callers should poll window
+  // state rather than assert immediately after a false return. Two
+  // deliberate differences from a real close click: the handler runs
+  // synchronously on the CALLING thread, not the backend UI thread, and
+  // window_id is not validated -- an unknown id still reaches a registered
+  // handler (and returns false with no effect otherwise). NULL on backends
+  // that don't implement it (API < 31); callers should treat a NULL hook as
+  // unavailable, like test_click_menu_item.
   bool (*test_trigger_close_requested)(void* backend_data, uint32_t window_id);
 };
 

@@ -96,6 +96,12 @@ fn api() -> &'static LaufeyBackendApi {
   BACKEND_API.get().expect("Backend API not initialized")
 }
 
+// Non-panicking variant for callback paths that may run before (or without)
+// init_api — e.g. unit tests driving trampolines directly.
+pub(crate) fn try_api() -> Option<&'static LaufeyBackendApi> {
+  BACKEND_API.get().copied()
+}
+
 fn bindings() -> &'static Mutex<HashMap<u32, HashMap<String, BindingHandler>>> {
   BINDINGS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -1089,6 +1095,11 @@ impl Window {
   /// `Window::close()` (synchronously in the handler, or later from any
   /// thread, e.g. after a confirm dialog) to actually close it.
   ///
+  /// Per-window: only *this* window is held open. Other windows without
+  /// their own handler keep closing immediately, even though the backend's
+  /// C-level defer contract is process-wide (the capi completes the close
+  /// on their behalf -- see `close_requested_trampoline`).
+  ///
   /// Fires only for the window's own close control (title bar button,
   /// `Alt+F4`, a window manager's close action) -- never `Cmd+Q`, a "Quit"
   /// menu/tray item, or any other app-level termination. See `docs/c-abi.md`
@@ -1397,11 +1408,18 @@ pub fn test_click_menu_item(item_id: &str) -> bool {
 }
 
 /// Test-only. Synthesizes a close-requested event on `window_id` through the
-/// same dispatch path a real OS close click uses. Returns `true` if the
-/// window is still open afterward (an [`Window::on_close_requested`] handler
-/// deferred the close), `false` if it closed immediately (no handler was
-/// registered, or the backend does not implement the test hook, API < 31 --
-/// indistinguishable from "closed").
+/// same dispatch code a real OS close click runs. Returns `true` if an
+/// [`Window::on_close_requested`] handler deferred the close (the window is
+/// still open), `false` if the close proceeded (no handler was registered,
+/// or the backend does not implement the test hook -- indistinguishable
+/// cases). "Proceeded" means the close was initiated, not necessarily
+/// completed: some backends (winit, CEF) queue the actual close, so poll
+/// window state rather than asserting immediately after a `false` return.
+///
+/// Two deliberate differences from a real close click: the handler runs
+/// synchronously on the *calling* thread, not the backend UI thread, and
+/// `window_id` is not validated -- an unknown id still reaches a registered
+/// handler.
 ///
 /// Intended for automated e2e tests. See `examples/native_e2e` and
 /// `docs/e2e-testing.md`.

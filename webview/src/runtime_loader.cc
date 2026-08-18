@@ -494,15 +494,16 @@ static void Backend_SetCloseRequestedHandler(void* data,
 }
 
 // Test hook (API >= 31): synthesize a close-requested event through the same
-// dispatch path a real OS close click uses. Returns true if the window is
-// still open afterward (a registered handler deferred the close).
+// dispatch code a real OS close click runs. Returns true if a registered
+// handler deferred the close; false means the close proceeded. Proceeds
+// through Backend_CloseWindow — the real close entry point — rather than
+// re-inlining its body, so the hook can't silently diverge from the
+// shipping close path.
 static bool Backend_TestTriggerCloseRequested(void* data, uint32_t window_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   bool proceed = loader->DispatchCloseRequestedEvent(window_id);
   if (proceed) {
-    if (LaufeyBackend* backend = loader->GetBackend()) {
-      backend->CloseWindow(window_id);
-    }
+    Backend_CloseWindow(data, window_id);
     return false;
   }
   return true;

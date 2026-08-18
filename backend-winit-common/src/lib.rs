@@ -2324,11 +2324,10 @@ macro_rules! define_common_backend_fns {
           window_id,
         );
         if proceed {
-          let _ = state.proxy().send_event(
-            <$B as $crate::BackendAccess>::common_event(
-              $crate::CommonEvent::CloseWindow { window_id },
-            ),
-          );
+          // Route through the real close entry point (which queues
+          // CommonEvent::CloseWindow) rather than re-inlining it, so the
+          // hook can't silently diverge from the shipping close path.
+          unsafe { backend_close_window(_data, window_id) };
           false
         } else {
           true
@@ -3660,8 +3659,11 @@ pub fn dispatch_close_requested_event(
   handlers: &EventHandlers,
   window_id: u32,
 ) -> bool {
-  let handler = handlers.close_requested_handler.lock().unwrap();
-  if let Some((cb, user_data)) = *handler {
+  // Copy the handler out and release the lock before invoking it: the
+  // handler may block (e.g. a modal confirm dialog) and pump OS events,
+  // which can re-enter this dispatch on the same thread.
+  let handler = *handlers.close_requested_handler.lock().unwrap();
+  if let Some((cb, user_data)) = handler {
     unsafe {
       cb(user_data as *mut c_void, window_id);
     }

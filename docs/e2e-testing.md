@@ -24,12 +24,11 @@ matrix over the C ABI surface, and a phased rollout.
 > by CEF/WebView. The macOS self-accessibility approach (`§7.2`) is verified
 > standalone but not yet embedded (it needs the backend's main thread — see
 > `§8`). Implementing the hook exposed and fixed a pre-existing self-deadlock in
-> the Winit menu-callback registration. The `test_trigger_close_requested`
-> hook (API 31, `§8`) for `set_close_requested_handler`'s
-> defer-until-close_window contract is implemented for all backends and
-> verified green under Winit and WebView on macOS; it rides the same
-> pre-existing CI exclusions above for CEF and the Windows/Linux webview
-> combos, so those aren't gated by it yet.
+> the Winit menu-callback registration. The `test_trigger_close_requested` hook
+> (API 31, `§8`) for `set_close_requested_handler`'s defer-until-close_window
+> contract is implemented for all backends and verified green under Winit and
+> WebView on macOS; it rides the same pre-existing CI exclusions above for CEF
+> and the Windows/Linux webview combos, so those aren't gated by it yet.
 
 ---
 
@@ -372,9 +371,13 @@ containing a submenu.
 
 ```c
 // Synthesizes a close-requested event on window_id through the same
-// dispatch path a real OS close click uses. Returns true if the window is
-// still open afterward (a registered set_close_requested_handler deferred
-// the close), false if it closed immediately (no handler was registered).
+// dispatch code a real OS close click runs. Returns true if a registered
+// set_close_requested_handler deferred the close (the window is still
+// open), false if the close proceeded (no handler was registered).
+// "Proceeded" means initiated: winit and CEF queue the actual close, so
+// poll window state instead of asserting right after a false return. The
+// handler runs synchronously on the calling thread, not the backend UI
+// thread a real close click would use.
 bool (*test_trigger_close_requested)(void* backend_data, uint32_t window_id);
 ```
 
@@ -383,23 +386,21 @@ close dispatch rather than a new registry (unlike the click hook, there's
 nothing to "look up by id" — a window has at most one pending close):
 
 - **Winit** (`backend-winit-common`): dispatches via the same
-  `dispatch_close_requested_event`, then queues the same
-  `CommonEvent::CloseWindow` `close_window` uses if the dispatch says to
-  proceed.
+  `dispatch_close_requested_event`, then proceeds through `backend_close_window`
+  — the real close entry point.
 - **CEF + WebView** (each backend's `RuntimeLoader`): dispatches via
-  `DispatchCloseRequestedEvent`, then calls `CloseWindow`/`Backend_CloseWindow`
-  directly if it says to proceed.
+  `DispatchCloseRequestedEvent`, then proceeds through `Backend_CloseWindow`.
 
 The capi exposes `laufey::test_trigger_close_requested(window_id)`. The
-`native_e2e` runtime registers an `on_close_requested` handler that *stashes* the
-window_id instead of resolving inline, calls the hook to confirm the window
-stays open, then closes it from outside the handler and confirms it
-actually closes — proving resolution genuinely works from outside the
-handler (not just that a bool threads through) round-trips.
-Verified green under Winit and WebView on macOS; CEF and the Windows/Linux
-webview backends implement the same plumbing but ride the pre-existing
-`native-e2e` CI exclusions for those combos (`§` status note above) — not
-gated by this change, but not covered by CI for it either.
+`native_e2e` runtime registers an `on_close_requested` handler that _stashes_
+the window_id instead of resolving inline, calls the hook to confirm the window
+stays open, then closes it from outside the handler and confirms it actually
+closes — proving resolution genuinely works from outside the handler (not just
+that a bool threads through) round-trips. Verified green under Winit and WebView
+on macOS; CEF and the Windows/Linux webview backends implement the same plumbing
+but ride the pre-existing `native-e2e` CI exclusions for those combos (`§`
+status note above) — not gated by this change, but not covered by CI for it
+either.
 
 **Not yet added** (future hooks, same append-and-`N/A` pattern):
 
@@ -424,22 +425,22 @@ above only touches an in-process mutex and works from any thread.
 Rows are capability groups; each cell is per-backend. Every ✅ is additionally
 per-OS (`Linux/macOS/Windows`); WebView's web-layer cells differ by engine.
 
-| Capability                             | Technique | CEF | WebView | Winit            | Gate                   |
-| -------------------------------------- | --------- | --- | ------- | ---------------- | ---------------------- |
-| Window geometry/state/opacity readback | A         | ✅  | ✅      | ✅ (Rust)        | ✅                     |
-| Window lifecycle events                | B         | ✅  | ✅      | ✅               | ✅                     |
-| Close handler (defer-until-close)      | B (`§8`)  | ✅ (Linux/Win nightly-only) | ✅ (Linux nightly-only) | ✅ | ✅ (macOS; see `§8`) |
-| Clipboard round-trip                   | A         | ✅  | ✅      | ✅               | ✅                     |
-| Window handles / types                 | A         | ✅  | ✅      | ✅               | ✅                     |
-| Application / context menu             | D + B     | ✅  | ✅      | ✅ (`muda`)      | ✅                     |
-| Tray icon / menu / click               | D + B     | ✅  | ✅      | ✅ (`tray-icon`) | ✅ (win tray nightly)  |
-| Notifications payload                  | D         | ✅  | ✅      | probe            | Linux ✅, else nightly |
-| Dock / taskbar                         | A/D/F     | ✅  | ✅      | probe            | partial                |
-| Raw mouse/keyboard/wheel events        | E         | ✅  | ✅      | ✅               | ✅ (with hook)         |
-| Web: bindings/execute_js/navigate/load | B/C/E     | ✅  | ✅      | **N/A**          | ✅ (CEF/WebView)       |
-| Custom scheme handlers                 | C         | ✅  | ✅      | **N/A**          | ✅ (CEF/WebView)       |
-| DevTools                               | F         | ✅  | partial | N/A              | nightly                |
-| Dialogs (alert/confirm/prompt/file)    | F         | ⚠️  | ⚠️      | ⚠️               | nightly                |
+| Capability                             | Technique | CEF                         | WebView                 | Winit            | Gate                   |
+| -------------------------------------- | --------- | --------------------------- | ----------------------- | ---------------- | ---------------------- |
+| Window geometry/state/opacity readback | A         | ✅                          | ✅                      | ✅ (Rust)        | ✅                     |
+| Window lifecycle events                | B         | ✅                          | ✅                      | ✅               | ✅                     |
+| Close handler (defer-until-close)      | B (`§8`)  | ✅ (Linux/Win nightly-only) | ✅ (Linux nightly-only) | ✅               | ✅ (macOS; see `§8`)   |
+| Clipboard round-trip                   | A         | ✅                          | ✅                      | ✅               | ✅                     |
+| Window handles / types                 | A         | ✅                          | ✅                      | ✅               | ✅                     |
+| Application / context menu             | D + B     | ✅                          | ✅                      | ✅ (`muda`)      | ✅                     |
+| Tray icon / menu / click               | D + B     | ✅                          | ✅                      | ✅ (`tray-icon`) | ✅ (win tray nightly)  |
+| Notifications payload                  | D         | ✅                          | ✅                      | probe            | Linux ✅, else nightly |
+| Dock / taskbar                         | A/D/F     | ✅                          | ✅                      | probe            | partial                |
+| Raw mouse/keyboard/wheel events        | E         | ✅                          | ✅                      | ✅               | ✅ (with hook)         |
+| Web: bindings/execute_js/navigate/load | B/C/E     | ✅                          | ✅                      | **N/A**          | ✅ (CEF/WebView)       |
+| Custom scheme handlers                 | C         | ✅                          | ✅                      | **N/A**          | ✅ (CEF/WebView)       |
+| DevTools                               | F         | ✅                          | partial                 | N/A              | nightly                |
+| Dialogs (alert/confirm/prompt/file)    | F         | ⚠️                          | ⚠️                      | ⚠️               | nightly                |
 
 Net: ~90% of the C ABI is a hosted-CI PR gate across all backends; only modal /
 outward-facing surfaces are nightly.

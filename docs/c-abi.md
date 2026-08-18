@@ -150,64 +150,76 @@ back to a socket transport.
 ## Close-requested handler defers the close (API ≥ 31)
 
 As of API 31, registering `set_close_requested_handler` changes the backend's
-behavior: the window no longer closes on its own when the user clicks the
-close button. Resolving is just a call to the existing `close_window` — no
-new handle type, no synchronous return value. This isn't only a veto — it's
-a general hold point for whatever needs to happen before the window
-actually goes away: flush writes, close file handles, wait for a save to
-finish, ask the user, or just always let it through once cleanup is done.
+behavior: the window no longer closes on its own when the user clicks the close
+button. Resolving is just a call to the existing `close_window` — no new handle
+type, no synchronous return value. This isn't only a veto — it's a general hold
+point for whatever needs to happen before the window actually goes away: flush
+writes, close file handles, wait for a save to finish, ask the user, or just
+always let it through once cleanup is done.
 
 1. The runtime calls `set_close_requested_handler(handler, user_data)`.
-2. When the user requests a close, the backend invokes `handler` and then
-   does nothing further — the window stays open.
-3. The runtime does whatever work it needs, then decides — synchronously
-   inside `handler` or later from any thread: call `close_window(window_id)`
-   to actually close it, or do nothing to leave it open. There's no separate
+2. When the user requests a close, the backend invokes `handler` and then does
+   nothing further — the window stays open.
+3. The runtime does whatever work it needs, then decides — synchronously inside
+   `handler` or later from any thread: call `close_window(window_id)` to
+   actually close it, or do nothing to leave it open. There's no separate
    "resolve" call and no opaque handle to release — `close_window` already
    bypasses each backend's close-confirm gate (`[NSWindow close]` not
    `performClose:`, `DestroyWindow` not `WM_CLOSE`, `gtk_widget_destroy` not
-   `gtk_window_close`, CEF's `CloseBrowser(true)` force-close), so it's safe
+   `gtk_window_close`, CEF marks the window close-allowed so `CanClose` skips
+   the negotiation before force-closing with `CloseBrowser(true)`), so it's safe
    to call from inside the handler without re-entering it.
 
-With no handler registered, behavior is unchanged from backends predating
-API 31: the window closes immediately on click.
+With no handler registered, behavior is unchanged from backends predating API
+31: the window closes immediately on click.
 
-**Scope: only the window's own close control.** `handler` fires for the
-window's native close affordance — the title bar close button, `Alt+F4`, a
-window manager's "close" action — and nothing else. It does **not** fire for
-`Cmd+Q`, an app menu or tray "Quit" item, or any other app-level termination
-path, on any backend. This is deliberate, not an oversight: a window that
-hides itself instead of closing (e.g. a tray-icon app — see
-[window-events.md](window-events.md)) needs an app-level quit that it
-*can't* intercept, or "Quit" would just re-hide the window instead of
-exiting. Concretely:
+**The defer is process-wide, not per-window.** Once registered, the handler
+receives — and holds open — _every_ window's close click, including windows the
+embedder never meant to intercept. A handler that only cares about some windows
+must call `close_window(window_id)` itself for the rest, or those windows become
+unclosable. Higher-level per-window APIs (e.g. the Rust capi's
+`Window::on_close_requested`) implement this exact pattern: their process-wide C
+handler completes the close for any window without a registered per-window
+handler.
 
-- macOS: CEF explicitly force-closes (`CloseBrowser(true)`, bypassing
-  `DoClose`) from its `terminate:` override, which is what both the `"quit"`
-  menu role and `Cmd+Q`'s default handling route through — see
-  `cef/src/main_mac.mm`. WebView never wires `applicationShouldTerminate:` to
+**Scope: only the window's own close control.** `handler` fires for the window's
+native close affordance — the title bar close button, `Alt+F4`, a window
+manager's "close" action — and nothing else. It does **not** fire for `Cmd+Q`,
+an app menu or tray "Quit" item, or any other app-level termination path, on any
+backend. This is deliberate, not an oversight: a window that hides itself
+instead of closing (e.g. a tray-icon app — see
+[window-events.md](window-events.md)) needs an app-level quit that it _can't_
+intercept, or "Quit" would just re-hide the window instead of exiting.
+Concretely:
+
+- macOS: CEF's `terminate:` override — which is what both the `"quit"` menu role
+  and `Cmd+Q`'s default handling route through — marks every window
+  close-allowed (so `CanClose` skips the close-requested negotiation) and
+  force-closes with `CloseBrowser(true)`, which skips the beforeunload prompt
+  (it does _not_ bypass `CanClose`/`DoClose`; the close-allowed marks are what
+  skip the negotiation) — see `cef/src/main_mac.mm` and `CloseAllBrowsers` in
+  `cef/src/app.cc`. WebView never wires `applicationShouldTerminate:` to
   `windowShouldClose:` at all, so it's already outside the handler's reach.
-- Windows and Linux: the `"quit"` menu role has no automatic OS-level
-  binding on either platform — clicking it just invokes the runtime's own
-  registered menu-click callback (`menu_linux.cc`; unhandled on Windows,
-  where `"quit"` isn't special-cased at all), so it never touches the close
-  path unless the runtime's own callback explicitly calls `close_window`.
+- Windows and Linux: the `"quit"` menu role has no automatic OS-level binding on
+  either platform — clicking it just invokes the runtime's own registered
+  menu-click callback (`menu_linux.cc`; unhandled on Windows, where `"quit"`
+  isn't special-cased at all), so it never touches the close path unless the
+  runtime's own callback explicitly calls `close_window`.
 
 If a runtime wants "are you sure you want to quit?" behavior, it needs an
 app-level quit hook — which doesn't exist yet in this ABI — not
 `set_close_requested_handler`.
 
-`handler` fires synchronously on the backend's native UI thread (e.g.
-AppKit's `windowShouldClose:`) — the same thread every other event handler
+`handler` fires synchronously on the backend's native UI thread (e.g. AppKit's
+`windowShouldClose:`) — the same thread every other event handler
 (`set_resize_handler`, `set_mouse_click_handler`, etc.) already fires on. A
-*synchronous* confirm dialog can be shown directly in the handler (the
-backend's `show_dialog` pumps OS events while blocking, so this doesn't
-deadlock). Runtimes that want to resolve asynchronously instead need their
-own way back into their async runtime from that thread; e.g. the Rust
-`laufey` crate's `Window::on_close_requested` docs recommend capturing a
-`tokio::runtime::Handle` ahead of time rather than relying on a bare
-`tokio::spawn`, which requires an ambient runtime context this thread
-doesn't have.
+_synchronous_ confirm dialog can be shown directly in the handler (the backend's
+`show_dialog` pumps OS events while blocking, so this doesn't deadlock).
+Runtimes that want to resolve asynchronously instead need their own way back
+into their async runtime from that thread; e.g. the Rust `laufey` crate's
+`Window::on_close_requested` docs recommend capturing a `tokio::runtime::Handle`
+ahead of time rather than relying on a bare `tokio::spawn`, which requires an
+ambient runtime context this thread doesn't have.
 
 ## Threading
 

@@ -359,7 +359,9 @@ fn e2e_main() {
     // window_id instead of resolving inline — proving resolution genuinely
     // works from outside the handler (any thread, any time), not just
     // synchronously inline. Synthesizes the close via
-    // test_trigger_close_requested (API >= 31); N/A on backends without it.
+    // test_trigger_close_requested (API >= 31, implemented by every in-tree
+    // backend — init_api's version check guarantees it's present, so a
+    // failure here is a regression, never a missing hook).
     let close_win = Window::new(200, 150)
       .title("native-e2e-close")
       .load("data:text/html,<!doctype html><title>close</title>");
@@ -388,9 +390,20 @@ fn e2e_main() {
 
     let still_open_after_defer =
       laufey::test_trigger_close_requested(close_win_id);
-    if !baseline_sized || !close_handler_fired.load(Ordering::SeqCst) {
-      na("close handler (backend has no test_trigger_close_requested hook, API < 31)");
+    if !baseline_sized {
+      // Precondition, not a close-dispatch check: without a sized baseline
+      // the stays-open/closed probes below are meaningless.
+      na("close handler (precondition failed: close_win never reported a nonzero size)");
     } else {
+      // The hook itself is guaranteed present: init_api rejects any backend
+      // whose API version differs from 31, and every in-tree backend
+      // implements test_trigger_close_requested. Dispatch is synchronous,
+      // so a handler that didn't fire is a real regression — fail, don't
+      // N/A.
+      check(
+        "on_close_requested handler fired for synthesized close",
+        close_handler_fired.load(Ordering::SeqCst),
+      );
       check(
         "close handler defers — window stays open",
         still_open_after_defer,
