@@ -226,11 +226,27 @@ class RuntimeLoader {
     close_requested_user_data_ = user_data;
   }
 
-  void DispatchCloseRequestedEvent(uint32_t window_id) {
-    std::lock_guard<std::mutex> lock(close_requested_mutex_);
-    if (close_requested_handler_) {
-      close_requested_handler_(close_requested_user_data_, window_id);
+  // Returns true if the caller should proceed to actually close the window.
+  // A registered handler always defers the close (API >= 31): the app
+  // decides later, out of band, by calling close_window. No handler means
+  // proceed, unchanged from backends predating API 31.
+  bool DispatchCloseRequestedEvent(uint32_t window_id) {
+    // Copy the handler out and release the mutex before invoking it: the
+    // handler may block (e.g. a modal confirm dialog) and pump OS events,
+    // which can re-enter this dispatch on the same thread — with a
+    // non-recursive mutex still held, that would self-deadlock.
+    laufey_close_requested_fn handler;
+    void* user_data;
+    {
+      std::lock_guard<std::mutex> lock(close_requested_mutex_);
+      handler = close_requested_handler_;
+      user_data = close_requested_user_data_;
     }
+    if (handler) {
+      handler(user_data, window_id);
+      return false;
+    }
+    return true;
   }
 
   void SetPageLoadHandler(laufey_page_load_fn handler, void* user_data) {

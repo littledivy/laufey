@@ -535,27 +535,38 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
           false);
       break;
     }
-    case WM_CLOSE:
+    case WM_CLOSE: {
+      bool proceed = true;
       if (wid > 0) {
-        RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
+        proceed =
+            RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
       }
-      // Check if any windows remain
-      {
-        std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
-        // Remove this window from map
-        g_hwnd_to_laufey_id.erase(hwnd);
-        if (g_hwnd_to_laufey_id.empty()) {
-          PostQuitMessage(0);
-        }
+      if (!proceed) {
+        // A close-requested handler deferred the close: leave the window open.
+        // Not calling DestroyWindow is the standard Win32 idiom for this.
+        return 0;
       }
+      // Unregistration and the last-window quit check live in WM_DESTROY,
+      // which every destroy path hits (this one, and CloseWindow's direct
+      // DestroyWindow when a deferred close is later resolved).
       DestroyWindow(hwnd);
       return 0;
+    }
     case WM_COMMAND:
       if (win32_menu::HandleMenuCommand(hwnd, wParam))
         return 0;
       break;
-    case WM_DESTROY:
+    case WM_DESTROY: {
+      // Single exit point for window teardown: fires for WM_CLOSE-initiated
+      // closes and for CloseWindow()'s direct DestroyWindow alike, so a
+      // deferred close resolved via close_window still quits the message
+      // loop when the last window goes away.
+      std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
+      if (g_hwnd_to_laufey_id.erase(hwnd) > 0 && g_hwnd_to_laufey_id.empty()) {
+        PostQuitMessage(0);
+      }
       return 0;
+    }
     case WM_UI_TASK: {
       UiTaskData* taskData = reinterpret_cast<UiTaskData*>(lParam);
       if (taskData) {
@@ -984,10 +995,9 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
   if (state) {
     if (state->controller)
       state->controller->Close();
-    {
-      std::lock_guard<std::recursive_mutex> hlock(g_hwnd_mutex);
-      g_hwnd_to_laufey_id.erase(state->hwnd);
-    }
+    // Deliberately not erased from g_hwnd_to_laufey_id here: WM_DESTROY
+    // (sent synchronously by DestroyWindow) owns unregistration and the
+    // last-window quit check, for this path and the WM_CLOSE path alike.
     DestroyWindow(state->hwnd);
     windows_.erase(window_id);
   }

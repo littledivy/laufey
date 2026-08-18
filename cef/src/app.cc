@@ -127,6 +127,21 @@ void LaufeyWindowDelegate::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
 }
 
 bool LaufeyWindowDelegate::CanClose(CefRefPtr<CefWindow> window) {
+  // The close-requested negotiation lives here, not in DoClose: laufey's
+  // Views-hosted browsers run the default Chrome runtime style, and CEF
+  // only calls CefLifeSpanHandler::DoClose for Alloy-style browsers (see
+  // include/cef_life_span_handler.h) — a DoClose-based dispatch would
+  // simply never fire. CanClose runs for every close attempt on the
+  // CefWindow, user- and code-initiated alike; programmatic closes
+  // (close_window(), app quit) mark themselves close-allowed first so they
+  // skip the negotiation instead of re-deferring forever.
+  auto* loader = RuntimeLoader::GetInstance();
+  if (laufey_id_ > 0 && !loader->IsCloseAllowed(laufey_id_) &&
+      !loader->DispatchCloseRequestedEvent(laufey_id_)) {
+    // A registered handler defers the close: the app decides later, out of
+    // band, by calling close_window().
+    return false;
+  }
   CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
   return browser ? browser->GetHost()->TryCloseBrowser() : true;
 }
@@ -179,6 +194,9 @@ bool LaufeyHandler::OnBeforePopup(
 
 bool LaufeyHandler::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+  // No close-requested dispatch here: it lives in
+  // LaufeyWindowDelegate::CanClose, because Chrome-runtime-style browsers
+  // (laufey's default) never receive a DoClose call at all.
   if (browser_list_.size() == 1) {
     is_closing_ = true;
   }
@@ -187,12 +205,6 @@ bool LaufeyHandler::DoClose(CefRefPtr<CefBrowser> browser) {
 
 void LaufeyHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
-
-  auto* loader = RuntimeLoader::GetInstance();
-  uint32_t wid = loader->GetLaufeyIdForBrowser(browser);
-  if (wid > 0) {
-    loader->DispatchCloseRequestedEvent(wid);
-  }
 
   for (auto it = browser_list_.begin(); it != browser_list_.end(); ++it) {
     if ((*it)->IsSame(browser)) {
@@ -390,6 +402,24 @@ void LaufeyHandler::CloseAllBrowsers(bool force_close) {
     CefPostTask(TID_UI, base::BindOnce(&LaufeyHandler::CloseAllBrowsers, this,
                                        force_close));
     return;
+  }
+  // App-level quit: mark every window close-allowed so CanClose skips the
+  // close-requested negotiation -- quit is deliberately not interceptable
+  // by a window's on_close hook. Note CloseBrowser(force_close=true) only
+  // skips the beforeunload/unload prompt (see include/cef_browser.h); it
+  // does NOT bypass CanClose or DoClose, which is why the marks are needed.
+  // is_closing_ doubles as terminate:'s reentry guard against a second quit
+  // attempt while the closes are in flight; with the negotiation skipped
+  // the quit always completes, so latching it is safe.
+  auto* loader = RuntimeLoader::GetInstance();
+  if (force_close) {
+    is_closing_ = true;
+    for (const auto& browser : browser_list_) {
+      uint32_t wid = loader->GetLaufeyIdForBrowser(browser);
+      if (wid > 0) {
+        loader->MarkCloseAllowed(wid);
+      }
+    }
   }
   for (const auto& browser : browser_list_) {
     browser->GetHost()->CloseBrowser(force_close);

@@ -1381,6 +1381,12 @@ static void Backend_CloseWindow(void* data, uint32_t window_id) {
   auto* loader = RuntimeLoader::GetInstance();
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
   if (browser) {
+    // Mark before closing: CloseBrowser eventually drives the CefWindow's
+    // close, whose CanClose must skip the close-requested negotiation for a
+    // programmatic close (force_close=true only skips the beforeunload
+    // prompt, not CanClose -- without the mark a registered handler would
+    // re-defer this close forever).
+    loader->MarkCloseAllowed(window_id);
     CefPostTask(TID_UI, base::BindOnce(
                             [](CefRefPtr<CefBrowser> b) {
                               b->GetHost()->CloseBrowser(true);
@@ -1394,6 +1400,20 @@ static void Backend_SetCloseRequestedHandler(void* data,
                                              void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   loader->SetCloseRequestedHandler(handler, user_data);
+}
+
+// Test hook (API >= 31): synthesize a close-requested event through the same
+// dispatch code a real OS close click runs (see CanClose in app.cc). Returns
+// true if a registered handler deferred the close; false means the close was
+// initiated (it completes asynchronously via CloseBrowser).
+static bool Backend_TestTriggerCloseRequested(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  bool proceed = loader->DispatchCloseRequestedEvent(window_id);
+  if (proceed) {
+    Backend_CloseWindow(data, window_id);
+    return false;
+  }
+  return true;
 }
 
 static int Backend_ShowDialog(void* /*data*/, uint32_t /*window_id*/,
@@ -1522,6 +1542,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_resize_handler = Backend_SetResizeHandler;
   backend_api_.set_move_handler = Backend_SetMoveHandler;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
+  backend_api_.test_trigger_close_requested = Backend_TestTriggerCloseRequested;
 
   backend_api_.poll_js_calls = [](void* data) {
     RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);

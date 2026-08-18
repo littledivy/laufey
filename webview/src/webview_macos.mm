@@ -146,6 +146,12 @@ class WKWebViewBackend : public LaufeyBackend {
   void HandleJsMessage(uint32_t window_id, uint64_t call_id,
                        const std::string& method, laufey::ValuePtr args);
 
+  // Called from the window delegate's windowWillClose: when AppKit closes
+  // the NSWindow directly (windowShouldClose: returned YES because no
+  // close-requested handler deferred). CloseWindow() never reaches this —
+  // it detaches the delegate (via RemoveWindowState) before [window close].
+  void OnWindowClosedByUser(uint32_t window_id);
+
  private:
   MacWindowState* GetWindow(uint32_t window_id);
   void RemoveWindowState(uint32_t window_id);
@@ -468,14 +474,30 @@ class MacSchemeExchange : public SchemeExchangeBase {
 @end
 
 @interface LaufeyWindowDelegate : NSObject <NSWindowDelegate>
+@property(nonatomic, assign) WKWebViewBackend* backend;
 @property(nonatomic, assign) uint32_t windowId;
 @end
 
 @implementation LaufeyWindowDelegate
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
-  RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(self.windowId);
-  return NO;
+  return RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(
+             self.windowId)
+             ? YES
+             : NO;
+}
+
+// Fires only for AppKit-driven closes (windowShouldClose: returned YES):
+// without it the backend's per-window state — the NSWindow strong ref
+// (releasedWhenClosed:NO), notification observers, and the "laufey" script
+// message handler — would leak, and the window id would stay live (get_size
+// still reporting the old frame, show() able to resurrect the window).
+// CloseWindow() detaches the delegate before [window close], so the
+// programmatic path can't double-clean through here.
+- (void)windowWillClose:(NSNotification*)notification {
+  if (self.backend) {
+    self.backend->OnWindowClosedByUser(self.windowId);
+  }
 }
 
 @end
@@ -591,6 +613,11 @@ WKWebViewBackend::~WKWebViewBackend() {
       if (state.webview)
         [state.webview.configuration.userContentController
             removeScriptMessageHandlerForName:@"laufey"];
+      // Detach the delegate: AppKit may keep an on-screen window alive past
+      // this destructor, and its windowWillClose: would otherwise call back
+      // into this destroyed backend.
+      if (state.window)
+        [state.window setDelegate:nil];
       UnregisterNSWindow(state.window);
     }
   }
@@ -629,6 +656,13 @@ void WKWebViewBackend::RemoveWindowState(uint32_t window_id) {
     UnregisterNSWindow(state.window);
   }
   windows_.erase(it);
+}
+
+void WKWebViewBackend::OnWindowClosedByUser(uint32_t window_id) {
+  // Main thread (AppKit delivers windowWillClose: there); safe to take the
+  // lock and tear down state while the window finishes closing.
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  RemoveWindowState(window_id);
 }
 
 void WKWebViewBackend::InstallGlobalMonitors() {
@@ -883,6 +917,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       [window center];
 
       LaufeyWindowDelegate* delegate = [[LaufeyWindowDelegate alloc] init];
+      delegate.backend = this;
       delegate.windowId = window_id;
       [window setDelegate:delegate];
 

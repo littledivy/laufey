@@ -57,11 +57,27 @@ class RuntimeLoader {
 
   void UnregisterBrowser(uint32_t window_id) {
     std::lock_guard<std::mutex> lock(windows_mutex_);
+    close_allowed_.erase(window_id);
     auto it = browsers_.find(window_id);
     if (it != browsers_.end()) {
       browser_id_to_laufey_id_.erase(it->second->GetIdentifier());
       browsers_.erase(it);
     }
+  }
+
+  // Programmatic closes (close_window(), app quit) mark the window
+  // close-allowed before closing it, so LaufeyWindowDelegate::CanClose
+  // skips the close-requested negotiation for it: a programmatic close IS
+  // the resolution of that negotiation (or an app-level quit, which is
+  // deliberately not interceptable). Cleared in UnregisterBrowser.
+  void MarkCloseAllowed(uint32_t window_id) {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    close_allowed_.insert(window_id);
+  }
+
+  bool IsCloseAllowed(uint32_t window_id) {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    return close_allowed_.count(window_id) > 0;
   }
 
   CefRefPtr<CefBrowser> GetBrowserForWindow(uint32_t window_id) {
@@ -302,11 +318,27 @@ class RuntimeLoader {
     close_requested_user_data_ = user_data;
   }
 
-  void DispatchCloseRequestedEvent(uint32_t window_id) {
-    std::lock_guard<std::mutex> lock(close_requested_mutex_);
-    if (close_requested_handler_) {
-      close_requested_handler_(close_requested_user_data_, window_id);
+  // Returns true if the caller should proceed to actually close. A
+  // registered handler always defers the close (API >= 31): the app
+  // decides later, out of band, by calling close_window. No handler means
+  // proceed, unchanged from backends predating API 31.
+  bool DispatchCloseRequestedEvent(uint32_t window_id) {
+    // Copy the handler out and release the mutex before invoking it: the
+    // handler may block (e.g. a modal confirm dialog) and pump OS events,
+    // which can re-enter this dispatch on the same thread — with a
+    // non-recursive mutex still held, that would self-deadlock.
+    laufey_close_requested_fn handler;
+    void* user_data;
+    {
+      std::lock_guard<std::mutex> lock(close_requested_mutex_);
+      handler = close_requested_handler_;
+      user_data = close_requested_user_data_;
     }
+    if (handler) {
+      handler(user_data, window_id);
+      return false;
+    }
+    return true;
   }
 
   // --- Custom URL scheme handler (API >= 26) ---
@@ -366,6 +398,9 @@ class RuntimeLoader {
   std::atomic<bool> running_{false};
 
   std::map<uint32_t, CefRefPtr<CefBrowser>> browsers_;
+  // Windows being closed programmatically; CanClose skips the
+  // close-requested negotiation for them (see MarkCloseAllowed).
+  std::set<uint32_t> close_allowed_;
   std::map<int, uint32_t>
       browser_id_to_laufey_id_;  // CefBrowser::GetIdentifier() -> laufey_id
   std::map<uint64_t, uint32_t>
