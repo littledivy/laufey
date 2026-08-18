@@ -38,6 +38,7 @@ struct MacWindowState {
   NSMenu* menu = nil;  // per-window menu (nil = no custom menu)
   LaufeyUIDelegate* ui_delegate;
   LaufeyNavigationDelegate* navigation_delegate;
+  id title_observer = nil;  // KVO observer mirroring document.title
 };
 
 class WKWebViewBackend : public LaufeyBackend {
@@ -148,6 +149,12 @@ class WKWebViewBackend : public LaufeyBackend {
   void HandleJsMessage(uint32_t window_id, uint64_t call_id,
                        const std::string& method, laufey::ValuePtr args);
 
+  // Called from the window delegate's windowWillClose: when AppKit closes
+  // the NSWindow directly (windowShouldClose: returned YES because no
+  // close-requested handler deferred). CloseWindow() never reaches this —
+  // it detaches the delegate (via RemoveWindowState) before [window close].
+  void OnWindowClosedByUser(uint32_t window_id);
+
  private:
   MacWindowState* GetWindow(uint32_t window_id);
   void RemoveWindowState(uint32_t window_id);
@@ -186,6 +193,23 @@ static void UnregisterNSWindow(NSWindow* win) {
   std::lock_guard<std::mutex> lock(g_nswindow_mutex);
   g_nswindow_to_laufey_id.erase((__bridge void*)win);
 }
+
+// A borderless NSWindow returns NO from
+// -canBecomeKeyWindow/-canBecomeMainWindow by default, so a frameless window
+// never takes key focus and its WKWebView never becomes first responder —
+// killing all keyboard and mouse input. This subclass forces both to YES so
+// frameless windows behave like normal ones.
+@interface LaufeyKeyableWindow : NSWindow
+@end
+
+@implementation LaufeyKeyableWindow
+- (BOOL)canBecomeKeyWindow {
+  return YES;
+}
+- (BOOL)canBecomeMainWindow {
+  return YES;
+}
+@end
 
 @interface LaufeyScriptMessageHandler : NSObject <WKScriptMessageHandler>
 @property(nonatomic, assign) WKWebViewBackend* backend;
@@ -470,14 +494,57 @@ class MacSchemeExchange : public SchemeExchangeBase {
 @end
 
 @interface LaufeyWindowDelegate : NSObject <NSWindowDelegate>
+@property(nonatomic, assign) WKWebViewBackend* backend;
 @property(nonatomic, assign) uint32_t windowId;
 @end
 
 @implementation LaufeyWindowDelegate
 
 - (BOOL)windowShouldClose:(NSWindow*)sender {
-  RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(self.windowId);
-  return NO;
+  return RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(
+             self.windowId)
+             ? YES
+             : NO;
+}
+
+// Fires only for AppKit-driven closes (windowShouldClose: returned YES):
+// without it the backend's per-window state — the NSWindow strong ref
+// (releasedWhenClosed:NO), notification observers, and the "laufey" script
+// message handler — would leak, and the window id would stay live (get_size
+// still reporting the old frame, show() able to resurrect the window).
+// CloseWindow() detaches the delegate before [window close], so the
+// programmatic path can't double-clean through here.
+- (void)windowWillClose:(NSNotification*)notification {
+  if (self.backend) {
+    self.backend->OnWindowClosedByUser(self.windowId);
+  }
+}
+
+@end
+
+// Mirrors the page's `document.title` onto the NSWindow title via KVO on
+// WKWebView.title, matching the Windows (DocumentTitleChanged) and Linux
+// (notify::title) backends — macOS was the only backend where a page setting
+// `document.title` never reached the OS-level window title
+// (denoland/deno#35711). An empty title (page without <title>) is ignored so
+// it doesn't clobber the host-set default (app name).
+@interface LaufeyTitleObserver : NSObject
+@property(nonatomic, weak) NSWindow* window;
+@end
+
+@implementation LaufeyTitleObserver
+
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary*)change
+                       context:(void*)context {
+  if (![keyPath isEqualToString:@"title"]) {
+    return;
+  }
+  NSString* title = change[NSKeyValueChangeNewKey];
+  if ([title isKindOfClass:[NSString class]] && title.length > 0) {
+    [self.window setTitle:title];
+  }
 }
 
 @end
@@ -566,6 +633,11 @@ WKWebViewBackend::~WKWebViewBackend() {
       if (state.webview)
         [state.webview.configuration.userContentController
             removeScriptMessageHandlerForName:@"laufey"];
+      // Detach the delegate: AppKit may keep an on-screen window alive past
+      // this destructor, and its windowWillClose: would otherwise call back
+      // into this destroyed backend.
+      if (state.window)
+        [state.window setDelegate:nil];
       UnregisterNSWindow(state.window);
     }
   }
@@ -594,6 +666,8 @@ void WKWebViewBackend::RemoveWindowState(uint32_t window_id) {
           removeObserver:state.resize_observer];
     if (state.move_observer)
       [[NSNotificationCenter defaultCenter] removeObserver:state.move_observer];
+    if (state.webview && state.title_observer)
+      [state.webview removeObserver:state.title_observer forKeyPath:@"title"];
     if (state.webview)
       [state.webview.configuration.userContentController
           removeScriptMessageHandlerForName:@"laufey"];
@@ -602,6 +676,13 @@ void WKWebViewBackend::RemoveWindowState(uint32_t window_id) {
     UnregisterNSWindow(state.window);
   }
   windows_.erase(it);
+}
+
+void WKWebViewBackend::OnWindowClosedByUser(uint32_t window_id) {
+  // Main thread (AppKit delivers windowWillClose: there); safe to take the
+  // lock and tear down state while the window finishes closing.
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  RemoveWindowState(window_id);
 }
 
 void WKWebViewBackend::InstallGlobalMonitors() {
@@ -825,6 +906,14 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                                   NSWindowCollectionBehaviorTransient |
                                   NSWindowCollectionBehaviorIgnoresCycle];
         window = panel;
+      } else if (frameless) {
+        // Borderless windows must be told they can become key/main, otherwise
+        // they receive no keyboard or mouse input (see LaufeyKeyableWindow).
+        window = [[LaufeyKeyableWindow alloc]
+            initWithContentRect:frame
+                      styleMask:style
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
       } else {
         window = [[NSWindow alloc] initWithContentRect:frame
                                              styleMask:style
@@ -856,6 +945,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       [window center];
 
       LaufeyWindowDelegate* delegate = [[LaufeyWindowDelegate alloc] init];
+      delegate.backend = this;
       delegate.windowId = window_id;
       [window setDelegate:delegate];
 
@@ -919,6 +1009,8 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       }
 
       [window setContentView:webview];
+      // Route input into the web content once the window becomes key.
+      [window makeFirstResponder:webview];
 
       RegisterNSWindow(window, window_id);
 
@@ -967,11 +1059,25 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
                   usingBlock:^(NSNotification* note) {
                     NSWindow* w = [note object];
                     if (w) {
+                      // Report top-left global coordinates, matching the
+                      // convention SetWindowPosition/GetWindowPosition use —
+                      // the raw Cocoa bottom-left origin previously leaked
+                      // through here (denoland/deno#36119).
                       NSRect f = [w frame];
+                      NSScreen* primary = [[NSScreen screens] firstObject];
+                      CGFloat screenH = primary ? primary.frame.size.height : 0;
                       RuntimeLoader::GetInstance()->DispatchMoveEvent(
-                          window_id, (int)f.origin.x, (int)f.origin.y);
+                          window_id, (int)f.origin.x,
+                          (int)(screenH - f.origin.y - f.size.height));
                     }
                   }];
+
+      LaufeyTitleObserver* titleObserver = [[LaufeyTitleObserver alloc] init];
+      titleObserver.window = window;
+      [webview addObserver:titleObserver
+                forKeyPath:@"title"
+                   options:NSKeyValueObservingOptionNew
+                   context:nil];
 
       MacWindowState state;
       state.window_id = window_id;
@@ -985,6 +1091,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       state.blur_observer = blur_obs;
       state.resize_observer = resize_obs;
       state.move_observer = move_obs;
+      state.title_observer = titleObserver;
 
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
@@ -1235,6 +1342,17 @@ void WKWebViewBackend::Quit() {
   });
 }
 
+// AppKit's global coordinate space is bottom-left-anchored to the *primary*
+// screen ([[NSScreen screens] firstObject], the one with the menu bar), while
+// the laufey API speaks top-left global coordinates. Converting against the
+// window's *current* screen — its local height, ignoring its global origin
+// offset — lands windows in the wrong place on any multi-display setup
+// (denoland/deno#36119). Always convert against the primary screen.
+static CGFloat PrimaryScreenHeight() {
+  NSScreen* primary = [[NSScreen screens] firstObject];
+  return primary ? primary.frame.size.height : 0;
+}
+
 void WKWebViewBackend::SetWindowSize(uint32_t window_id, int width,
                                      int height) {
   dispatch_async(dispatch_get_main_queue(), ^{
@@ -1242,9 +1360,11 @@ void WKWebViewBackend::SetWindowSize(uint32_t window_id, int width,
       std::lock_guard<std::mutex> lock(windows_mutex_);
       auto* state = GetWindow(window_id);
       if (state) {
-        NSRect frame = [state->window frame];
-        frame.size = NSMakeSize(width, height);
-        [state->window setFrame:frame display:YES];
+        // Content size, matching CreateWindow's initWithContentRect: —
+        // setting the *frame* size here made setSize(w, h) produce a window
+        // whose page area was smaller than an identically-sized CreateWindow
+        // by the title-bar height (denoland/deno#36119).
+        [state->window setContentSize:NSMakeSize(width, height)];
       }
     }
   });
@@ -1257,9 +1377,12 @@ void WKWebViewBackend::GetWindowSize(uint32_t window_id, int* width,
     std::lock_guard<std::mutex> lock(windows_mutex_);
     auto* state = GetWindow(window_id);
     if (state) {
-      NSRect frame = [state->window frame];
-      w = static_cast<int>(frame.size.width);
-      h = static_cast<int>(frame.size.height);
+      // Content size, for symmetry with CreateWindow / SetWindowSize and the
+      // resize event.
+      NSRect content =
+          [state->window contentRectForFrameRect:[state->window frame]];
+      w = static_cast<int>(content.size.width);
+      h = static_cast<int>(content.size.height);
     }
   });
   if (width)
@@ -1275,8 +1398,7 @@ void WKWebViewBackend::SetWindowPosition(uint32_t window_id, int x, int y) {
       auto* state = GetWindow(window_id);
       if (state) {
         NSRect frame = [state->window frame];
-        NSRect screenFrame = [[state->window screen] frame];
-        CGFloat flippedY = screenFrame.size.height - y - frame.size.height;
+        CGFloat flippedY = PrimaryScreenHeight() - y - frame.size.height;
         [state->window setFrameOrigin:NSMakePoint(x, flippedY)];
       }
     }
@@ -1290,9 +1412,8 @@ void WKWebViewBackend::GetWindowPosition(uint32_t window_id, int* x, int* y) {
     auto* state = GetWindow(window_id);
     if (state) {
       NSRect frame = [state->window frame];
-      NSRect screenFrame = [[state->window screen] frame];
       px = static_cast<int>(frame.origin.x);
-      py = static_cast<int>(screenFrame.size.height - frame.origin.y -
+      py = static_cast<int>(PrimaryScreenHeight() - frame.origin.y -
                             frame.size.height);
     }
   });
@@ -1401,16 +1522,20 @@ void WKWebViewBackend::Show(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
       NSWindow* win = nil;
+      WKWebView* web = nil;
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
         auto* state = GetWindow(window_id);
         if (state) {
           win = state->window;
+          web = state->webview;
         }
       }
       if (!win)
         return;
       [win makeKeyAndOrderFront:nil];
+      if (web)
+        [win makeFirstResponder:web];
     }
   });
 }
@@ -1437,16 +1562,20 @@ void WKWebViewBackend::Focus(uint32_t window_id) {
   dispatch_async(dispatch_get_main_queue(), ^{
     @autoreleasepool {
       NSWindow* win = nil;
+      WKWebView* web = nil;
       {
         std::lock_guard<std::mutex> lock(windows_mutex_);
         auto* state = GetWindow(window_id);
         if (state) {
           win = state->window;
+          web = state->webview;
         }
       }
       if (win) {
         [NSApp activateIgnoringOtherApps:YES];
         [win makeKeyAndOrderFront:nil];
+        if (web)
+          [win makeFirstResponder:web];
       }
     }
   });
@@ -1589,9 +1718,15 @@ void WKWebViewBackend::ShowContextMenu(uint32_t window_id, int x, int y,
       return;
 
     NSView* view = [win contentView];
-    // Convert from top-left origin (laufey coordinates) to bottom-left origin
-    // (NSView)
-    NSPoint loc = NSMakePoint(x, [view frame].size.height - y);
+    // LAUFEY coordinates are window-relative with a top-left origin (the web
+    // convention). -popUpMenuPositioningItem:atLocation:inView: reads the
+    // location in the view's *own* coordinate system, which is top-left only
+    // when the view is flipped. The content view here is the WKWebView, and
+    // -[WKWebView isFlipped] is YES, so flipping unconditionally put the menu
+    // at (height - y) — mirrored about the window's midline. Only convert for
+    // views that really are bottom-left.
+    NSPoint loc =
+        NSMakePoint(x, [view isFlipped] ? y : [view frame].size.height - y);
     [menu popUpMenuPositioningItem:nil atLocation:loc inView:view];
   });
 }

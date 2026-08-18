@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::ffi::c_int;
 use std::ffi::c_void;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::{api, KeyModifiers};
 
@@ -86,7 +86,10 @@ impl MouseButton {
   }
 }
 
-type HandlerMap<T> = Mutex<HashMap<u32, Box<dyn Fn(T) + Send + Sync>>>;
+// Arc, not Box: trampolines clone the handler out and release the map lock
+// before invoking it, so a handler that blocks (e.g. a modal confirm dialog
+// whose event pump re-enters a trampoline) can't self-deadlock on the map.
+type HandlerMap<T> = Mutex<HashMap<u32, Arc<dyn Fn(T) + Send + Sync>>>;
 
 macro_rules! handler_store {
   ($fn_name:ident, $event_type:ty) => {
@@ -194,7 +197,7 @@ where
   mouse_click_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Mouse move ---
@@ -235,7 +238,7 @@ where
   mouse_move_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Wheel events ---
@@ -302,7 +305,7 @@ where
   wheel_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Cursor enter/leave events ---
@@ -346,7 +349,7 @@ where
   cursor_enter_leave_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Focused events ---
@@ -381,7 +384,7 @@ where
   focused_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Resize events ---
@@ -419,7 +422,7 @@ where
   resize_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Move events ---
@@ -453,7 +456,7 @@ where
   move_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Close requested events ---
@@ -463,15 +466,37 @@ pub struct CloseRequestedEvent {
   pub window_id: u32,
 }
 
+// See `Window::on_close_requested` for the public contract. The backend's
+// defer decision is process-wide (it defers every window's close once this
+// trampoline is registered), while `on_close_requested` handlers are
+// per-window — so a window *without* a handler must have its close completed
+// here, or it would be left permanently unclosable.
 unsafe extern "C" fn close_requested_trampoline(
   _user_data: *mut c_void,
   window_id: u32,
 ) {
   let event = CloseRequestedEvent { window_id };
 
-  let guard = close_requested_handlers().lock().unwrap();
-  if let Some(handler) = guard.get(&window_id) {
-    handler(event);
+  // Clone the handler out and release the map lock before invoking: the
+  // handler may block (e.g. `Window::confirm()`), and its modal event pump
+  // can deliver another close-requested re-entrantly on this same thread.
+  let handler = close_requested_handlers()
+    .lock()
+    .unwrap()
+    .get(&window_id)
+    .cloned();
+  match handler {
+    Some(handler) => handler(event),
+    None => {
+      // No handler for this window: the backend deferred on our behalf, so
+      // complete the close ourselves to preserve the no-handler behavior
+      // (window closes immediately on click).
+      if let Some(api) = crate::try_api() {
+        if let Some(f) = api.close_window {
+          unsafe { f(api.backend_data, window_id) };
+        }
+      }
+    }
   }
 }
 
@@ -483,7 +508,7 @@ where
   close_requested_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 // --- Page load events ---
@@ -516,7 +541,7 @@ where
   page_load_handlers()
     .lock()
     .unwrap()
-    .insert(window_id, Box::new(handler));
+    .insert(window_id, Arc::new(handler));
 }
 
 #[cfg(test)]
@@ -721,5 +746,122 @@ mod tests {
     };
     assert!(focused.focused);
     assert!(!blurred.focused);
+  }
+
+  // --- Close requested trampoline / handler map ---
+  //
+  // These call `close_requested_trampoline` directly rather than going
+  // through `on_close_requested`/`ensure_close_requested`, which call
+  // `crate::api()` and would panic without a real backend API table
+  // registered. The trampoline itself only touches the handler map, so it's
+  // testable in isolation.
+
+  #[test]
+  fn close_requested_no_handler_is_noop() {
+    // No handler registered for this window_id: dispatching must not panic
+    // and must not touch any other window's handler. (With a real backend
+    // API table registered, this branch would instead complete the close
+    // via close_window — untestable here without one; try_api() is None.)
+    // Remove only our own id: tests run in parallel over a shared map, so
+    // clear() here could wipe another test's handler mid-run.
+    close_requested_handlers().lock().unwrap().remove(&9001);
+    unsafe { close_requested_trampoline(std::ptr::null_mut(), 9001) };
+  }
+
+  #[test]
+  fn close_requested_handler_can_reenter_dispatch() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let window_id = 7777;
+    let depth = Arc::new(AtomicU32::new(0));
+
+    {
+      let depth = depth.clone();
+      close_requested_handlers().lock().unwrap().insert(
+        window_id,
+        Arc::new(move |event: CloseRequestedEvent| {
+          // A blocking handler (e.g. a modal confirm dialog) pumps OS
+          // events, which can deliver a second close-requested on this
+          // same thread. The trampoline must not hold the map lock across
+          // the handler invocation, or this recursion deadlocks.
+          if depth.fetch_add(1, Ordering::SeqCst) == 0 {
+            unsafe {
+              close_requested_trampoline(std::ptr::null_mut(), event.window_id)
+            };
+          }
+        }),
+      );
+    }
+
+    unsafe { close_requested_trampoline(std::ptr::null_mut(), window_id) };
+    assert_eq!(depth.load(Ordering::SeqCst), 2);
+
+    close_requested_handlers()
+      .lock()
+      .unwrap()
+      .remove(&window_id);
+  }
+
+  #[test]
+  fn close_requested_dispatches_to_registered_handler_once() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let window_id = 4242;
+    let calls = Arc::new(AtomicU32::new(0));
+    let seen_window_id = Arc::new(AtomicU32::new(0));
+
+    {
+      let calls = calls.clone();
+      let seen_window_id = seen_window_id.clone();
+      close_requested_handlers().lock().unwrap().insert(
+        window_id,
+        Arc::new(move |event: CloseRequestedEvent| {
+          calls.fetch_add(1, Ordering::SeqCst);
+          seen_window_id.store(event.window_id, Ordering::SeqCst);
+        }),
+      );
+    }
+
+    unsafe { close_requested_trampoline(std::ptr::null_mut(), window_id) };
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(seen_window_id.load(Ordering::SeqCst), window_id);
+
+    close_requested_handlers()
+      .lock()
+      .unwrap()
+      .remove(&window_id);
+  }
+
+  #[test]
+  fn close_requested_only_fires_handler_for_matching_window_id() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let registered_window_id = 1;
+    let other_window_id = 2;
+    let fired = Arc::new(AtomicBool::new(false));
+
+    {
+      let fired = fired.clone();
+      close_requested_handlers().lock().unwrap().insert(
+        registered_window_id,
+        Arc::new(move |_event: CloseRequestedEvent| {
+          fired.store(true, Ordering::SeqCst);
+        }),
+      );
+    }
+
+    unsafe {
+      close_requested_trampoline(std::ptr::null_mut(), other_window_id)
+    };
+    assert!(!fired.load(Ordering::SeqCst));
+
+    close_requested_handlers()
+      .lock()
+      .unwrap()
+      .remove(&registered_window_id);
   }
 }

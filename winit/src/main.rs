@@ -267,13 +267,16 @@ impl ApplicationHandler<UserEvent> for App {
 
     match event {
       WindowEvent::CloseRequested => {
-        laufey_backend_winit_common::dispatch_close_requested_event(
-          &state.common.handlers,
-          laufey_id,
-        );
-        self.close_window(laufey_id);
-        if self.windows.is_empty() {
-          event_loop.exit();
+        let proceed =
+          laufey_backend_winit_common::dispatch_close_requested_event(
+            &state.common.handlers,
+            laufey_id,
+          );
+        if proceed {
+          self.close_window(laufey_id);
+          if self.windows.is_empty() {
+            event_loop.exit();
+          }
         }
       }
       WindowEvent::Resized(PhysicalSize { width, height }) => {

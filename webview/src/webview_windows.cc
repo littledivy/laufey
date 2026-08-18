@@ -67,27 +67,8 @@ inline uint32_t GetLaufeyModifiers() {
 
 }  // namespace keyboard
 
-// Convert UTF-8 to wide string
-static std::wstring Utf8ToWide(const std::string& str) {
-  if (str.empty())
-    return std::wstring();
-  int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-  std::wstring result(size - 1, 0);
-  MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &result[0], size);
-  return result;
-}
-
-// Convert wide string to UTF-8
-static std::string WideToUtf8(const std::wstring& wstr) {
-  if (wstr.empty())
-    return std::string();
-  int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0,
-                                 nullptr, nullptr);
-  std::string result(size - 1, 0);
-  WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &result[0], size, nullptr,
-                      nullptr);
-  return result;
-}
+using laufey_common::Utf8ToWide;
+using laufey_common::WideToUtf8;
 
 // HWND → laufey_id mapping
 static std::map<HWND, uint32_t> g_hwnd_to_laufey_id;
@@ -557,27 +538,38 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
           false);
       break;
     }
-    case WM_CLOSE:
+    case WM_CLOSE: {
+      bool proceed = true;
       if (wid > 0) {
-        RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
+        proceed =
+            RuntimeLoader::GetInstance()->DispatchCloseRequestedEvent(wid);
       }
-      // Check if any windows remain
-      {
-        std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
-        // Remove this window from map
-        g_hwnd_to_laufey_id.erase(hwnd);
-        if (g_hwnd_to_laufey_id.empty()) {
-          PostQuitMessage(0);
-        }
+      if (!proceed) {
+        // A close-requested handler deferred the close: leave the window open.
+        // Not calling DestroyWindow is the standard Win32 idiom for this.
+        return 0;
       }
+      // Unregistration and the last-window quit check live in WM_DESTROY,
+      // which every destroy path hits (this one, and CloseWindow's direct
+      // DestroyWindow when a deferred close is later resolved).
       DestroyWindow(hwnd);
       return 0;
+    }
     case WM_COMMAND:
       if (win32_menu::HandleMenuCommand(hwnd, wParam))
         return 0;
       break;
-    case WM_DESTROY:
+    case WM_DESTROY: {
+      // Single exit point for window teardown: fires for WM_CLOSE-initiated
+      // closes and for CloseWindow()'s direct DestroyWindow alike, so a
+      // deferred close resolved via close_window still quits the message
+      // loop when the last window goes away.
+      std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
+      if (g_hwnd_to_laufey_id.erase(hwnd) > 0 && g_hwnd_to_laufey_id.empty()) {
+        PostQuitMessage(0);
+      }
       return 0;
+    }
     case WM_UI_TASK: {
       UiTaskData* taskData = reinterpret_cast<UiTaskData*>(lParam);
       if (taskData) {
@@ -588,7 +580,7 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
     }
   }
 
-  return DefWindowProc(hwnd, msg, wParam, lParam);
+  return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 WebView2Backend::WebView2Backend() {
@@ -808,6 +800,7 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
             RECT bounds;
             GetClientRect(hwnd, &bounds);
             controller->put_Bounds(bounds);
+            controller->put_IsVisible(TRUE);
 
             std::string initScript = BuildInitScript(
                 RuntimeLoader::GetInstance()->GetJsNamespace(),
@@ -826,6 +819,29 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                     [this, wid](ICoreWebView2* sender,
                                 ICoreWebView2WebMessageReceivedEventArgs* args)
                         -> HRESULT {
+                      // The injected bridge script runs in every frame
+                      // (AddScriptToExecuteOnDocumentCreated cannot be scoped
+                      // to the main frame), so validate the message source
+                      // here: only accept messages whose document URI matches
+                      // the top-level document. This stops cross-origin/sub
+                      // frames from invoking bindings that run with the host
+                      // process's permissions.
+                      LPWSTR msgSource = nullptr;
+                      LPWSTR topSource = nullptr;
+                      args->get_Source(&msgSource);
+                      sender->get_Source(&topSource);
+                      bool from_main_frame = msgSource && topSource &&
+                                             wcscmp(msgSource, topSource) == 0;
+                      if (msgSource) {
+                        CoTaskMemFree(msgSource);
+                      }
+                      if (topSource) {
+                        CoTaskMemFree(topSource);
+                      }
+                      if (!from_main_frame) {
+                        return S_OK;
+                      }
+
                       LPWSTR messageRaw;
                       args->TryGetWebMessageAsString(&messageRaw);
                       if (messageRaw) {
@@ -982,10 +998,9 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
   if (state) {
     if (state->controller)
       state->controller->Close();
-    {
-      std::lock_guard<std::recursive_mutex> hlock(g_hwnd_mutex);
-      g_hwnd_to_laufey_id.erase(state->hwnd);
-    }
+    // Deliberately not erased from g_hwnd_to_laufey_id here: WM_DESTROY
+    // (sent synchronously by DestroyWindow) owns unregistration and the
+    // last-window quit check, for this path and the WM_CLOSE path alike.
     DestroyWindow(state->hwnd);
     windows_.erase(window_id);
   }
@@ -1215,10 +1230,15 @@ bool WebView2Backend::IsVisible(uint32_t window_id) {
 }
 
 void WebView2Backend::Show(uint32_t window_id) {
-  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-  auto* state = GetWindow(window_id);
-  if (state)
-    ShowWindow(state->hwnd, SW_SHOW);
+  HWND hwnd = nullptr;
+  {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state)
+      hwnd = state->hwnd;
+  }
+  if (hwnd)
+    ShowWindow(hwnd, SW_SHOW);
 }
 
 void WebView2Backend::Hide(uint32_t window_id) {

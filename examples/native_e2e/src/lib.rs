@@ -10,9 +10,11 @@
 //!   [e2e] FAIL <name>   supported here but wrong  -> process exits 1
 //!   [e2e] N/A  <name>   capability absent on this backend (not a failure)
 //!
-//! This covers Layer 0 (in-process readback + event-callback round-trips) and
+//! This covers Layer 0 (in-process readback + event-callback round-trips),
 //! menu/tray *click* round-trips via the `test_click_menu_item` C ABI hook
-//! (API 30+; `N/A` on backends without it). OS-observer *structure* checks
+//! (API 30+; `N/A` on backends without it), and the close-handler round-trip
+//! via `test_trigger_close_requested` (API 31+; `N/A` on backends without
+//! it). OS-observer *structure* checks
 //! (Layer 1: the Linux D-Bus driver; macOS/Windows pending a backend hook)
 //! live outside this runtime. See docs/e2e-testing.md.
 //!
@@ -351,13 +353,14 @@ fn e2e_main() {
     // loop). It belongs behind a backend test hook; tracked as a follow-up.
     na("menu/tray OS-structure check (Linux: D-Bus driver; macOS/Windows: pending backend hook)");
 
-    // ---- print_to_pdf smoke test (API >= 30) -----------------------------
+    // ---- print_to_pdf smoke test (API >= 32) -----------------------------
     // Render the loaded page to a PDF and assert real PDF bytes come back
     // (`%PDF-` magic), exercising each backend's actual render path (WKWebView
-    // createPDFWithConfiguration, WebView2 PrintToPdfStream, WebKitGTK memfd,
-    // CEF DevTools Page.printToPDF). Winit has no web engine and reports
-    // "unsupported" through the callback -> N/A. A backend whose completion
-    // handler never fires shows up here as a FAIL on the delivery assertion.
+    // createPDFWithConfiguration, WebView2 PrintToPdfStream, WebKitGTK
+    // print-to-file, CEF DevTools Page.printToPDF). Winit has no web engine
+    // and reports "unsupported" through the callback -> N/A. A backend whose
+    // completion handler never fires shows up here as a FAIL on the delivery
+    // assertion.
     let pdf_result =
       Arc::new(std::sync::Mutex::new(None::<Result<Vec<u8>, String>>));
     let pr = pdf_result.clone();
@@ -378,6 +381,85 @@ fn e2e_main() {
         }
         Err(e) => check(&format!("print_to_pdf succeeds (got: {e})"), false),
       }
+    }
+
+    // ---- close-requested handler round-trip --------------------------------
+    // A second window (kept separate from `win`, which must survive to
+    // shutdown). Registers an on_close_requested handler that *stashes* the
+    // window_id instead of resolving inline — proving resolution genuinely
+    // works from outside the handler (any thread, any time), not just
+    // synchronously inline. Synthesizes the close via
+    // test_trigger_close_requested (API >= 31, implemented by every in-tree
+    // backend — init_api's version check guarantees it's present, so a
+    // failure here is a regression, never a missing hook).
+    let close_win = Window::new(200, 150)
+      .title("native-e2e-close")
+      .load("data:text/html,<!doctype html><title>close</title>");
+    let close_win_id = close_win.id();
+    let baseline_sized = wait_for(
+      || {
+        let (w, _h) = close_win.get_size();
+        w != 0
+      },
+      50,
+      40,
+    )
+    .await;
+
+    let close_handler_fired = Arc::new(AtomicBool::new(false));
+    let pending_close: Arc<std::sync::Mutex<Option<u32>>> =
+      Arc::new(std::sync::Mutex::new(None));
+    let close_win = {
+      let fired = close_handler_fired.clone();
+      let pending = pending_close.clone();
+      close_win.on_close_requested(move |event| {
+        fired.store(true, Ordering::SeqCst);
+        *pending.lock().unwrap() = Some(event.window_id);
+      })
+    };
+
+    let still_open_after_defer =
+      laufey::test_trigger_close_requested(close_win_id);
+    if !baseline_sized {
+      // Precondition, not a close-dispatch check: without a sized baseline
+      // the stays-open/closed probes below are meaningless.
+      na("close handler (precondition failed: close_win never reported a nonzero size)");
+    } else {
+      // The hook itself is guaranteed present: init_api rejects any backend
+      // whose API version differs from the current one, and every in-tree
+      // backend implements test_trigger_close_requested. Dispatch is synchronous,
+      // so a handler that didn't fire is a real regression — fail, don't
+      // N/A.
+      check(
+        "on_close_requested handler fired for synthesized close",
+        close_handler_fired.load(Ordering::SeqCst),
+      );
+      check(
+        "close handler defers — window stays open",
+        still_open_after_defer,
+      );
+      let (w, _h) = close_win.get_size();
+      check("window state still readable after deferred close", w != 0);
+
+      // Resolve the stashed window_id — from here, not from inside the
+      // handler — and confirm the window actually closes.
+      let pending_id = pending_close.lock().unwrap().take();
+      if let Some(id) = pending_id {
+        Window::from_id(id).close();
+      }
+      let closed = wait_for(
+        || {
+          let (w, h) = close_win.get_size();
+          w == 0 && h == 0
+        },
+        50,
+        40,
+      )
+      .await;
+      check(
+        "closing from outside the on_close_requested handler actually closes the window",
+        closed,
+      );
     }
 
     // ---- Layer-1 hold ----------------------------------------------------

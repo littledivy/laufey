@@ -62,6 +62,7 @@ elseif(UNIX)
   )
 elseif(WIN32)
   list(APPEND LAUFEY_COMMON_SRCS
+    src/strings_win.cc
     src/notifications_win.cc
     src/dialog_win.cc
     src/clipboard_win.cc

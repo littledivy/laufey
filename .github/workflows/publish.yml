@@ -1,0 +1,57 @@
+name: Publish to crates.io
+
+# Publishes the `laufey` crate (the `capi` workspace member) to crates.io when
+# a version tag is pushed, so releasing no longer depends on one person running
+# `cargo publish` locally.
+#
+# Release flow:
+#   1. Bump `version` in capi/Cargo.toml and land it on main (CI green).
+#   2. Tag that commit with `v<version>` and push the tag, e.g.
+#        git tag v0.6.1 && git push origin v0.6.1
+#   3. This workflow verifies the tag matches capi/Cargo.toml and publishes.
+#
+# Requires a repository secret `CARGO_REGISTRY_TOKEN`: a crates.io API token
+# (scoped to publish-new + publish-update for `laufey`). Add it once with:
+#   gh secret set CARGO_REGISTRY_TOKEN -R littledivy/laufey
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Never run two publishes for the same tag concurrently.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: cargo publish (laufey)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify tag matches laufey crate version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          crate="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="laufey") | .version')"
+          echo "tag=$tag  crate=$crate"
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::pushed tag 'v$tag' does not match laufey crate version '$crate' — aborting publish"
+            exit 1
+          fi
+
+      # --no-verify: verification would compile the C/C++ backend (CEF, bindgen)
+      # which needs native toolchains/prebuilts not set up in this job. The
+      # commit the tag points at is already gated by the CI workflow, so we
+      # package and upload the `laufey` crate without re-building here.
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p laufey --no-verify --locked

@@ -66,7 +66,11 @@ std::string GetExecutablePath() {
 
 bool PathExists(const std::string& path) {
 #if defined(_WIN32)
-  return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+  // Paths flow through this file as UTF-8 (see GetExecutablePath), so the
+  // ANSI (*A) APIs would misread any non-ASCII characters in the active
+  // codepage. Convert back to UTF-16 for the wide (*W) APIs.
+  return GetFileAttributesW(laufey_common::Utf8ToWide(path).c_str()) !=
+         INVALID_FILE_ATTRIBUTES;
 #else
   return access(path.c_str(), F_OK) == 0;
 #endif
@@ -507,6 +511,22 @@ static void Backend_SetCloseRequestedHandler(void* data,
   loader->SetCloseRequestedHandler(handler, user_data);
 }
 
+// Test hook (API >= 31): synthesize a close-requested event through the same
+// dispatch code a real OS close click runs. Returns true if a registered
+// handler deferred the close; false means the close proceeded. Proceeds
+// through Backend_CloseWindow — the real close entry point — rather than
+// re-inlining its body, so the hook can't silently diverge from the
+// shipping close path.
+static bool Backend_TestTriggerCloseRequested(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  bool proceed = loader->DispatchCloseRequestedEvent(window_id);
+  if (proceed) {
+    Backend_CloseWindow(data, window_id);
+    return false;
+  }
+  return true;
+}
+
 static void Backend_SetPageLoadHandler(void* data, laufey_page_load_fn handler,
                                        void* user_data) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
@@ -770,6 +790,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.create_window_ex = Backend_CreateWindowEx;
   backend_api_.close_window = Backend_CloseWindow;
   backend_api_.set_close_requested_handler = Backend_SetCloseRequestedHandler;
+  backend_api_.test_trigger_close_requested = Backend_TestTriggerCloseRequested;
   backend_api_.set_page_load_handler = Backend_SetPageLoadHandler;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;
@@ -856,7 +877,7 @@ bool RuntimeLoader::Load(const std::string& path) {
     return false;
   }
 #else
-  library_handle_ = LoadLibraryA(path.c_str());
+  library_handle_ = LoadLibraryW(laufey_common::Utf8ToWide(path).c_str());
   if (!library_handle_) {
     std::cerr << "Failed to load runtime: " << GetLastError() << std::endl;
     return false;

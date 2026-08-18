@@ -32,8 +32,8 @@ use winit::window::{Window, WindowLevel};
 // Must match `LAUFEY_API_VERSION` in capi/include/laufey.h (and capi/src/lib.rs).
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
-// below must match the current `laufey_backend_api`.
-pub const LAUFEY_API_VERSION: u32 = 31;
+// below must match the `laufey_backend_api` struct as of this version.
+pub const LAUFEY_API_VERSION: u32 = 32;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -529,7 +529,11 @@ pub struct LaufeyBackendApi {
   pub test_click_menu_item:
     Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> bool>,
 
-  // --- Print to PDF (API >= 31) ---
+  // --- Test hook, API >= 31 ---
+  pub test_trigger_close_requested:
+    Option<unsafe extern "C" fn(*mut c_void, u32) -> bool>,
+
+  // --- Print to PDF (API >= 32) ---
   // winit renders no web content, so this stays None and the capi reports
   // "unsupported". The field MUST still be declared to keep the struct layout
   // in sync with the `laufey_backend_api` the capi reads through the
@@ -1174,7 +1178,9 @@ pub fn create_api_base() -> LaufeyBackendApi {
     get_window_opacity: None,
     // Test hooks (API >= 30).
     test_click_menu_item: None,
-    // Print to PDF (API >= 31): winit renders no web content.
+    // Test hook, API >= 31.
+    test_trigger_close_requested: None,
+    // Print to PDF (API >= 32): winit renders no web content.
     print_to_pdf: None,
   }
 }
@@ -2325,6 +2331,29 @@ macro_rules! define_common_backend_fns {
       }
     }
 
+    unsafe extern "C" fn backend_test_trigger_close_requested(
+      _data: *mut ::std::ffi::c_void,
+      window_id: u32,
+    ) -> bool {
+      if let Some(state) = <$B as $crate::BackendAccess>::get() {
+        let proceed = $crate::dispatch_close_requested_event(
+          &state.common().handlers,
+          window_id,
+        );
+        if proceed {
+          // Route through the real close entry point (which queues
+          // CommonEvent::CloseWindow) rather than re-inlining it, so the
+          // hook can't silently diverge from the shipping close path.
+          unsafe { backend_close_window(_data, window_id) };
+          false
+        } else {
+          true
+        }
+      } else {
+        true
+      }
+    }
+
     unsafe extern "C" fn backend_show_dialog(
       _data: *mut ::std::ffi::c_void,
       _window_id: u32,
@@ -2866,6 +2895,8 @@ macro_rules! fill_common_api {
     $api.read_clipboard_text = Some(backend_read_clipboard_text);
     $api.write_clipboard_text = Some(backend_write_clipboard_text);
     $api.test_click_menu_item = Some(backend_test_click_menu_item);
+    $api.test_trigger_close_requested =
+      Some(backend_test_trigger_close_requested);
   };
 }
 
@@ -3637,16 +3668,25 @@ pub fn dispatch_move_event(
   }
 }
 
+/// Fires the close-requested handler for `window_id`, if any, and reports
+/// whether the caller should proceed to actually close the window. A
+/// registered handler always defers the close (the app decides later, out
+/// of band, by calling `close_window`); no handler means proceed.
 pub fn dispatch_close_requested_event(
   handlers: &EventHandlers,
   window_id: u32,
-) {
-  let handler = handlers.close_requested_handler.lock().unwrap();
-  if let Some((cb, user_data)) = *handler {
+) -> bool {
+  // Copy the handler out and release the lock before invoking it: the
+  // handler may block (e.g. a modal confirm dialog) and pump OS events,
+  // which can re-enter this dispatch on the same thread.
+  let handler = *handlers.close_requested_handler.lock().unwrap();
+  if let Some((cb, user_data)) = handler {
     unsafe {
       cb(user_data as *mut c_void, window_id);
     }
+    return false;
   }
+  true
 }
 
 // --- Runtime loading ---
