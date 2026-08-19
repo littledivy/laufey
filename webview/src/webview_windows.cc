@@ -30,6 +30,7 @@
 #include <string>
 #include <map>
 #include <mutex>
+#include <condition_variable>
 #include <vector>
 #include <functional>
 
@@ -424,6 +425,12 @@ class WebView2Backend : public LaufeyBackend {
   // inline when already on the UI thread.
   void RunOnUiThread(std::function<void()> task);
 
+  // Like RunOnUiThread, but blocks until the task has run. For calls whose
+  // arguments only outlive the call itself (e.g. a caller-owned
+  // laufey_value_t*). Callers must not hold locks that UI-thread message
+  // handlers also take.
+  void RunOnUiThreadSync(std::function<void()> task);
+
   std::map<uint32_t, WinWindowState> windows_;
   std::recursive_mutex windows_mutex_;
   bool class_registered_ = false;
@@ -632,6 +639,24 @@ void WebView2Backend::RunOnUiThread(std::function<void()> task) {
     td->task(td->data);
     delete td;
   }
+}
+
+void WebView2Backend::RunOnUiThreadSync(std::function<void()> task) {
+  if (GetCurrentThreadId() == ui_thread_id_) {
+    task();
+    return;
+  }
+  std::mutex m;
+  std::condition_variable cv;
+  bool done = false;
+  RunOnUiThread([&] {
+    task();
+    std::lock_guard<std::mutex> lock(m);
+    done = true;
+    cv.notify_one();
+  });
+  std::unique_lock<std::mutex> lock(m);
+  cv.wait(lock, [&] { return done; });
 }
 
 WebView2Backend::~WebView2Backend() {
@@ -1429,12 +1454,18 @@ void WebView2Backend::SetApplicationMenu(uint32_t window_id,
                                          void* on_click_data) {
   if (!menu_template)
     return;
-  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-  auto* state = GetWindow(window_id);
-  if (state && state->hwnd) {
-    win32_menu::SetApplicationMenu(state->hwnd, menu_template, api, on_click,
-                                   on_click_data, window_id);
-  }
+  // SetMenu/DrawMenuBar message the window's owning (UI) thread synchronously
+  // (deadlock if called here while holding windows_mutex_ — see the
+  // window-state mutators above). Marshal SYNCHRONOUSLY because
+  // `menu_template` is caller-owned and only guaranteed to outlive this call.
+  RunOnUiThreadSync([&] {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state && state->hwnd) {
+      win32_menu::SetApplicationMenu(state->hwnd, menu_template, api, on_click,
+                                     on_click_data, window_id);
+    }
+  });
 }
 
 // ============================================================================
@@ -1448,12 +1479,18 @@ void WebView2Backend::ShowContextMenu(uint32_t window_id, int x, int y,
                                       void* on_click_data) {
   if (!menu_template)
     return;
-  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-  auto* state = GetWindow(window_id);
-  if (state && state->hwnd) {
-    win32_menu::ShowContextMenu(state->hwnd, x, y, menu_template, api, on_click,
-                                on_click_data, window_id);
-  }
+  // TrackPopupMenu only works on the window's owning (UI) thread, and the
+  // call was already blocking (the popup runs a modal loop). Marshal
+  // SYNCHRONOUSLY: `menu_template` is caller-owned and only guaranteed to
+  // outlive this call.
+  RunOnUiThreadSync([&] {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state && state->hwnd) {
+      win32_menu::ShowContextMenu(state->hwnd, x, y, menu_template, api,
+                                  on_click, on_click_data, window_id);
+    }
+  });
 }
 
 // ============================================================================
@@ -1575,6 +1612,13 @@ void WebView2Backend::BounceDock(int type) {
 void WebView2Backend::SetDockBadge(const char* badge_or_null) {
   std::string badge =
       (badge_or_null && *badge_or_null) ? std::string(badge_or_null) : "";
+  // GetWindowTextW/SetWindowTextW send WM_GETTEXT/WM_SETTEXT to the owning
+  // (UI) thread synchronously; marshal like the window-state mutators above.
+  // An empty badge means "clear", so re-passing badge.c_str() is lossless.
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, badge] { SetDockBadge(badge.c_str()); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> wlock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
     if (!state.hwnd)
