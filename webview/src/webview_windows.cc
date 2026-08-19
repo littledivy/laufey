@@ -1097,7 +1097,20 @@ void WebView2Backend::Quit() {
   PostQuitMessage(0);
 }
 
+// Window-state mutators run on the UI thread. Win32 setters like SetWindowPos
+// and ShowWindow deliver messages (WM_SIZE, WM_SHOWWINDOW, ...) to the owning
+// thread SYNCHRONOUSLY, and WindowProc's handlers take windows_mutex_ -- so
+// calling them from another thread while holding that mutex deadlocks: the
+// caller waits for the UI thread to process the sent message, the UI thread
+// waits for the caller's mutex. On the UI thread the recursive_mutex makes the
+// WindowProc re-entry safe.
 void WebView2Backend::SetWindowSize(uint32_t window_id, int width, int height) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, width, height] {
+      SetWindowSize(window_id, width, height);
+    });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1122,6 +1135,11 @@ void WebView2Backend::GetWindowSize(uint32_t window_id, int* width,
 }
 
 void WebView2Backend::SetWindowPosition(uint32_t window_id, int x, int y) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread(
+        [this, window_id, x, y] { SetWindowPosition(window_id, x, y); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1144,6 +1162,11 @@ void WebView2Backend::GetWindowPosition(uint32_t window_id, int* x, int* y) {
 }
 
 void WebView2Backend::SetResizable(uint32_t window_id, bool resizable) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread(
+        [this, window_id, resizable] { SetResizable(window_id, resizable); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1165,6 +1188,12 @@ bool WebView2Backend::IsResizable(uint32_t window_id) {
 }
 
 void WebView2Backend::SetAlwaysOnTop(uint32_t window_id, bool always_on_top) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, always_on_top] {
+      SetAlwaysOnTop(window_id, always_on_top);
+    });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1181,6 +1210,11 @@ bool WebView2Backend::IsAlwaysOnTop(uint32_t window_id) {
 }
 
 void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread(
+        [this, window_id, opacity] { SetWindowOpacity(window_id, opacity); });
+    return;
+  }
   if (opacity < 0.0)
     opacity = 0.0;
   if (opacity > 1.0)
@@ -1230,18 +1264,21 @@ bool WebView2Backend::IsVisible(uint32_t window_id) {
 }
 
 void WebView2Backend::Show(uint32_t window_id) {
-  HWND hwnd = nullptr;
-  {
-    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-    auto* state = GetWindow(window_id);
-    if (state)
-      hwnd = state->hwnd;
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { Show(window_id); });
+    return;
   }
-  if (hwnd)
-    ShowWindow(hwnd, SW_SHOW);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (state)
+    ShowWindow(state->hwnd, SW_SHOW);
 }
 
 void WebView2Backend::Hide(uint32_t window_id) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { Hide(window_id); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state)
@@ -1249,6 +1286,12 @@ void WebView2Backend::Hide(uint32_t window_id) {
 }
 
 void WebView2Backend::Focus(uint32_t window_id) {
+  // Also needs the UI thread for correctness, not just deadlock avoidance:
+  // SetFocus only works on windows owned by the calling thread.
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { Focus(window_id); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
