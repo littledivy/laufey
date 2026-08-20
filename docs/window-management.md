@@ -109,3 +109,45 @@ Platform notes:
   case) for reliable behavior.
 - The Winit backend uses winit's `set_cursor_hittest`, with the same platform
   behavior as above.
+
+### Forwarding: passthrough, but still observing events
+
+`Window::click_passthrough_forward` / `set_click_passthrough_forward` /
+`get_click_passthrough_forward` keeps the window's mouse events flowing to your
+registered `on_mouse_move` / `on_mouse_click` / `on_wheel` handlers _while_
+passthrough is active — like Electron's
+`setIgnoreMouseEvents(true, { forward: true })`. The OS still delivers every
+event to the window beneath; forwarding is observation only, sourced from a
+global input observer that hit-tests the overlay's frame. While passthrough is
+disabled the flag has no effect, because normal per-window delivery already
+fires the handlers.
+
+You cannot selectively consume a forwarded event — hit-testing is decided by the
+OS before your handler runs. The standard interactive-overlay pattern instead
+toggles passthrough just-in-time: watch forwarded mouse moves and disable
+passthrough when the cursor enters an interactive region, re-enable it on leave.
+
+```rust
+let overlay = Window::new_with_options(
+  400,
+  300,
+  WindowOptions { frameless: true, transparent: true, ..Default::default() },
+)
+.always_on_top(true)
+.click_passthrough(true)
+.click_passthrough_forward(true)
+.on_mouse_move(move |ev| {
+  // e.g. flip set_click_passthrough(false) when (ev.x, ev.y) is over a button
+})
+.load("overlay.html");
+```
+
+Platform support: implemented on **macOS** (an `NSEvent` global monitor —
+observing mouse events needs no extra permission) for the WebView and CEF
+backends. **Windows** (a `WH_MOUSE_LL` hook), **Linux/X11** (XInput2 raw
+events), and the Winit backend are not implemented yet and ignore the flag (the
+getter reports `false`); **Linux/Wayland** cannot support it — the compositor
+does not expose global input. One macOS caveat: global monitors never see events
+delivered to your _own_ application, so if the event lands on another
+(non-passthrough) window of the same app that overlaps the overlay, the
+overlay's handlers do not fire for it.

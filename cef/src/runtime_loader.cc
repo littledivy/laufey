@@ -593,6 +593,44 @@ static bool Backend_IsClickPassthrough(void* data, uint32_t window_id) {
   return result;
 }
 
+static void Backend_SetClickPassthroughForward(void* data, uint32_t window_id,
+                                               bool forward) {
+#ifdef __APPLE__
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  if (browser) {
+    CefPostTask(TID_UI, base::BindOnce(
+                            [](uint32_t wid, bool fwd) {
+                              SetNSWindowClickPassthroughForward(wid, fwd);
+                            },
+                            window_id, forward));
+  }
+#else
+  // Forwarding needs a global input observer; not implemented on this
+  // platform yet (see docs/window-management.md).
+  (void)data;
+  (void)window_id;
+  (void)forward;
+#endif
+}
+
+static bool Backend_IsClickPassthroughForward(void* data, uint32_t window_id) {
+#ifdef __APPLE__
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  bool result = false;
+  if (browser) {
+    cef_invoke_sync(
+        [&] { result = IsNSWindowClickPassthroughForward(window_id); });
+  }
+  return result;
+#else
+  (void)data;
+  (void)window_id;
+  return false;
+#endif
+}
+
 static bool Backend_IsVisible(void* data, uint32_t window_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
@@ -1745,6 +1783,9 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.get_window_opacity = Backend_GetWindowOpacity;
   backend_api_.set_click_passthrough = Backend_SetClickPassthrough;
   backend_api_.is_click_passthrough = Backend_IsClickPassthrough;
+  backend_api_.set_click_passthrough_forward =
+      Backend_SetClickPassthroughForward;
+  backend_api_.is_click_passthrough_forward = Backend_IsClickPassthroughForward;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;

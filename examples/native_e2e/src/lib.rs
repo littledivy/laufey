@@ -211,6 +211,18 @@ fn e2e_main() {
       na("set_click_passthrough (backend doesn't reflect the toggle)");
     }
 
+    // Forwarding is macOS-only for now; elsewhere the setter is a no-op and
+    // the getter reports false, which this treats as N/A. Whether forwarded
+    // events actually arrive needs real OS input and is not probed here.
+    win.set_click_passthrough_forward(true);
+    let forward = wait_for(|| win.get_click_passthrough_forward(), 25, 20).await;
+    win.set_click_passthrough_forward(false);
+    if forward {
+      check("set_click_passthrough_forward round-trips", true);
+    } else {
+      na("set_click_passthrough_forward (platform doesn't support forwarding)");
+    }
+
     // Visibility.
     win.show();
     let visible = wait_for(|| win.get_visible(), 25, 20).await;

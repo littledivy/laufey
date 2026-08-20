@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 33;
+pub const LAUFEY_API_VERSION: u32 = 34;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -950,6 +950,44 @@ impl Window {
   pub fn get_click_passthrough(&self) -> bool {
     let api = api();
     if let Some(f) = api.is_click_passthrough {
+      unsafe { f(api.backend_data, self.id) }
+    } else {
+      false
+    }
+  }
+
+  /// Builder form of [`Window::set_click_passthrough_forward`].
+  pub fn click_passthrough_forward(self, forward: bool) -> Self {
+    self.set_click_passthrough_forward(forward);
+    self
+  }
+
+  /// While click passthrough is enabled, keep this window's mouse events
+  /// flowing to the registered [`Window::on_mouse_click`] /
+  /// [`Window::on_mouse_move`] / [`Window::on_wheel`] handlers even though
+  /// the OS delivers them to whatever is
+  /// beneath the window — like Electron's
+  /// `setIgnoreMouseEvents(true, { forward: true })`. Observation only: the
+  /// events cannot be consumed, and they are reported only while passthrough
+  /// is active and the cursor is over the visible window. This enables the
+  /// standard interactive-overlay pattern: watch mouse moves and call
+  /// [`Window::set_click_passthrough`]`(false)` when the cursor enters an
+  /// interactive region.
+  ///
+  /// Currently implemented on macOS; other platforms ignore the flag (see
+  /// the click-passthrough section of the window-management docs).
+  pub fn set_click_passthrough_forward(&self, forward: bool) {
+    let api = api();
+    if let Some(f) = api.set_click_passthrough_forward {
+      unsafe { f(api.backend_data, self.id, forward) };
+    }
+  }
+
+  /// Get whether click-passthrough forwarding is currently enabled. Returns
+  /// `false` when the backend does not support forwarding.
+  pub fn get_click_passthrough_forward(&self) -> bool {
+    let api = api();
+    if let Some(f) = api.is_click_passthrough_forward {
       unsafe { f(api.backend_data, self.id) }
     } else {
       false
