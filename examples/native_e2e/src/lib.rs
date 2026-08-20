@@ -202,6 +202,15 @@ fn e2e_main() {
     }
     win.set_opacity(1.0);
 
+    win.set_click_passthrough(true);
+    let passthrough = wait_for(|| win.get_click_passthrough(), 25, 20).await;
+    win.set_click_passthrough(false);
+    if passthrough {
+      check("set_click_passthrough round-trips", true);
+    } else {
+      na("set_click_passthrough (backend doesn't reflect the toggle)");
+    }
+
     // Visibility.
     win.show();
     let visible = wait_for(|| win.get_visible(), 25, 20).await;

@@ -33,7 +33,7 @@ use winit::window::{Window, WindowLevel};
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
 // below must match the `laufey_backend_api` struct as of this version.
-pub const LAUFEY_API_VERSION: u32 = 32;
+pub const LAUFEY_API_VERSION: u32 = 33;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -547,6 +547,13 @@ pub struct LaufeyBackendApi {
       *mut c_void,
     ),
   >,
+
+  // --- Click passthrough (API >= 33) ---
+  // Implemented via winit's `Window::set_cursor_hittest`.
+  pub set_click_passthrough:
+    Option<unsafe extern "C" fn(*mut c_void, u32, bool)>,
+  pub is_click_passthrough:
+    Option<unsafe extern "C" fn(*mut c_void, u32) -> bool>,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1182,6 +1189,9 @@ pub fn create_api_base() -> LaufeyBackendApi {
     test_trigger_close_requested: None,
     // Print to PDF (API >= 32): winit renders no web content.
     print_to_pdf: None,
+    // Click passthrough (API >= 33): filled by fill_common_api.
+    set_click_passthrough: None,
+    is_click_passthrough: None,
   }
 }
 
@@ -1713,6 +1723,7 @@ pub struct WindowState {
   pub pending_position: Mutex<Option<(i32, i32)>>,
   pub pending_resizable: Mutex<Option<bool>>,
   pub pending_always_on_top: Mutex<Option<bool>>,
+  pub pending_click_passthrough: Mutex<Option<bool>>,
   pub pending_visible: Mutex<Option<bool>>,
   /// Creation-time style flags (LAUFEY_WINDOW_FLAG_*) for frameless /
   /// non-activating panel windows; applied when the winit Window is built.
@@ -1734,6 +1745,7 @@ impl WindowState {
       pending_position: Mutex::new(None),
       pending_resizable: Mutex::new(None),
       pending_always_on_top: Mutex::new(None),
+      pending_click_passthrough: Mutex::new(None),
       pending_visible: Mutex::new(None),
       pending_flags: Mutex::new(0),
       pending_app_menu: Mutex::new(None),
@@ -1852,6 +1864,9 @@ pub enum CommonEvent {
     window_id: u32,
   },
   SetAlwaysOnTop {
+    window_id: u32,
+  },
+  SetClickPassthrough {
     window_id: u32,
   },
   Show {
@@ -2141,6 +2156,38 @@ macro_rules! define_common_backend_fns {
           s.common()
             .with_window(window_id, |ws| {
               *ws.pending_always_on_top.lock().unwrap()
+            })
+            .flatten()
+        })
+        .unwrap_or(false)
+    }
+
+    unsafe extern "C" fn backend_set_click_passthrough(
+      _data: *mut ::std::ffi::c_void,
+      window_id: u32,
+      enabled: bool,
+    ) {
+      if let Some(state) = <$B as $crate::BackendAccess>::get() {
+        state.common().with_window(window_id, |ws| {
+          *ws.pending_click_passthrough.lock().unwrap() = Some(enabled);
+        });
+        let _ = state.proxy().send_event(
+          <$B as $crate::BackendAccess>::common_event(
+            $crate::CommonEvent::SetClickPassthrough { window_id },
+          ),
+        );
+      }
+    }
+
+    unsafe extern "C" fn backend_is_click_passthrough(
+      _data: *mut ::std::ffi::c_void,
+      window_id: u32,
+    ) -> bool {
+      <$B as $crate::BackendAccess>::get()
+        .and_then(|s| {
+          s.common()
+            .with_window(window_id, |ws| {
+              *ws.pending_click_passthrough.lock().unwrap()
             })
             .flatten()
         })
@@ -2850,6 +2897,8 @@ macro_rules! fill_common_api {
     $api.is_resizable = Some(backend_is_resizable);
     $api.set_always_on_top = Some(backend_set_always_on_top);
     $api.is_always_on_top = Some(backend_is_always_on_top);
+    $api.set_click_passthrough = Some(backend_set_click_passthrough);
+    $api.is_click_passthrough = Some(backend_is_click_passthrough);
     $api.is_visible = Some(backend_is_visible);
     $api.show = Some(backend_show);
     $api.hide = Some(backend_hide);
@@ -2960,6 +3009,22 @@ pub fn handle_common_event<B: BackendAccess>(
             } else {
               WindowLevel::Normal
             });
+          }
+        });
+      }
+      true
+    }
+    CommonEvent::SetClickPassthrough { window_id: eid, .. }
+      if *eid == window_id =>
+    {
+      if let Some(state) = B::get() {
+        state.common().with_window(window_id, |ws| {
+          if let Some(passthrough) =
+            *ws.pending_click_passthrough.lock().unwrap()
+          {
+            // Hittest off == the cursor falls through to the window below.
+            // Not supported on every platform/session; ignore failures.
+            let _ = window.set_cursor_hittest(!passthrough);
           }
         });
       }
@@ -3136,6 +3201,9 @@ pub fn apply_pending_post_create(ws: &WindowState, window: &Window) {
 
   if let Some(true) = *ws.pending_always_on_top.lock().unwrap() {
     window.set_window_level(WindowLevel::AlwaysOnTop);
+  }
+  if let Some(true) = *ws.pending_click_passthrough.lock().unwrap() {
+    let _ = window.set_cursor_hittest(false);
   }
   // A non-activating panel floats above normal windows, like a tray popover
   // (matches the NSPanel / always-on-top behavior of the other backends).

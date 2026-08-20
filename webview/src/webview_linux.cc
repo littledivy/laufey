@@ -113,6 +113,8 @@ struct LinuxWindowState {
   GtkWidget* menu_bar;  // per-window menu bar (nullptr = none)
   WebKitWebView* webview;
   WebKitUserContentManager* content_manager;
+  // GTK has no getter for the input shape region, so remember what we set.
+  bool click_passthrough = false;
 };
 
 // Track the click_count from press events for use in the corresponding release.
@@ -360,6 +362,8 @@ class WebKitGTKBackend : public LaufeyBackend {
   bool IsAlwaysOnTop(uint32_t window_id) override;
   void SetWindowOpacity(uint32_t window_id, double opacity) override;
   double GetWindowOpacity(uint32_t window_id) override;
+  void SetClickPassthrough(uint32_t window_id, bool enabled) override;
+  bool IsClickPassthrough(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -1051,6 +1055,40 @@ double WebKitGTKBackend::GetWindowOpacity(uint32_t window_id) {
     auto* state = GetWindow(window_id);
     if (state) {
       result = gtk_widget_get_opacity(state->window);
+    }
+  });
+  return result;
+}
+
+void WebKitGTKBackend::SetClickPassthrough(uint32_t window_id, bool enabled) {
+  gtk_invoke_sync([&] {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (!state)
+      return;
+    if (enabled) {
+      // An empty input shape makes the whole window transparent to pointer
+      // events; they fall through to whatever is beneath. Best-effort under a
+      // reparenting X11 window manager (the WM frame may still catch clicks),
+      // so pair it with a frameless window.
+      cairo_region_t* empty = cairo_region_create();
+      gtk_widget_input_shape_combine_region(state->window, empty);
+      cairo_region_destroy(empty);
+    } else {
+      // NULL restores the default input shape (the full window).
+      gtk_widget_input_shape_combine_region(state->window, nullptr);
+    }
+    state->click_passthrough = enabled;
+  });
+}
+
+bool WebKitGTKBackend::IsClickPassthrough(uint32_t window_id) {
+  bool result = false;
+  gtk_invoke_sync([&] {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = state->click_passthrough;
     }
   });
   return result;

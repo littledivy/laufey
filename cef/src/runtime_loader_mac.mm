@@ -61,6 +61,23 @@ double GetNSWindowOpacity(void* cef_handle) {
   return 1.0;
 }
 
+void SetNSWindowClickPassthrough(void* cef_handle, bool enabled) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (nswindow) {
+    [nswindow setIgnoresMouseEvents:enabled];
+  }
+}
+
+bool IsNSWindowClickPassthrough(void* cef_handle) {
+  NSView* view = (__bridge NSView*)cef_handle;
+  NSWindow* nswindow = [view window];
+  if (nswindow) {
+    return [nswindow ignoresMouseEvents];
+  }
+  return false;
+}
+
 void ConfigureNSWindowAsPanelForCefHandle(void* cef_handle) {
   NSView* view = (__bridge NSView*)cef_handle;
   NSWindow* nswindow = [view window];

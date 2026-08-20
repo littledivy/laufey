@@ -316,6 +316,8 @@ class WebView2Backend : public LaufeyBackend {
   bool IsAlwaysOnTop(uint32_t window_id) override;
   void SetWindowOpacity(uint32_t window_id, double opacity) override;
   double GetWindowOpacity(uint32_t window_id) override;
+  void SetClickPassthrough(uint32_t window_id, bool enabled) override;
+  bool IsClickPassthrough(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -1251,11 +1253,17 @@ void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
   LONG ex = GetWindowLong(state->hwnd, GWL_EXSTYLE);
   if (opacity >= 1.0) {
     // Fully opaque: drop the layered style so the window renders on the normal
-    // (non-redirected) path with no per-window alpha overhead.
+    // (non-redirected) path with no per-window alpha overhead. Exception:
+    // click passthrough (WS_EX_TRANSPARENT) only works on a layered window,
+    // so keep the style and just reset the alpha while it's active.
     if (ex & WS_EX_LAYERED) {
-      SetWindowLong(state->hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
-      RedrawWindow(state->hwnd, nullptr, nullptr,
-                   RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+      if (ex & WS_EX_TRANSPARENT) {
+        SetLayeredWindowAttributes(state->hwnd, 0, 255, LWA_ALPHA);
+      } else {
+        SetWindowLong(state->hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+        RedrawWindow(state->hwnd, nullptr, nullptr,
+                     RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+      }
     }
     return;
   }
@@ -1280,6 +1288,60 @@ double WebView2Backend::GetWindowOpacity(uint32_t window_id) {
     return alpha / 255.0;
   }
   return 1.0;
+}
+
+void WebView2Backend::SetClickPassthrough(uint32_t window_id, bool enabled) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, enabled] {
+      SetClickPassthrough(window_id, enabled);
+    });
+    return;
+  }
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return;
+  LONG ex = GetWindowLong(state->hwnd, GWL_EXSTYLE);
+  if (enabled) {
+    // WS_EX_TRANSPARENT excludes the whole top-level window (children
+    // included, so also the WebView2 host) from mouse hit-testing, but only
+    // takes effect on a layered window.
+    bool newly_layered = !(ex & WS_EX_LAYERED);
+    SetWindowLong(state->hwnd, GWL_EXSTYLE,
+                  ex | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+    if (newly_layered) {
+      // A window that just became layered renders nothing until its
+      // transparency attributes are set; fully opaque keeps it visually
+      // unchanged.
+      SetLayeredWindowAttributes(state->hwnd, 0, 255, LWA_ALPHA);
+    }
+  } else {
+    LONG new_ex = ex & ~WS_EX_TRANSPARENT;
+    // Drop the layered style too unless a window opacity < 1.0 still needs it.
+    BYTE alpha = 255;
+    DWORD flags = 0;
+    bool has_alpha =
+        (ex & WS_EX_LAYERED) &&
+        GetLayeredWindowAttributes(state->hwnd, nullptr, &alpha, &flags) &&
+        (flags & LWA_ALPHA) && alpha < 255;
+    if (!has_alpha)
+      new_ex &= ~WS_EX_LAYERED;
+    if (new_ex != ex) {
+      SetWindowLong(state->hwnd, GWL_EXSTYLE, new_ex);
+      if ((ex & WS_EX_LAYERED) && !(new_ex & WS_EX_LAYERED)) {
+        RedrawWindow(state->hwnd, nullptr, nullptr,
+                     RDW_ERASE | RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
+      }
+    }
+  }
+}
+
+bool WebView2Backend::IsClickPassthrough(uint32_t window_id) {
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  return state ? (GetWindowLong(state->hwnd, GWL_EXSTYLE) &
+                  WS_EX_TRANSPARENT) != 0
+               : false;
 }
 
 bool WebView2Backend::IsVisible(uint32_t window_id) {

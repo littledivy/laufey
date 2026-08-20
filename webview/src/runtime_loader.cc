@@ -228,6 +228,24 @@ static double Backend_GetWindowOpacity(void* data, uint32_t window_id) {
   return 1.0;
 }
 
+static void Backend_SetClickPassthrough(void* data, uint32_t window_id,
+                                        bool enabled) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    backend->SetClickPassthrough(window_id, enabled);
+  }
+}
+
+static bool Backend_IsClickPassthrough(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    return backend->IsClickPassthrough(window_id);
+  }
+  return false;
+}
+
 static bool Backend_IsVisible(void* data, uint32_t window_id) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   LaufeyBackend* backend = loader->GetBackend();
@@ -740,6 +758,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.is_always_on_top = Backend_IsAlwaysOnTop;
   backend_api_.set_window_opacity = Backend_SetWindowOpacity;
   backend_api_.get_window_opacity = Backend_GetWindowOpacity;
+  backend_api_.set_click_passthrough = Backend_SetClickPassthrough;
+  backend_api_.is_click_passthrough = Backend_IsClickPassthrough;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;

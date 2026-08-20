@@ -67,6 +67,8 @@ class WKWebViewBackend : public LaufeyBackend {
   bool IsAlwaysOnTop(uint32_t window_id) override;
   void SetWindowOpacity(uint32_t window_id, double opacity) override;
   double GetWindowOpacity(uint32_t window_id) override;
+  void SetClickPassthrough(uint32_t window_id, bool enabled) override;
+  bool IsClickPassthrough(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -1501,6 +1503,30 @@ double WKWebViewBackend::GetWindowOpacity(uint32_t window_id) {
     auto* state = GetWindow(window_id);
     if (state) {
       result = (double)[state->window alphaValue];
+    }
+  });
+  return result;
+}
+
+void WKWebViewBackend::SetClickPassthrough(uint32_t window_id, bool enabled) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      std::lock_guard<std::mutex> lock(windows_mutex_);
+      auto* state = GetWindow(window_id);
+      if (state) {
+        [state->window setIgnoresMouseEvents:enabled];
+      }
+    }
+  });
+}
+
+bool WKWebViewBackend::IsClickPassthrough(uint32_t window_id) {
+  __block bool result = false;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = [state->window ignoresMouseEvents];
     }
   });
   return result;

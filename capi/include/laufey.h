@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 32
+#define LAUFEY_API_VERSION 33
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -791,6 +791,26 @@ struct laufey_backend_api {
   // version 32; callers must null-check.
   void (*print_to_pdf)(void* backend_data, uint32_t window_id,
                        laufey_pdf_result_fn callback, void* callback_data);
+
+  // --- Click passthrough (API >= 33) -----------------------------------------
+  //
+  // When enabled the window ignores ALL mouse input — clicks, moves, wheel —
+  // and every event falls through to whatever window is beneath it, like
+  // Electron's setIgnoreMouseEvents(true). Keyboard input is unaffected.
+  // Intended for frameless/transparent overlay windows (HUDs, notification
+  // toasts, screen annotations). A live setter that can be toggled at any
+  // time. macOS: NSWindow.ignoresMouseEvents. Windows: WS_EX_TRANSPARENT |
+  // WS_EX_LAYERED on the top-level window. Linux: an empty input shape region
+  // (best-effort under a reparenting X11 window manager — pair it with a
+  // frameless window). NULL on backends older than API version 33; callers
+  // must null-check.
+  void (*set_click_passthrough)(void* backend_data, uint32_t window_id,
+                                bool enabled);
+
+  // Return whether click passthrough is currently enabled for the window.
+  // Returns false if the id is unknown or the backend can't report it. NULL
+  // on backends older than API version 33.
+  bool (*is_click_passthrough)(void* backend_data, uint32_t window_id);
 };
 
 #ifdef __cplusplus
