@@ -95,6 +95,9 @@ class WKWebViewBackend : public LaufeyBackend {
 
   void OpenDevTools(uint32_t window_id) override;
 
+  void PrintToPdf(uint32_t window_id, laufey_pdf_result_fn callback,
+                  void* callback_data) override;
+
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
                  char** out_input_value) override;
@@ -1271,6 +1274,54 @@ void WKWebViewBackend::ExecuteJs(uint32_t window_id, const std::string& script,
                callback(nullptr, nullptr, callback_data);
              }
            }];
+    }
+  });
+}
+
+void WKWebViewBackend::PrintToPdf(uint32_t window_id,
+                                  laufey_pdf_result_fn callback,
+                                  void* callback_data) {
+  if (!callback)
+    return;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      // Scope the lock to the lookup only: the callback is an arbitrary user
+      // FnOnce that may re-enter backend APIs taking this same non-recursive
+      // mutex on this thread. Using the webview after unlock is safe because
+      // window teardown also runs on this (main) thread.
+      WKWebView* webview = nil;
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (state)
+          webview = state->webview;
+      }
+      if (!webview) {
+        callback(nullptr, 0, "window not found", callback_data);
+        return;
+      }
+      if (@available(macOS 11.0, *)) {
+        WKPDFConfiguration* config = [[WKPDFConfiguration alloc] init];
+        [webview
+            createPDFWithConfiguration:config
+                     completionHandler:^(NSData* pdfData, NSError* error) {
+                       if (error || !pdfData) {
+                         std::string msg =
+                             error ? [[error localizedDescription] UTF8String]
+                                   : "failed to create PDF";
+                         callback(nullptr, 0, msg.c_str(), callback_data);
+                         return;
+                       }
+                       const uint8_t* bytes =
+                           static_cast<const uint8_t*>([pdfData bytes]);
+                       size_t len = [pdfData length];
+                       callback(len ? bytes : nullptr, len, nullptr,
+                                callback_data);
+                     }];
+      } else {
+        callback(nullptr, 0, "print_to_pdf requires macOS 11 or newer",
+                 callback_data);
+      }
     }
   });
 }

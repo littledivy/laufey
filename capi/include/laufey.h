@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 31
+#define LAUFEY_API_VERSION 32
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -83,6 +83,14 @@ typedef void (*laufey_js_call_fn)(void* user_data, uint32_t window_id,
 // Callback for execute_js results. Pass NULL to execute_js for fire-and-forget.
 typedef void (*laufey_js_result_fn)(laufey_value_t* result,
                                     laufey_value_t* error, void* user_data);
+
+// Callback for print_to_pdf results (API >= 32). On success `data`/`len` carry
+// the PDF bytes and `error` is NULL; on failure `data` is NULL, `len` is 0 and
+// `error` is a NUL-terminated UTF-8 message. The bytes are owned by the backend
+// and valid only for the duration of the call -- copy them if you need them
+// beyond the callback.
+typedef void (*laufey_pdf_result_fn)(const uint8_t* data, size_t len,
+                                     const char* error, void* user_data);
 
 typedef void (*laufey_menu_click_fn)(void* user_data, uint32_t window_id,
                                      const char* item_id);
@@ -768,6 +776,21 @@ struct laufey_backend_api {
   // that don't implement it (API < 31); callers should treat a NULL hook as
   // unavailable, like test_click_menu_item.
   bool (*test_trigger_close_requested)(void* backend_data, uint32_t window_id);
+
+  // --- Print to PDF (API >= 32) ----------------------------------------------
+  //
+  // Render window `window_id`'s current page to a PDF document. The result is
+  // delivered as bytes through `callback`: on success `data`/`len` hold the
+  // PDF and the callback's `error` is NULL. Backends never touch the
+  // filesystem — writing the bytes to a caller-requested path is handled
+  // entirely by the capi layer above this API. Rendering is asynchronous: the
+  // callback fires on the UI thread once it completes, and the backend MUST
+  // invoke it exactly once on every path, including internal scheduling
+  // failures. Backends that cannot produce a PDF invoke the callback with an
+  // "unsupported" error rather than crashing. NULL on backends older than API
+  // version 32; callers must null-check.
+  void (*print_to_pdf)(void* backend_data, uint32_t window_id,
+                       laufey_pdf_result_fn callback, void* callback_data);
 };
 
 #ifdef __cplusplus

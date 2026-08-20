@@ -30,6 +30,7 @@
 #include <string>
 #include <map>
 #include <mutex>
+#include <condition_variable>
 #include <vector>
 #include <functional>
 
@@ -343,6 +344,9 @@ class WebView2Backend : public LaufeyBackend {
 
   void OpenDevTools(uint32_t window_id) override;
 
+  void PrintToPdf(uint32_t window_id, laufey_pdf_result_fn callback,
+                  void* callback_data) override;
+
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
                  char** out_input_value) override;
@@ -420,6 +424,12 @@ class WebView2Backend : public LaufeyBackend {
   // controller callback never fires and the window stays blank. Runs `task`
   // inline when already on the UI thread.
   void RunOnUiThread(std::function<void()> task);
+
+  // Like RunOnUiThread, but blocks until the task has run. For calls whose
+  // arguments only outlive the call itself (e.g. a caller-owned
+  // laufey_value_t*). Callers must not hold locks that UI-thread message
+  // handlers also take.
+  void RunOnUiThreadSync(std::function<void()> task);
 
   std::map<uint32_t, WinWindowState> windows_;
   std::recursive_mutex windows_mutex_;
@@ -629,6 +639,24 @@ void WebView2Backend::RunOnUiThread(std::function<void()> task) {
     td->task(td->data);
     delete td;
   }
+}
+
+void WebView2Backend::RunOnUiThreadSync(std::function<void()> task) {
+  if (GetCurrentThreadId() == ui_thread_id_) {
+    task();
+    return;
+  }
+  std::mutex m;
+  std::condition_variable cv;
+  bool done = false;
+  RunOnUiThread([&] {
+    task();
+    std::lock_guard<std::mutex> lock(m);
+    done = true;
+    cv.notify_one();
+  });
+  std::unique_lock<std::mutex> lock(m);
+  cv.wait(lock, [&] { return done; });
 }
 
 WebView2Backend::~WebView2Backend() {
@@ -1094,7 +1122,20 @@ void WebView2Backend::Quit() {
   PostQuitMessage(0);
 }
 
+// Window-state mutators run on the UI thread. Win32 setters like SetWindowPos
+// and ShowWindow deliver messages (WM_SIZE, WM_SHOWWINDOW, ...) to the owning
+// thread SYNCHRONOUSLY, and WindowProc's handlers take windows_mutex_ -- so
+// calling them from another thread while holding that mutex deadlocks: the
+// caller waits for the UI thread to process the sent message, the UI thread
+// waits for the caller's mutex. On the UI thread the recursive_mutex makes the
+// WindowProc re-entry safe.
 void WebView2Backend::SetWindowSize(uint32_t window_id, int width, int height) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, width, height] {
+      SetWindowSize(window_id, width, height);
+    });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1119,6 +1160,11 @@ void WebView2Backend::GetWindowSize(uint32_t window_id, int* width,
 }
 
 void WebView2Backend::SetWindowPosition(uint32_t window_id, int x, int y) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread(
+        [this, window_id, x, y] { SetWindowPosition(window_id, x, y); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1141,6 +1187,11 @@ void WebView2Backend::GetWindowPosition(uint32_t window_id, int* x, int* y) {
 }
 
 void WebView2Backend::SetResizable(uint32_t window_id, bool resizable) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread(
+        [this, window_id, resizable] { SetResizable(window_id, resizable); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1162,6 +1213,12 @@ bool WebView2Backend::IsResizable(uint32_t window_id) {
 }
 
 void WebView2Backend::SetAlwaysOnTop(uint32_t window_id, bool always_on_top) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, always_on_top] {
+      SetAlwaysOnTop(window_id, always_on_top);
+    });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1178,6 +1235,11 @@ bool WebView2Backend::IsAlwaysOnTop(uint32_t window_id) {
 }
 
 void WebView2Backend::SetWindowOpacity(uint32_t window_id, double opacity) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread(
+        [this, window_id, opacity] { SetWindowOpacity(window_id, opacity); });
+    return;
+  }
   if (opacity < 0.0)
     opacity = 0.0;
   if (opacity > 1.0)
@@ -1227,18 +1289,21 @@ bool WebView2Backend::IsVisible(uint32_t window_id) {
 }
 
 void WebView2Backend::Show(uint32_t window_id) {
-  HWND hwnd = nullptr;
-  {
-    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-    auto* state = GetWindow(window_id);
-    if (state)
-      hwnd = state->hwnd;
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { Show(window_id); });
+    return;
   }
-  if (hwnd)
-    ShowWindow(hwnd, SW_SHOW);
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (state)
+    ShowWindow(state->hwnd, SW_SHOW);
 }
 
 void WebView2Backend::Hide(uint32_t window_id) {
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { Hide(window_id); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state)
@@ -1246,6 +1311,12 @@ void WebView2Backend::Hide(uint32_t window_id) {
 }
 
 void WebView2Backend::Focus(uint32_t window_id) {
+  // Also needs the UI thread for correctness, not just deadlock avoidance:
+  // SetFocus only works on windows owned by the calling thread.
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id] { Focus(window_id); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
@@ -1383,12 +1454,18 @@ void WebView2Backend::SetApplicationMenu(uint32_t window_id,
                                          void* on_click_data) {
   if (!menu_template)
     return;
-  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-  auto* state = GetWindow(window_id);
-  if (state && state->hwnd) {
-    win32_menu::SetApplicationMenu(state->hwnd, menu_template, api, on_click,
-                                   on_click_data, window_id);
-  }
+  // SetMenu/DrawMenuBar message the window's owning (UI) thread synchronously
+  // (deadlock if called here while holding windows_mutex_ — see the
+  // window-state mutators above). Marshal SYNCHRONOUSLY because
+  // `menu_template` is caller-owned and only guaranteed to outlive this call.
+  RunOnUiThreadSync([&] {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state && state->hwnd) {
+      win32_menu::SetApplicationMenu(state->hwnd, menu_template, api, on_click,
+                                     on_click_data, window_id);
+    }
+  });
 }
 
 // ============================================================================
@@ -1402,12 +1479,18 @@ void WebView2Backend::ShowContextMenu(uint32_t window_id, int x, int y,
                                       void* on_click_data) {
   if (!menu_template)
     return;
-  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
-  auto* state = GetWindow(window_id);
-  if (state && state->hwnd) {
-    win32_menu::ShowContextMenu(state->hwnd, x, y, menu_template, api, on_click,
-                                on_click_data, window_id);
-  }
+  // TrackPopupMenu only works on the window's owning (UI) thread, and the
+  // call was already blocking (the popup runs a modal loop). Marshal
+  // SYNCHRONOUSLY: `menu_template` is caller-owned and only guaranteed to
+  // outlive this call.
+  RunOnUiThreadSync([&] {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state && state->hwnd) {
+      win32_menu::ShowContextMenu(state->hwnd, x, y, menu_template, api,
+                                  on_click, on_click_data, window_id);
+    }
+  });
 }
 
 // ============================================================================
@@ -1423,6 +1506,68 @@ void WebView2Backend::OpenDevTools(uint32_t window_id) {
   auto* state = GetWindow(window_id);
   if (state && state->webview) {
     state->webview->OpenDevToolsWindow();
+  }
+}
+
+void WebView2Backend::PrintToPdf(uint32_t window_id,
+                                 laufey_pdf_result_fn callback,
+                                 void* callback_data) {
+  if (!callback)
+    return;
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, window_id, callback, callback_data] {
+      PrintToPdf(window_id, callback, callback_data);
+    });
+    return;
+  }
+  ComPtr<ICoreWebView2> webview;
+  {
+    std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (!state || !state->webview_ready || !state->webview) {
+      callback(nullptr, 0, "window not found", callback_data);
+      return;
+    }
+    webview = state->webview;
+  }
+  ComPtr<ICoreWebView2_16> webview16;
+  if (FAILED(webview.As(&webview16)) || !webview16) {
+    callback(nullptr, 0,
+             "print_to_pdf requires a newer WebView2 runtime "
+             "(ICoreWebView2_16)",
+             callback_data);
+    return;
+  }
+  HRESULT hr = webview16->PrintToPdfStream(
+      nullptr,
+      Callback<ICoreWebView2PrintToPdfStreamCompletedHandler>(
+          [callback, callback_data](HRESULT errorCode,
+                                    IStream* pdfStream) -> HRESULT {
+            if (FAILED(errorCode) || !pdfStream) {
+              callback(nullptr, 0, "failed to create PDF", callback_data);
+              return S_OK;
+            }
+            std::vector<uint8_t> buffer;
+            uint8_t chunk[65536];
+            ULONG bytesRead = 0;
+            for (;;) {
+              HRESULT rhr = pdfStream->Read(chunk, sizeof(chunk), &bytesRead);
+              if (FAILED(rhr)) {
+                callback(nullptr, 0, "failed to read PDF stream",
+                         callback_data);
+                return S_OK;
+              }
+              if (bytesRead == 0)
+                break;
+              buffer.insert(buffer.end(), chunk, chunk + bytesRead);
+            }
+            callback(buffer.empty() ? nullptr : buffer.data(), buffer.size(),
+                     nullptr, callback_data);
+            return S_OK;
+          })
+          .Get());
+  if (FAILED(hr)) {
+    callback(nullptr, 0, "failed to start PDF print", callback_data);
   }
 }
 
@@ -1467,6 +1612,13 @@ void WebView2Backend::BounceDock(int type) {
 void WebView2Backend::SetDockBadge(const char* badge_or_null) {
   std::string badge =
       (badge_or_null && *badge_or_null) ? std::string(badge_or_null) : "";
+  // GetWindowTextW/SetWindowTextW send WM_GETTEXT/WM_SETTEXT to the owning
+  // (UI) thread synchronously; marshal like the window-state mutators above.
+  // An empty badge means "clear", so re-passing badge.c_str() is lossless.
+  if (GetCurrentThreadId() != ui_thread_id_) {
+    RunOnUiThread([this, badge] { SetDockBadge(badge.c_str()); });
+    return;
+  }
   std::lock_guard<std::recursive_mutex> wlock(windows_mutex_);
   for (auto& [wid, state] : windows_) {
     if (!state.hwnd)

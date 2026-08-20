@@ -22,9 +22,13 @@
 #include <vector>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 
 #include "include/base/cef_callback.h"
 #include "include/cef_app.h"
+#include "include/cef_devtools_message_observer.h"
+#include "include/cef_parser.h"
+#include "include/cef_registration.h"
 #include "include/cef_task.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_window.h"
@@ -1329,6 +1333,153 @@ static void Backend_SetJsNamespace(void* data, const char* name) {
   }
 }
 
+namespace {
+
+// Observes the DevTools "Page.printToPDF" result for a single print request.
+// The PDF is returned in-memory as base64 in the result JSON (no temp file);
+// we decode it and hand the raw bytes to the laufey pdf-result callback (the
+// capi layer owns any file output). The observer keeps itself alive via its
+// own CefRegistration until the matching result arrives or the DevTools agent
+// detaches.
+class LaufeyPdfDevToolsObserver : public CefDevToolsMessageObserver {
+ public:
+  LaufeyPdfDevToolsObserver(int message_id, laufey_pdf_result_fn callback,
+                            void* callback_data)
+      : message_id_(message_id),
+        callback_(callback),
+        callback_data_(callback_data) {}
+
+  // Called right after AddDevToolsMessageObserver so the observer can release
+  // its own registration once it is done (which stops observing and drops the
+  // last reference).
+  void SetRegistration(CefRefPtr<CefRegistration> registration) {
+    registration_ = registration;
+  }
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int message_id,
+                              bool success, const void* result,
+                              size_t result_size) override {
+    if (message_id != message_id_)
+      return;
+    if (!success) {
+      Finish(nullptr, 0, "Page.printToPDF failed");
+      return;
+    }
+
+    // `result` is the UTF-8 JSON of the method result: { "data": "<base64>" }.
+    std::string json(static_cast<const char*>(result), result_size);
+    CefRefPtr<CefValue> value =
+        CefParseJSON(CefString(json), JSON_PARSER_ALLOW_TRAILING_COMMAS);
+    if (!value || value->GetType() != VTYPE_DICTIONARY) {
+      Finish(nullptr, 0, "invalid Page.printToPDF result");
+      return;
+    }
+    CefRefPtr<CefDictionaryValue> dict = value->GetDictionary();
+    if (!dict || !dict->HasKey("data")) {
+      Finish(nullptr, 0, "Page.printToPDF result missing data");
+      return;
+    }
+    CefRefPtr<CefBinaryValue> bin = CefBase64Decode(dict->GetString("data"));
+    if (!bin) {
+      Finish(nullptr, 0, "failed to decode PDF data");
+      return;
+    }
+
+    size_t len = bin->GetSize();
+    std::vector<uint8_t> bytes(len);
+    if (len > 0)
+      bin->GetData(bytes.data(), len, 0);
+
+    Finish(bytes.empty() ? nullptr : bytes.data(), bytes.size(), nullptr);
+  }
+
+  // If the browser is destroyed while the request is in flight, CEF never
+  // delivers the pending method result ("pending method results will not be
+  // delivered", cef_devtools_message_observer.h). Without this override the
+  // observer would keep itself alive through its own registration forever and
+  // the callback would never fire, breaking the exactly-once contract.
+  void OnDevToolsAgentDetached(CefRefPtr<CefBrowser> browser) override {
+    Finish(nullptr, 0, "browser was closed before the PDF result arrived");
+  }
+
+ private:
+  void Finish(const uint8_t* data, size_t len, const char* error) {
+    if (done_)
+      return;
+    done_ = true;
+    callback_(data, len, error, callback_data_);
+    // Releasing the registration drops observation and may destroy `this`;
+    // CEF holds a reference across this call, so doing it last is safe.
+    registration_ = nullptr;
+  }
+
+  int message_id_;
+  laufey_pdf_result_fn callback_;
+  void* callback_data_;
+  bool done_ = false;
+  CefRefPtr<CefRegistration> registration_;
+
+  IMPLEMENT_REFCOUNTING(LaufeyPdfDevToolsObserver);
+};
+
+}  // namespace
+
+static void Backend_PrintToPdf(void* data, uint32_t window_id,
+                               laufey_pdf_result_fn callback,
+                               void* callback_data) {
+  if (!callback)
+    return;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+
+  // Unique, positive DevTools message id per request so concurrent PDF
+  // requests don't observe each other's results.
+  static std::atomic<int> next_message_id{1};
+  int message_id = next_message_id.fetch_add(1);
+
+  // Everything — including the window lookup, whose "window not found" the
+  // capi contract requires on the UI thread — runs in the posted task. This
+  // also closes the race where a freshly created window's browser has not yet
+  // been recorded (browsers_ is populated from a posted task itself).
+  bool posted = CefPostTask(
+      TID_UI,
+      base::BindOnce(
+          [](RuntimeLoader* loader, uint32_t win_id, int msg_id,
+             laufey_pdf_result_fn cb, void* cb_data) {
+            CefRefPtr<CefBrowser> b = loader->GetBrowserForWindow(win_id);
+            if (!b) {
+              cb(nullptr, 0, "window not found", cb_data);
+              return;
+            }
+            CefRefPtr<LaufeyPdfDevToolsObserver> observer =
+                new LaufeyPdfDevToolsObserver(msg_id, cb, cb_data);
+            CefRefPtr<CefRegistration> registration =
+                b->GetHost()->AddDevToolsMessageObserver(observer);
+            if (!registration) {
+              cb(nullptr, 0, "failed to attach DevTools observer", cb_data);
+              return;
+            }
+            observer->SetRegistration(registration);
+
+            // Empty params: default ReturnAsBase64 transfer mode. Returns the
+            // PDF bytes inline in the result JSON.
+            CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+            int sent = b->GetHost()->ExecuteDevToolsMethod(
+                msg_id, "Page.printToPDF", params);
+            if (sent <= 0) {
+              // Result will never arrive; report and drop the observer.
+              cb(nullptr, 0, "failed to invoke Page.printToPDF", cb_data);
+              observer->SetRegistration(nullptr);
+            }
+          },
+          loader, window_id, message_id, callback, callback_data));
+  if (!posted) {
+    // The UI task runner is gone (shutdown): the task was destroyed unrun, so
+    // deliver the mandatory exactly-once callback here instead of never.
+    callback(nullptr, 0, "failed to schedule print on the UI thread",
+             callback_data);
+  }
+}
+
 // --- InitializeBackendApi ---
 
 static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
@@ -1581,6 +1732,7 @@ void RuntimeLoader::InitializeBackendApi() {
 #endif
 
   backend_api_.open_devtools = Backend_OpenDevTools;
+  backend_api_.print_to_pdf = Backend_PrintToPdf;
   backend_api_.set_js_namespace = Backend_SetJsNamespace;
   backend_api_.show_dialog = Backend_ShowDialog;
   backend_api_.string_free = Backend_StringFree;

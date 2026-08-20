@@ -445,6 +445,20 @@ static void Backend_OpenDevTools(void* data, uint32_t window_id) {
   }
 }
 
+static void Backend_PrintToPdf(void* data, uint32_t window_id,
+                               laufey_pdf_result_fn callback,
+                               void* callback_data) {
+  if (!callback)
+    return;
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  LaufeyBackend* backend = loader->GetBackend();
+  if (backend) {
+    backend->PrintToPdf(window_id, callback, callback_data);
+  } else {
+    callback(nullptr, 0, "backend not initialized", callback_data);
+  }
+}
+
 static void Backend_SetJsNamespace(void* data, const char* name) {
   RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
   if (name) {
@@ -770,6 +784,7 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_application_menu = Backend_SetApplicationMenu;
   backend_api_.show_context_menu = Backend_ShowContextMenu;
   backend_api_.open_devtools = Backend_OpenDevTools;
+  backend_api_.print_to_pdf = Backend_PrintToPdf;
   backend_api_.set_js_namespace = Backend_SetJsNamespace;
   backend_api_.create_window = Backend_CreateWindow;
   backend_api_.create_window_ex = Backend_CreateWindowEx;

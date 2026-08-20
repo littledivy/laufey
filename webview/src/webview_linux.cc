@@ -390,6 +390,9 @@ class WebKitGTKBackend : public LaufeyBackend {
 
   void OpenDevTools(uint32_t window_id) override;
 
+  void PrintToPdf(uint32_t window_id, laufey_pdf_result_fn callback,
+                  void* callback_data) override;
+
   int ShowDialog(uint32_t window_id, int dialog_type, const std::string& title,
                  const std::string& message, const std::string& default_value,
                  char** out_input_value) override;
@@ -1276,6 +1279,131 @@ void WebKitGTKBackend::OpenDevTools(uint32_t window_id) {
           webkit_web_view_get_inspector(state->webview);
       webkit_web_inspector_show(inspector);
     }
+  });
+}
+
+// WebKitGTK has no in-memory PDF API; WebKitPrintOperation only writes to a
+// GtkPrintSettings output URI, and the write happens in the separate
+// WebKitWebProcess -- so the target must be a real filesystem path that
+// process can open by name (an fd owned by this UI process, e.g. a memfd's
+// /proc/self/fd/N, would resolve against the web process's own fd table and
+// name the wrong file or none at all). We print into a private temp file,
+// read the bytes back, and delete it; the capi layer owns writing the
+// caller's requested output path.
+struct PdfPrintData {
+  laufey_pdf_result_fn callback;
+  void* callback_data;
+  std::string output_path;  // temp file the print job writes into
+  bool has_error = false;
+  std::string error_message;
+};
+
+static void on_pdf_print_failed(WebKitPrintOperation* /*op*/, GError* error,
+                                gpointer user_data) {
+  auto* d = static_cast<PdfPrintData*>(user_data);
+  d->has_error = true;
+  d->error_message = error && error->message ? error->message : "print failed";
+}
+
+static void on_pdf_print_finished(WebKitPrintOperation* op,
+                                  gpointer user_data) {
+  auto* d = static_cast<PdfPrintData*>(user_data);
+  if (d->has_error) {
+    d->callback(nullptr, 0, d->error_message.c_str(), d->callback_data);
+  } else {
+    gchar* contents = nullptr;
+    gsize length = 0;
+    GError* read_error = nullptr;
+    if (g_file_get_contents(d->output_path.c_str(), &contents, &length,
+                            &read_error)) {
+      d->callback(length ? reinterpret_cast<const uint8_t*>(contents) : nullptr,
+                  length, nullptr, d->callback_data);
+      g_free(contents);
+    } else {
+      d->callback(nullptr, 0,
+                  read_error && read_error->message ? read_error->message
+                                                    : "failed to read PDF",
+                  d->callback_data);
+    }
+    if (read_error)
+      g_error_free(read_error);
+  }
+  unlink(d->output_path.c_str());
+  g_object_unref(op);
+  delete d;
+}
+
+void WebKitGTKBackend::PrintToPdf(uint32_t window_id,
+                                  laufey_pdf_result_fn callback,
+                                  void* callback_data) {
+  if (!callback)
+    return;
+  gtk_invoke_sync([&] {
+    // Scope the lock to the lookup only: the callback is an arbitrary user
+    // FnOnce that may re-enter backend APIs taking this same non-recursive
+    // mutex on this thread (the "failed" signal can fire synchronously from
+    // webkit_print_operation_print below). Using the webview after unlock is
+    // safe because window teardown also runs on this (main) thread.
+    WebKitWebView* webview = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(windows_mutex_);
+      auto* state = GetWindow(window_id);
+      if (state)
+        webview = state->webview;
+    }
+    if (!webview) {
+      callback(nullptr, 0, "window not found", callback_data);
+      return;
+    }
+
+    // Private (0600, unpredictable name) temp file for the print output;
+    // close the fd right away -- the web process opens the file by path.
+    gchar* tmp_path = nullptr;
+    GError* tmp_error = nullptr;
+    int tmp_fd = g_file_open_tmp("laufey-pdf-XXXXXX", &tmp_path, &tmp_error);
+    if (tmp_fd < 0) {
+      callback(nullptr, 0,
+               tmp_error && tmp_error->message ? tmp_error->message
+                                               : "failed to create temp file",
+               callback_data);
+      if (tmp_error)
+        g_error_free(tmp_error);
+      return;
+    }
+    close(tmp_fd);
+
+    auto* d = new PdfPrintData{callback, callback_data, tmp_path, false, ""};
+    gchar* uri = g_filename_to_uri(tmp_path, nullptr, nullptr);
+    g_free(tmp_path);
+    if (!uri) {
+      // Cannot happen for g_file_open_tmp's absolute path, but stay safe.
+      callback(nullptr, 0, "invalid temp file path", callback_data);
+      unlink(d->output_path.c_str());
+      delete d;
+      return;
+    }
+
+    GtkPrintSettings* settings = gtk_print_settings_new();
+    gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_URI, uri);
+    gtk_print_settings_set(settings, GTK_PRINT_SETTINGS_OUTPUT_FILE_FORMAT,
+                           "pdf");
+    g_free(uri);
+
+    WebKitPrintOperation* op = webkit_print_operation_new(webview);
+    webkit_print_operation_set_print_settings(op, settings);
+    g_object_unref(settings);
+
+    // "finished" is WebKitPrintOperation's guaranteed completion signal: it is
+    // emitted for every terminated operation, and always AFTER "failed" when an
+    // error occurred (WebKit forwards GtkPrintOperation's always-emitted "done"
+    // signal). So on_pdf_print_finished is the single owner of invoking the
+    // callback, deleting the temp file, unref-ing `op`, and freeing `d` -- the
+    // same "completion callback always fires" contract the macOS backend
+    // relies on. "failed" only records the error for that handler to report.
+    g_signal_connect(op, "failed", G_CALLBACK(on_pdf_print_failed), d);
+    g_signal_connect(op, "finished", G_CALLBACK(on_pdf_print_finished), d);
+
+    webkit_print_operation_print(op);
   });
 }
 

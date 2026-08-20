@@ -434,6 +434,19 @@ class LaufeyBackend {
 
   virtual void OpenDevTools(uint32_t window_id) = 0;
 
+  // Render the window's current page to a PDF (API >= 32). The PDF bytes are
+  // delivered through `callback` on success; file output is handled by the
+  // capi layer, never here. Asynchronous: `callback` fires on the UI thread
+  // once rendering completes, and implementations must invoke it exactly once
+  // on every path. Default: report "unsupported" through the callback rather
+  // than crashing; platform backends override.
+  virtual void PrintToPdf(uint32_t /*window_id*/, laufey_pdf_result_fn callback,
+                          void* callback_data) {
+    if (callback)
+      callback(nullptr, 0, "print_to_pdf is not supported by this backend",
+               callback_data);
+  }
+
   // Open `url` in the user's default OS browser. Used to honor the
   // external-link redirect policy (see laufey_external_links.h) so clicked
   // links and `target="_blank"` popups leave the app's webview. Default no-op;

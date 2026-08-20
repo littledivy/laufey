@@ -95,10 +95,12 @@ fn e2e_main() {
     let resize_h = Arc::new(AtomicI32::new(0));
     let moved = Arc::new(AtomicBool::new(false));
     let focused_seen = Arc::new(AtomicBool::new(false));
+    let page_loaded = Arc::new(AtomicBool::new(false));
 
     let (rw, rh) = (resize_w.clone(), resize_h.clone());
     let mv = moved.clone();
     let fc = focused_seen.clone();
+    let pl = page_loaded.clone();
 
     let win = Window::new(800, 600)
       .title("native-e2e")
@@ -113,6 +115,11 @@ fn e2e_main() {
         if e.focused {
           fc.store(true, Ordering::SeqCst);
         }
+      })
+      // Readiness signal for the print_to_pdf test below; engine-less
+      // backends never fire it, which that test treats as best-effort.
+      .on_page_load(move |_e| {
+        pl.store(true, Ordering::SeqCst);
       })
       // Trivial page; a no-op on engine-less backends (Winit navigate is None).
       .load("data:text/html,<!doctype html><title>native-e2e</title>");
@@ -353,6 +360,54 @@ fn e2e_main() {
     // loop). It belongs behind a backend test hook; tracked as a follow-up.
     na("menu/tray OS-structure check (Linux: D-Bus driver; macOS/Windows: pending backend hook)");
 
+    // ---- print_to_pdf smoke test (API >= 32) -----------------------------
+    // Render the loaded page to a PDF and assert real PDF bytes come back
+    // (`%PDF-` magic), exercising each backend's actual render path (WKWebView
+    // createPDFWithConfiguration, WebView2 PrintToPdfStream, WebKitGTK
+    // print-to-file, CEF DevTools Page.printToPDF). Winit has no web engine
+    // and reports "unsupported" through the callback -> N/A. A backend whose
+    // completion handler never fires shows up here as a FAIL on the delivery
+    // assertion.
+    //
+    // The render races page load: WKWebView's createPDFWithConfiguration
+    // fails with a generic NSError while the page is still loading, so wait
+    // for on_page_load first (best effort -- engine-less backends never fire
+    // it) and retry a transient error before judging; only a persistent error
+    // is a real failure.
+    let _ = wait_for(|| page_loaded.load(Ordering::SeqCst), 50, 100).await;
+    let mut outcome: Option<Result<Vec<u8>, String>> = None;
+    for attempt in 0..3u32 {
+      if attempt > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+      }
+      let pdf_result =
+        Arc::new(std::sync::Mutex::new(None::<Result<Vec<u8>, String>>));
+      let pr = pdf_result.clone();
+      win.print_to_pdf(None, move |r| *pr.lock().unwrap() = Some(r));
+      if !wait_for(|| pdf_result.lock().unwrap().is_some(), 150, 100).await {
+        continue; // nothing delivered this attempt; retry
+      }
+      let result = pdf_result.lock().unwrap().take().unwrap();
+      let transient = matches!(&result, Err(e) if !e.contains("not supported"));
+      outcome = Some(result);
+      if !transient {
+        break;
+      }
+    }
+    match outcome {
+      None => check("print_to_pdf delivers a result within 15s", false),
+      Some(Ok(bytes)) => check(
+        &format!("print_to_pdf returns real PDF bytes ({} bytes)", bytes.len()),
+        bytes.starts_with(b"%PDF-"),
+      ),
+      Some(Err(e)) if e.contains("not supported") => {
+        na("print_to_pdf (backend has no web engine / PDF support)")
+      }
+      Some(Err(e)) => {
+        check(&format!("print_to_pdf succeeds (got: {e})"), false)
+      }
+    }
+
     // ---- close-requested handler round-trip --------------------------------
     // A second window (kept separate from `win`, which must survive to
     // shutdown). Registers an on_close_requested handler that *stashes* the
@@ -396,8 +451,8 @@ fn e2e_main() {
       na("close handler (precondition failed: close_win never reported a nonzero size)");
     } else {
       // The hook itself is guaranteed present: init_api rejects any backend
-      // whose API version differs from 31, and every in-tree backend
-      // implements test_trigger_close_requested. Dispatch is synchronous,
+      // whose API version differs from the current one, and every in-tree
+      // backend implements test_trigger_close_requested. Dispatch is synchronous,
       // so a handler that didn't fire is a real regression — fail, don't
       // N/A.
       check(
