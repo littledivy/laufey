@@ -511,6 +511,10 @@ bool IsNSWindowResizable(void* cef_handle);
 // Overall window opacity in [0.0, 1.0] via NSWindow.alphaValue.
 void SetNSWindowOpacity(void* cef_handle, double opacity);
 double GetNSWindowOpacity(void* cef_handle);
+// Click passthrough via NSWindow.ignoresMouseEvents: while enabled all mouse
+// input falls through to whatever is beneath the window.
+void SetNSWindowClickPassthrough(void* cef_handle, bool enabled);
+bool IsNSWindowClickPassthrough(void* cef_handle);
 // Reconfigure the window backing a CEF handle to behave as a floating,
 // non-activating utility panel (used for tray popovers): floats above
 // normal windows, joins all spaces, and doesn't steal focus from the
@@ -540,6 +544,12 @@ bool IsLinuxWindowResizable(unsigned long xid);
 // (honored by compositing window managers). Implemented in main_linux.cc.
 void SetLinuxWindowOpacity(unsigned long xid, double opacity);
 double GetLinuxWindowOpacity(unsigned long xid);
+// Click passthrough via an empty X11 input shape region: while enabled all
+// mouse input falls through to whatever is beneath the window. Best-effort
+// under a reparenting window manager (the WM frame may still catch clicks),
+// so pair it with a frameless window. Implemented in main_linux.cc.
+void SetLinuxWindowClickPassthrough(unsigned long xid, bool enabled);
+bool IsLinuxWindowClickPassthrough(unsigned long xid);
 // Mark the X11 window as a utility/panel window (_NET_WM_WINDOW_TYPE_UTILITY,
 // skip taskbar/pager) so the WM treats it as an auxiliary panel that doesn't
 // take part in normal focus/taskbar handling. Implemented in main_linux.cc.

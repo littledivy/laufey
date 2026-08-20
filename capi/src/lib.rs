@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 32;
+pub const LAUFEY_API_VERSION: u32 = 33;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -922,6 +922,37 @@ impl Window {
       unsafe { f(api.backend_data, self.id) }
     } else {
       1.0
+    }
+  }
+
+  /// Builder form of [`Window::set_click_passthrough`].
+  pub fn click_passthrough(self, passthrough: bool) -> Self {
+    self.set_click_passthrough(passthrough);
+    self
+  }
+
+  /// Enable or disable click passthrough. While enabled the window ignores
+  /// all mouse input — clicks, moves, wheel — and every event falls through
+  /// to whatever window is beneath it, like Electron's
+  /// `setIgnoreMouseEvents(true)`. Keyboard input is unaffected. Intended for
+  /// frameless/transparent overlay windows (HUDs, notification toasts, screen
+  /// annotations); can be toggled at any time. No-op on backends without
+  /// passthrough support.
+  pub fn set_click_passthrough(&self, passthrough: bool) {
+    let api = api();
+    if let Some(f) = api.set_click_passthrough {
+      unsafe { f(api.backend_data, self.id, passthrough) };
+    }
+  }
+
+  /// Get whether click passthrough is currently enabled. Returns `false`
+  /// when the backend does not report it.
+  pub fn get_click_passthrough(&self) -> bool {
+    let api = api();
+    if let Some(f) = api.is_click_passthrough {
+      unsafe { f(api.backend_data, self.id) }
+    } else {
+      false
     }
   }
 

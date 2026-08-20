@@ -214,6 +214,7 @@ impl ApplicationHandler<UserEvent> for App {
             | CommonEvent::SetWindowPosition { window_id }
             | CommonEvent::SetResizable { window_id }
             | CommonEvent::SetAlwaysOnTop { window_id }
+            | CommonEvent::SetClickPassthrough { window_id }
             | CommonEvent::Show { window_id }
             | CommonEvent::Hide { window_id }
             | CommonEvent::Focus { window_id }

@@ -446,10 +446,17 @@ static void Backend_SetWindowOpacity(void* data, uint32_t window_id,
                       LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
                       if (o >= 1.0) {
                         if (ex & WS_EX_LAYERED) {
-                          SetWindowLong(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
-                          RedrawWindow(hwnd, nullptr, nullptr,
-                                       RDW_ERASE | RDW_INVALIDATE | RDW_FRAME |
-                                           RDW_ALLCHILDREN);
+                          if (ex & WS_EX_TRANSPARENT) {
+                            // Click passthrough needs the layered style;
+                            // keep it and just reset the alpha.
+                            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                          } else {
+                            SetWindowLong(hwnd, GWL_EXSTYLE,
+                                          ex & ~WS_EX_LAYERED);
+                            RedrawWindow(hwnd, nullptr, nullptr,
+                                         RDW_ERASE | RDW_INVALIDATE |
+                                             RDW_FRAME | RDW_ALLCHILDREN);
+                          }
                         }
                       } else {
                         if (!(ex & WS_EX_LAYERED))
@@ -493,6 +500,93 @@ static double Backend_GetWindowOpacity(void* data, uint32_t window_id) {
       result = GetNSWindowOpacity(window->GetWindowHandle());
 #elif defined(__linux__)
       result = GetLinuxWindowOpacity(window->GetWindowHandle());
+#endif
+    });
+  }
+  return result;
+}
+
+static void Backend_SetClickPassthrough(void* data, uint32_t window_id,
+                                        bool enabled) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  if (browser) {
+    CefPostTask(
+        TID_UI,
+        base::BindOnce(
+            [](CefRefPtr<CefBrowser> b, bool en) {
+              auto browser_view = CefBrowserView::GetForBrowser(b);
+              if (!browser_view)
+                return;
+              auto window = browser_view->GetWindow();
+              if (!window)
+                return;
+#ifdef _WIN32
+              HWND hwnd = window->GetWindowHandle();
+              LONG ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+              if (en) {
+                // WS_EX_TRANSPARENT excludes the whole top-level window
+                // (children included, so also CEF's widget windows) from
+                // mouse hit-testing, but only on a layered window.
+                bool newly_layered = !(ex & WS_EX_LAYERED);
+                SetWindowLong(hwnd, GWL_EXSTYLE,
+                              ex | WS_EX_TRANSPARENT | WS_EX_LAYERED);
+                if (newly_layered) {
+                  // A window that just became layered renders nothing until
+                  // its transparency attributes are set; fully opaque keeps
+                  // it visually unchanged.
+                  SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                }
+              } else {
+                LONG new_ex = ex & ~WS_EX_TRANSPARENT;
+                // Drop the layered style too unless a window opacity < 1.0
+                // still needs it.
+                BYTE alpha = 255;
+                DWORD flags = 0;
+                bool has_alpha =
+                    (ex & WS_EX_LAYERED) &&
+                    GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags) &&
+                    (flags & LWA_ALPHA) && alpha < 255;
+                if (!has_alpha)
+                  new_ex &= ~WS_EX_LAYERED;
+                if (new_ex != ex) {
+                  SetWindowLong(hwnd, GWL_EXSTYLE, new_ex);
+                  if ((ex & WS_EX_LAYERED) && !(new_ex & WS_EX_LAYERED)) {
+                    RedrawWindow(hwnd, nullptr, nullptr,
+                                 RDW_ERASE | RDW_INVALIDATE | RDW_FRAME |
+                                     RDW_ALLCHILDREN);
+                  }
+                }
+              }
+#elif defined(__APPLE__)
+              SetNSWindowClickPassthrough(window->GetWindowHandle(), en);
+#elif defined(__linux__)
+              SetLinuxWindowClickPassthrough(window->GetWindowHandle(), en);
+#endif
+            },
+            browser, enabled));
+  }
+}
+
+static bool Backend_IsClickPassthrough(void* data, uint32_t window_id) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  CefRefPtr<CefBrowser> browser = loader->GetBrowserForWindow(window_id);
+  bool result = false;
+  if (browser) {
+    cef_invoke_sync([&] {
+      auto browser_view = CefBrowserView::GetForBrowser(browser);
+      if (!browser_view)
+        return;
+      auto window = browser_view->GetWindow();
+      if (!window)
+        return;
+#ifdef _WIN32
+      HWND hwnd = window->GetWindowHandle();
+      result = (GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
+#elif defined(__APPLE__)
+      result = IsNSWindowClickPassthrough(window->GetWindowHandle());
+#elif defined(__linux__)
+      result = IsLinuxWindowClickPassthrough(window->GetWindowHandle());
 #endif
     });
   }
@@ -1649,6 +1743,8 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.is_always_on_top = Backend_IsAlwaysOnTop;
   backend_api_.set_window_opacity = Backend_SetWindowOpacity;
   backend_api_.get_window_opacity = Backend_GetWindowOpacity;
+  backend_api_.set_click_passthrough = Backend_SetClickPassthrough;
+  backend_api_.is_click_passthrough = Backend_IsClickPassthrough;
   backend_api_.is_visible = Backend_IsVisible;
   backend_api_.show = Backend_Show;
   backend_api_.hide = Backend_Hide;

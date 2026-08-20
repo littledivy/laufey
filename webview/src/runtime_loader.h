@@ -402,6 +402,13 @@ class LaufeyBackend {
   virtual double GetWindowOpacity(uint32_t /*window_id*/) {
     return 1.0;
   }
+  // Click passthrough (API >= 33): while enabled the window ignores all mouse
+  // input and events fall through to whatever is beneath it. Default no-op /
+  // reports disabled; platform backends override.
+  virtual void SetClickPassthrough(uint32_t /*window_id*/, bool /*enabled*/) {}
+  virtual bool IsClickPassthrough(uint32_t /*window_id*/) {
+    return false;
+  }
   virtual bool IsVisible(uint32_t window_id) = 0;
   virtual void Show(uint32_t window_id) = 0;
   virtual void Hide(uint32_t window_id) = 0;

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <map>
+#include <set>
 
 #include "include/cef_app.h"
 #include "include/base/cef_callback.h"
@@ -520,6 +521,42 @@ double GetLinuxWindowOpacity(unsigned long xid) {
 #else
   return 1.0;
 #endif
+}
+
+// X11 has no cheap query for "is the input shape empty", so remember which
+// windows we made click-passthrough. Only touched on the CEF UI thread.
+static std::set<unsigned long> g_click_passthrough_xids;
+
+void SetLinuxWindowClickPassthrough(unsigned long xid, bool enabled) {
+#ifdef GDK_WINDOWING_X11
+  GdkDisplay* gdk_display = gdk_display_get_default();
+  if (!gdk_display || !GDK_IS_X11_DISPLAY(gdk_display))
+    return;
+  // Wrap the foreign XID in a GdkWindow so GDK's own XShape linkage sets the
+  // input region — no direct libXext dependency needed.
+  GdkWindow* gdk_win = gdk_x11_window_foreign_new_for_display(gdk_display, xid);
+  if (!gdk_win)
+    return;
+  if (enabled) {
+    // An empty input shape makes the whole window transparent to pointer
+    // events; they fall through to whatever is beneath. Best-effort under a
+    // reparenting window manager (the WM frame may still catch clicks), so
+    // pair it with a frameless window.
+    cairo_region_t* empty = cairo_region_create();
+    gdk_window_input_shape_combine_region(gdk_win, empty, 0, 0);
+    cairo_region_destroy(empty);
+    g_click_passthrough_xids.insert(xid);
+  } else {
+    // NULL restores the default input shape (the full window).
+    gdk_window_input_shape_combine_region(gdk_win, nullptr, 0, 0);
+    g_click_passthrough_xids.erase(xid);
+  }
+  g_object_unref(gdk_win);
+#endif
+}
+
+bool IsLinuxWindowClickPassthrough(unsigned long xid) {
+  return g_click_passthrough_xids.count(xid) != 0;
 }
 
 void MonitorLinuxWindowEvents(unsigned long xid) {
