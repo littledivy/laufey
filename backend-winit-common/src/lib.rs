@@ -33,7 +33,7 @@ use winit::window::{Window, WindowLevel};
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
 // below must match the `laufey_backend_api` struct as of this version.
-pub const LAUFEY_API_VERSION: u32 = 33;
+pub const LAUFEY_API_VERSION: u32 = 34;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -553,6 +553,16 @@ pub struct LaufeyBackendApi {
   pub set_click_passthrough:
     Option<unsafe extern "C" fn(*mut c_void, u32, bool)>,
   pub is_click_passthrough:
+    Option<unsafe extern "C" fn(*mut c_void, u32) -> bool>,
+
+  // --- Click passthrough forwarding (API >= 34) ---
+  // winit has no global input observation API, so both pointers stay None and
+  // the embedder's forward toggle is a no-op (getter reports false). The
+  // fields MUST still be declared to keep the struct layout in sync with the
+  // `laufey_backend_api` the capi reads through the backend's pointer.
+  pub set_click_passthrough_forward:
+    Option<unsafe extern "C" fn(*mut c_void, u32, bool)>,
+  pub is_click_passthrough_forward:
     Option<unsafe extern "C" fn(*mut c_void, u32) -> bool>,
 }
 
@@ -1192,6 +1202,10 @@ pub fn create_api_base() -> LaufeyBackendApi {
     // Click passthrough (API >= 33): filled by fill_common_api.
     set_click_passthrough: None,
     is_click_passthrough: None,
+    // Click passthrough forwarding (API >= 34): winit has no global input
+    // observation API.
+    set_click_passthrough_forward: None,
+    is_click_passthrough_forward: None,
   }
 }
 

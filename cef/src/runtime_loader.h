@@ -515,6 +515,13 @@ double GetNSWindowOpacity(void* cef_handle);
 // input falls through to whatever is beneath the window.
 void SetNSWindowClickPassthrough(void* cef_handle, bool enabled);
 bool IsNSWindowClickPassthrough(void* cef_handle);
+// Click-passthrough forwarding: while a window is passthrough, keep feeding
+// its mouse events to the laufey mouse handlers from an NSEvent *global*
+// monitor (events delivered to other apps). Keyed by laufey window id since
+// the flag and monitors are app-scoped state, not NSWindow state. Main
+// thread only.
+void SetNSWindowClickPassthroughForward(uint32_t window_id, bool forward);
+bool IsNSWindowClickPassthroughForward(uint32_t window_id);
 // Reconfigure the window backing a CEF handle to behave as a floating,
 // non-activating utility panel (used for tray popovers): floats above
 // normal windows, joins all spaces, and doesn't steal focus from the

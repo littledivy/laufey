@@ -409,6 +409,16 @@ class LaufeyBackend {
   virtual bool IsClickPassthrough(uint32_t /*window_id*/) {
     return false;
   }
+  // Click passthrough forwarding (API >= 34): while passthrough is enabled,
+  // keep the embedder's mouse handlers fed for this window from a global OS
+  // observer even though the OS delivers the events elsewhere. Observation
+  // only. Default no-op / reports disabled; platforms with global input
+  // observation (macOS) override.
+  virtual void SetClickPassthroughForward(uint32_t /*window_id*/,
+                                          bool /*forward*/) {}
+  virtual bool IsClickPassthroughForward(uint32_t /*window_id*/) {
+    return false;
+  }
   virtual bool IsVisible(uint32_t window_id) = 0;
   virtual void Show(uint32_t window_id) = 0;
   virtual void Hide(uint32_t window_id) = 0;

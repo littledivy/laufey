@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 33
+#define LAUFEY_API_VERSION 34
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -811,6 +811,36 @@ struct laufey_backend_api {
   // Returns false if the id is unknown or the backend can't report it. NULL
   // on backends older than API version 33.
   bool (*is_click_passthrough)(void* backend_data, uint32_t window_id);
+
+  // --- Click passthrough forwarding (API >= 34) ------------------------------
+  //
+  // While a window has click passthrough enabled, forwarding keeps the
+  // embedder's mouse handlers (set_mouse_click_handler /
+  // set_mouse_move_handler / set_wheel_handler) fed for that window even
+  // though the OS delivers the events to whatever is beneath it — like
+  // Electron's setIgnoreMouseEvents(true, { forward: true }). Observation
+  // only: the events cannot be consumed (the window below still receives
+  // them), and by the time a handler runs the OS has already routed the
+  // event. Delivery comes from a global OS observer that hit-tests the
+  // window's frame, so events are reported only while passthrough is active
+  // and the cursor is over the (visible) window; while passthrough is
+  // disabled the flag has no effect — normal per-window delivery already
+  // fires the handlers. Enables the standard interactive-overlay pattern:
+  // observe moves, toggle passthrough off when the cursor enters an
+  // interactive region.
+  //
+  // Implemented on macOS (NSEvent global monitor; mouse observation needs no
+  // extra permission). Backends/platforms without global observation
+  // (Windows, Linux, winit — see docs/window-management.md) currently ignore
+  // the flag and report false from the getter. NULL on backends older than
+  // API version 34; callers must null-check.
+  void (*set_click_passthrough_forward)(void* backend_data, uint32_t window_id,
+                                        bool forward);
+
+  // Return whether forwarding is currently enabled for the window. Returns
+  // false if the id is unknown or the backend doesn't support forwarding.
+  // NULL on backends older than API version 34.
+  bool (*is_click_passthrough_forward)(void* backend_data, uint32_t window_id);
 };
 
 #ifdef __cplusplus

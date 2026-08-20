@@ -39,6 +39,9 @@ struct MacWindowState {
   LaufeyUIDelegate* ui_delegate;
   LaufeyNavigationDelegate* navigation_delegate;
   id title_observer = nil;  // KVO observer mirroring document.title
+  // While click passthrough is active, keep feeding this window's mouse
+  // events from the global (other-app) monitors.
+  bool click_passthrough_forward = false;
 };
 
 class WKWebViewBackend : public LaufeyBackend {
@@ -69,6 +72,8 @@ class WKWebViewBackend : public LaufeyBackend {
   double GetWindowOpacity(uint32_t window_id) override;
   void SetClickPassthrough(uint32_t window_id, bool enabled) override;
   bool IsClickPassthrough(uint32_t window_id) override;
+  void SetClickPassthroughForward(uint32_t window_id, bool forward) override;
+  bool IsClickPassthroughForward(uint32_t window_id) override;
   bool IsVisible(uint32_t window_id) override;
   void Show(uint32_t window_id) override;
   void Hide(uint32_t window_id) override;
@@ -162,6 +167,14 @@ class WKWebViewBackend : public LaufeyBackend {
   void RemoveWindowState(uint32_t window_id);
   void InstallGlobalMonitors();
   void RemoveGlobalMonitors();
+  // Install / remove the other-app (forwarding) monitors depending on
+  // whether any window currently wants click-passthrough forwarding.
+  // Main thread only.
+  void UpdateForwardMonitors();
+  // Frontmost visible window with passthrough + forwarding active whose
+  // frame contains `screen_point`, or 0. Fills `out_win` on a hit.
+  // Main thread only.
+  uint32_t ForwardTargetAt(NSPoint screen_point, NSWindow** out_win);
 
   std::map<uint32_t, MacWindowState> windows_;
   std::mutex windows_mutex_;
@@ -172,6 +185,14 @@ class WKWebViewBackend : public LaufeyBackend {
   id mouse_move_monitor_ = nil;
   id scroll_monitor_ = nil;
   bool monitors_installed_ = false;
+
+  // Forwarding monitors: NSEvent *global* monitors that observe mouse events
+  // delivered to OTHER applications — which is what a passthrough window's
+  // events become. Installed only while at least one window has forwarding
+  // enabled, removed when the last one turns it off.
+  id forward_mouse_monitor_ = nil;
+  id forward_mouse_move_monitor_ = nil;
+  id forward_scroll_monitor_ = nil;
 };
 
 // NSWindow → laufey_id mapping for event routing
@@ -852,6 +873,18 @@ void WKWebViewBackend::RemoveGlobalMonitors() {
       [NSEvent removeMonitor:scroll_monitor_];
       scroll_monitor_ = nil;
     }
+    if (forward_mouse_monitor_) {
+      [NSEvent removeMonitor:forward_mouse_monitor_];
+      forward_mouse_monitor_ = nil;
+    }
+    if (forward_mouse_move_monitor_) {
+      [NSEvent removeMonitor:forward_mouse_move_monitor_];
+      forward_mouse_move_monitor_ = nil;
+    }
+    if (forward_scroll_monitor_) {
+      [NSEvent removeMonitor:forward_scroll_monitor_];
+      forward_scroll_monitor_ = nil;
+    }
   }
 }
 
@@ -1530,6 +1563,223 @@ bool WKWebViewBackend::IsClickPassthrough(uint32_t window_id) {
     }
   });
   return result;
+}
+
+void WKWebViewBackend::SetClickPassthroughForward(uint32_t window_id,
+                                                  bool forward) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    @autoreleasepool {
+      {
+        std::lock_guard<std::mutex> lock(windows_mutex_);
+        auto* state = GetWindow(window_id);
+        if (!state)
+          return;
+        state->click_passthrough_forward = forward;
+      }
+      UpdateForwardMonitors();
+    }
+  });
+}
+
+bool WKWebViewBackend::IsClickPassthroughForward(uint32_t window_id) {
+  __block bool result = false;
+  dispatch_sync(dispatch_get_main_queue(), ^{
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    auto* state = GetWindow(window_id);
+    if (state) {
+      result = state->click_passthrough_forward;
+    }
+  });
+  return result;
+}
+
+uint32_t WKWebViewBackend::ForwardTargetAt(NSPoint screen_point,
+                                           NSWindow** out_win) {
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  // orderedWindows is front-to-back, so overlapping forwarding windows
+  // resolve to the one visually on top.
+  for (NSWindow* win in [NSApp orderedWindows]) {
+    uint32_t wid = LaufeyIdForNSWindow(win);
+    if (wid == 0)
+      continue;
+    auto it = windows_.find(wid);
+    if (it == windows_.end())
+      continue;
+    // Forwarding only reports events the OS routed elsewhere *because of
+    // passthrough*; without ignoresMouseEvents an event over this frame that
+    // reached another app was simply over an occluding window.
+    if (!it->second.click_passthrough_forward || ![win ignoresMouseEvents] ||
+        ![win isVisible])
+      continue;
+    if (!NSPointInRect(screen_point, [win frame]))
+      continue;
+    if (out_win)
+      *out_win = win;
+    return wid;
+  }
+  return 0;
+}
+
+void WKWebViewBackend::UpdateForwardMonitors() {
+  bool any_forwarding = false;
+  {
+    std::lock_guard<std::mutex> lock(windows_mutex_);
+    for (auto& [id, state] : windows_) {
+      if (state.click_passthrough_forward) {
+        any_forwarding = true;
+        break;
+      }
+    }
+  }
+
+  if (!any_forwarding) {
+    if (forward_mouse_monitor_) {
+      [NSEvent removeMonitor:forward_mouse_monitor_];
+      forward_mouse_monitor_ = nil;
+    }
+    if (forward_mouse_move_monitor_) {
+      [NSEvent removeMonitor:forward_mouse_move_monitor_];
+      forward_mouse_move_monitor_ = nil;
+    }
+    if (forward_scroll_monitor_) {
+      [NSEvent removeMonitor:forward_scroll_monitor_];
+      forward_scroll_monitor_ = nil;
+    }
+    return;
+  }
+  if (forward_mouse_monitor_)
+    return;
+
+  // Global monitors observe events delivered to OTHER applications — exactly
+  // what a passthrough window's events become. (They never fire for events
+  // this app receives itself, so there is no double dispatch with the local
+  // monitors above.) A global monitor event carries no NSWindow, so
+  // locationInWindow is already in screen coordinates.
+  forward_mouse_monitor_ = [NSEvent
+      addGlobalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown |
+                                             NSEventMaskLeftMouseUp |
+                                             NSEventMaskRightMouseDown |
+                                             NSEventMaskRightMouseUp |
+                                             NSEventMaskOtherMouseDown |
+                                             NSEventMaskOtherMouseUp)
+                                    handler:^(NSEvent* event) {
+                                      NSPoint screen_point =
+                                          [event window]
+                                              ? [[event window]
+                                                    convertPointToScreen:
+                                                        [event
+                                                            locationInWindow]]
+                                              : [event locationInWindow];
+                                      NSWindow* win = nil;
+                                      uint32_t wid =
+                                          ForwardTargetAt(screen_point, &win);
+                                      if (wid == 0)
+                                        return;
+
+                                      int state;
+                                      switch ([event type]) {
+                                        case NSEventTypeLeftMouseDown:
+                                        case NSEventTypeRightMouseDown:
+                                        case NSEventTypeOtherMouseDown:
+                                          state = LAUFEY_MOUSE_PRESSED;
+                                          break;
+                                        default:
+                                          state = LAUFEY_MOUSE_RELEASED;
+                                          break;
+                                      }
+                                      int button = NSButtonToLaufey(
+                                          [event buttonNumber]);
+                                      uint32_t modifiers =
+                                          NSModifierFlagsToLaufey(
+                                              [event modifierFlags]);
+                                      int32_t click_count =
+                                          (int32_t)[event clickCount];
+
+                                      NSPoint local = [win
+                                          convertPointFromScreen:screen_point];
+                                      double x = local.x;
+                                      double y =
+                                          [win contentLayoutRect].size.height -
+                                          local.y;
+
+                                      RuntimeLoader::GetInstance()
+                                          ->DispatchMouseClickEvent(
+                                              wid, state, button, x, y,
+                                              modifiers, click_count);
+                                    }];
+
+  forward_mouse_move_monitor_ = [NSEvent
+      addGlobalMonitorForEventsMatchingMask:(NSEventMaskMouseMoved |
+                                             NSEventMaskLeftMouseDragged |
+                                             NSEventMaskRightMouseDragged |
+                                             NSEventMaskOtherMouseDragged)
+                                    handler:^(NSEvent* event) {
+                                      NSPoint screen_point =
+                                          [event window]
+                                              ? [[event window]
+                                                    convertPointToScreen:
+                                                        [event
+                                                            locationInWindow]]
+                                              : [event locationInWindow];
+                                      NSWindow* win = nil;
+                                      uint32_t wid =
+                                          ForwardTargetAt(screen_point, &win);
+                                      if (wid == 0)
+                                        return;
+
+                                      uint32_t modifiers =
+                                          NSModifierFlagsToLaufey(
+                                              [event modifierFlags]);
+                                      NSPoint local = [win
+                                          convertPointFromScreen:screen_point];
+                                      double x = local.x;
+                                      double y =
+                                          [win contentLayoutRect].size.height -
+                                          local.y;
+
+                                      RuntimeLoader::GetInstance()
+                                          ->DispatchMouseMoveEvent(wid, x, y,
+                                                                   modifiers);
+                                    }];
+
+  forward_scroll_monitor_ = [NSEvent
+      addGlobalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
+                                    handler:^(NSEvent* event) {
+                                      NSPoint screen_point =
+                                          [event window]
+                                              ? [[event window]
+                                                    convertPointToScreen:
+                                                        [event
+                                                            locationInWindow]]
+                                              : [event locationInWindow];
+                                      NSWindow* win = nil;
+                                      uint32_t wid =
+                                          ForwardTargetAt(screen_point, &win);
+                                      if (wid == 0)
+                                        return;
+
+                                      double delta_x = [event scrollingDeltaX];
+                                      double delta_y = [event scrollingDeltaY];
+                                      uint32_t modifiers =
+                                          NSModifierFlagsToLaufey(
+                                              [event modifierFlags]);
+                                      int32_t delta_mode =
+                                          [event hasPreciseScrollingDeltas]
+                                              ? LAUFEY_WHEEL_DELTA_PIXEL
+                                              : LAUFEY_WHEEL_DELTA_LINE;
+
+                                      NSPoint local = [win
+                                          convertPointFromScreen:screen_point];
+                                      double x = local.x;
+                                      double y =
+                                          [win contentLayoutRect].size.height -
+                                          local.y;
+
+                                      RuntimeLoader::GetInstance()
+                                          ->DispatchWheelEvent(
+                                              wid, delta_x, delta_y, x, y,
+                                              modifiers, delta_mode);
+                                    }];
 }
 
 bool WKWebViewBackend::IsVisible(uint32_t window_id) {
