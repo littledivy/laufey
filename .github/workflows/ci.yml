@@ -169,10 +169,10 @@ jobs:
 
       # Per-backend deps mirror the proven build-{winit,webview,cef} jobs, plus
       # the runtime libs the *run* step needs (xvfb, dbus, libxkbcommon-x11 for
-      # winit). Note: the backend-common (cef/webview) tray needs no
-      # appindicator dev package — installing one makes cmake define
-      # LAUFEY_HAVE_APPINDICATOR while tray_linux.cc includes the non-ayatana
-      # header, breaking the build; without it the tray compiles as a stub (N/A).
+      # winit). The backend-common (cef/webview) tray dlopens the appindicator
+      # library at runtime — no dev package is needed to build; the cef leg
+      # installs the Ayatana *runtime* lib so the real (non-stub) tray path is
+      # exercised and gated via LAUFEY_E2E_REQUIRE_TRAY (issue #63).
       - name: Install dependencies (Linux, winit)
         if: runner.os == 'Linux' && matrix.backend == 'winit'
         run: |
@@ -197,7 +197,7 @@ jobs:
             libatk1.0-dev libatk-bridge2.0-dev libcups2-dev libdrm-dev libgtk-3-dev \
             libgbm-dev libasound2-dev libpango1.0-dev libcairo2-dev libxcomposite-dev \
             libxdamage-dev libxrandr-dev libxkbcommon-dev libdbus-1-dev libxext-dev \
-            libxfixes-dev
+            libxfixes-dev libayatana-appindicator3-1
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -237,13 +237,17 @@ jobs:
 
       - name: Layer 0 — readback / events / clipboard / menu+tray clicks
         shell: bash
+        env:
+          # On the cef/linux leg the Ayatana runtime lib is installed above, so
+          # a tray id of 0 means the dlopen path regressed to a stub — fail
+          # instead of reporting N/A (issue #63).
+          LAUFEY_E2E_REQUIRE_TRAY: ${{ (runner.os == 'Linux' && matrix.backend == 'cef') && '1' || '' }}
         run: scripts/native-e2e-run.sh ${{ matrix.backend }}
 
       # Layer 1 (Linux D-Bus StatusNotifier/dbusmenu observer) is built above
-      # (compile-checked on real Linux) but not run here: the only tray impl
-      # that registers an SNI is the winit backend's tray-icon crate, and
-      # winit/linux is excluded above pending its GTK-menu fix. Re-enable the
-      # driver run once a tray-capable Linux leg is in the matrix.
+      # (compile-checked on real Linux) but not run here yet: the cef leg now
+      # creates a real appindicator tray (runtime lib installed above), so
+      # running the driver there is the next step once it's been proven green.
 
   build-webview:
     name: webview / ${{ matrix.target }}

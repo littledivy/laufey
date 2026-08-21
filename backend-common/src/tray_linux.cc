@@ -5,9 +5,16 @@
 // these from any thread. tray_id is allocated synchronously so the
 // caller gets a useful return value immediately.
 //
-// When libappindicator is not available (no LAUFEY_HAVE_APPINDICATOR
-// define), CreateTrayIconLinux returns 0 and the other functions no-op.
+// The appindicator library is dlopen()ed at runtime — Ayatana first,
+// then the legacy libappindicator — instead of being linked at build
+// time. Release artifacts must work both on distros that ship only the
+// Ayatana fork and on ones with the legacy library, and must still
+// start on systems with neither; the two flavors are ABI-compatible for
+// the handful of symbols used here (the fork kept names and
+// signatures). When no library can be loaded, CreateTrayIconLinux
+// returns 0 and the other functions no-op.
 
+#include <dlfcn.h>
 #include <gtk/gtk.h>
 
 #include "laufey_backend_common.h"
@@ -20,17 +27,66 @@
 #include <string>
 #include <vector>
 
-#ifdef LAUFEY_HAVE_APPINDICATOR
-extern "C" {
-#include <libappindicator/app-indicator.h>
-}
-#endif
-
 namespace laufey_common {
 
-#ifdef LAUFEY_HAVE_APPINDICATOR
-
 namespace {
+
+// Minimal appindicator ABI. AppIndicator is opaque; the enum values are
+// stable across both flavors (APP_INDICATOR_CATEGORY_APPLICATION_STATUS,
+// APP_INDICATOR_STATUS_{PASSIVE,ACTIVE}).
+typedef struct _AppIndicator AppIndicator;
+
+constexpr int kAppIndicatorCategoryApplicationStatus = 0;
+constexpr int kAppIndicatorStatusPassive = 0;
+constexpr int kAppIndicatorStatusActive = 1;
+
+struct AppIndicatorApi {
+  AppIndicator* (*app_indicator_new)(const gchar* id, const gchar* icon_name,
+                                     int category);
+  void (*set_status)(AppIndicator* self, int status);
+  void (*set_menu)(AppIndicator* self, GtkMenu* menu);
+  void (*set_icon_full)(AppIndicator* self, const gchar* icon_name,
+                        const gchar* icon_desc);
+};
+
+// Loads the appindicator library once; nullptr if unavailable. Safe to
+// call from any thread (dlopen is thread-safe and the initializer is a
+// C++11 magic static).
+const AppIndicatorApi* GetAppIndicatorApi() {
+  static AppIndicatorApi api;
+  static const bool loaded = [] {
+    static const char* const kSonames[] = {
+        "libayatana-appindicator3.so.1",
+        "libappindicator3.so.1",
+    };
+    void* lib = nullptr;
+    for (const char* soname : kSonames) {
+      // RTLD_GLOBAL: the library registers GObject types whose symbols
+      // its dbusmenu helpers may resolve across module boundaries.
+      lib = dlopen(soname, RTLD_NOW | RTLD_GLOBAL);
+      if (lib) break;
+    }
+    if (!lib) {
+      // Say why the tray id will be 0 — a silent stub cost real debugging
+      // time downstream (issue #63).
+      g_warning(
+          "laufey: tray icons unavailable: could not load "
+          "libayatana-appindicator3.so.1 or libappindicator3.so.1");
+      return false;
+    }
+    api.app_indicator_new = reinterpret_cast<decltype(api.app_indicator_new)>(
+        dlsym(lib, "app_indicator_new"));
+    api.set_status = reinterpret_cast<decltype(api.set_status)>(
+        dlsym(lib, "app_indicator_set_status"));
+    api.set_menu = reinterpret_cast<decltype(api.set_menu)>(
+        dlsym(lib, "app_indicator_set_menu"));
+    api.set_icon_full = reinterpret_cast<decltype(api.set_icon_full)>(
+        dlsym(lib, "app_indicator_set_icon_full"));
+    return api.app_indicator_new && api.set_status && api.set_menu &&
+           api.set_icon_full;
+  }();
+  return loaded ? &api : nullptr;
+}
 
 struct LinuxTrayEntry {
   AppIndicator* indicator;
@@ -68,17 +124,19 @@ void OnGtkMain(Fn&& fn) {
 }  // namespace
 
 uint32_t CreateTrayIconLinux() {
+  const AppIndicatorApi* api = GetAppIndicatorApi();
+  if (!api) return 0;
   uint32_t tray_id =
       g_next_tray_id_linux.fetch_add(1, std::memory_order_relaxed);
-  OnGtkMain([tray_id] {
+  OnGtkMain([api, tray_id] {
     std::string idstr = "laufey-tray-" + std::to_string(tray_id);
-    AppIndicator* ind = app_indicator_new(
-        idstr.c_str(), "", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+    AppIndicator* ind = api->app_indicator_new(
+        idstr.c_str(), "", kAppIndicatorCategoryApplicationStatus);
     if (!ind) return;
-    app_indicator_set_status(ind, APP_INDICATOR_STATUS_ACTIVE);
+    api->set_status(ind, kAppIndicatorStatusActive);
     GtkWidget* placeholder = gtk_menu_new();
     gtk_widget_show_all(placeholder);
-    app_indicator_set_menu(ind, GTK_MENU(placeholder));
+    api->set_menu(ind, GTK_MENU(placeholder));
 
     LinuxTrayEntry entry{};
     entry.indicator = ind;
@@ -90,13 +148,14 @@ uint32_t CreateTrayIconLinux() {
 }
 
 void DestroyTrayIconLinux(uint32_t tray_id) {
-  OnGtkMain([tray_id] {
+  const AppIndicatorApi* api = GetAppIndicatorApi();
+  if (!api) return;
+  OnGtkMain([api, tray_id] {
     std::lock_guard<std::mutex> lock(LinuxTrayMutex());
     auto it = LinuxTrayMap().find(tray_id);
     if (it == LinuxTrayMap().end()) return;
     if (it->second.indicator) {
-      app_indicator_set_status(it->second.indicator,
-                               APP_INDICATOR_STATUS_PASSIVE);
+      api->set_status(it->second.indicator, kAppIndicatorStatusPassive);
       g_object_unref(it->second.indicator);
     }
     LinuxTrayMap().erase(it);
@@ -104,13 +163,14 @@ void DestroyTrayIconLinux(uint32_t tray_id) {
 }
 
 void SetTrayIconLinux(uint32_t tray_id, const void* png_bytes, size_t len) {
-  if (!png_bytes || len == 0) return;
+  const AppIndicatorApi* api = GetAppIndicatorApi();
+  if (!api || !png_bytes || len == 0) return;
   // AppIndicator on most DEs reads icons by name from the icon theme,
   // not from raw bytes. Write the bytes to a per-tray temp file and
   // point the indicator at its full path.
   std::vector<uint8_t> bytes(static_cast<const uint8_t*>(png_bytes),
                               static_cast<const uint8_t*>(png_bytes) + len);
-  OnGtkMain([tray_id, bytes = std::move(bytes)]() mutable {
+  OnGtkMain([api, tray_id, bytes = std::move(bytes)]() mutable {
     std::string path = "/tmp/laufey-tray-" + std::to_string(tray_id) + ".png";
     FILE* f = fopen(path.c_str(), "wb");
     if (!f) return;
@@ -119,7 +179,7 @@ void SetTrayIconLinux(uint32_t tray_id, const void* png_bytes, size_t len) {
     std::lock_guard<std::mutex> lock(LinuxTrayMutex());
     auto it = LinuxTrayMap().find(tray_id);
     if (it == LinuxTrayMap().end() || !it->second.indicator) return;
-    app_indicator_set_icon_full(it->second.indicator, path.c_str(), "");
+    api->set_icon_full(it->second.indicator, path.c_str(), "");
   });
 }
 
@@ -138,7 +198,12 @@ void SetTrayTooltipLinux(uint32_t /*tray_id*/,
 void SetTrayMenuLinux(uint32_t tray_id, laufey_value_t* menu_template,
                        const laufey_backend_api_t* api,
                        laufey_menu_click_fn on_click, void* on_click_data) {
-  OnGtkMain([tray_id, menu_template, api, on_click, on_click_data] {
+  const AppIndicatorApi* ind_api = GetAppIndicatorApi();
+  if (!ind_api) {
+    if (menu_template && api) api->value_free(menu_template);
+    return;
+  }
+  OnGtkMain([ind_api, tray_id, menu_template, api, on_click, on_click_data] {
     // tray_id passed as window_id so the shared click dispatcher routes
     // back through on_click with the right tray identifier.
     GtkWidget* new_menu = nullptr;
@@ -156,12 +221,12 @@ void SetTrayMenuLinux(uint32_t tray_id, laufey_value_t* menu_template,
       return;
     }
     if (new_menu) {
-      app_indicator_set_menu(it->second.indicator, GTK_MENU(new_menu));
+      ind_api->set_menu(it->second.indicator, GTK_MENU(new_menu));
       it->second.menu = new_menu;
     } else {
       GtkWidget* empty = gtk_menu_new();
       gtk_widget_show_all(empty);
-      app_indicator_set_menu(it->second.indicator, GTK_MENU(empty));
+      ind_api->set_menu(it->second.indicator, GTK_MENU(empty));
       it->second.menu = empty;
     }
     it->second.menu_click_fn = on_click;
@@ -180,21 +245,5 @@ void SetTrayDoubleClickHandlerLinux(uint32_t /*tray_id*/,
                                       void* /*user_data*/) {
   // Same: no double-click event from AppIndicator.
 }
-
-#else  // !LAUFEY_HAVE_APPINDICATOR
-
-uint32_t CreateTrayIconLinux() { return 0; }
-void DestroyTrayIconLinux(uint32_t) {}
-void SetTrayIconLinux(uint32_t, const void*, size_t) {}
-void SetTrayIconDarkLinux(uint32_t, const void*, size_t) {}
-void SetTrayTooltipLinux(uint32_t, const char*) {}
-void SetTrayMenuLinux(uint32_t, laufey_value_t* tmpl, const laufey_backend_api_t* api,
-                       laufey_menu_click_fn, void*) {
-  if (tmpl && api) api->value_free(tmpl);
-}
-void SetTrayClickHandlerLinux(uint32_t, laufey_tray_click_fn, void*) {}
-void SetTrayDoubleClickHandlerLinux(uint32_t, laufey_tray_click_fn, void*) {}
-
-#endif  // LAUFEY_HAVE_APPINDICATOR
 
 }  // namespace laufey_common

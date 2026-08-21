@@ -102,25 +102,19 @@ elseif(APPLE)
 elseif(UNIX)
   find_package(PkgConfig REQUIRED)
   pkg_check_modules(LAUFEY_COMMON_GTK REQUIRED gtk+-3.0)
-  pkg_check_modules(LAUFEY_COMMON_APPINDICATOR appindicator3-0.1)
-  if(NOT LAUFEY_COMMON_APPINDICATOR_FOUND)
-    pkg_check_modules(LAUFEY_COMMON_APPINDICATOR ayatana-appindicator3-0.1)
-  endif()
   target_include_directories(laufey_backend_common PUBLIC
     ${LAUFEY_COMMON_GTK_INCLUDE_DIRS}
-    ${LAUFEY_COMMON_APPINDICATOR_INCLUDE_DIRS}
   )
+  # No appindicator build dependency: tray_linux.cc dlopen()s the
+  # Ayatana or legacy appindicator library at runtime. CMAKE_DL_LIBS
+  # covers dlopen/dlsym on toolchains that still need -ldl.
   target_link_libraries(laufey_backend_common PUBLIC
     ${LAUFEY_COMMON_GTK_LIBRARIES}
-    ${LAUFEY_COMMON_APPINDICATOR_LIBRARIES}
+    ${CMAKE_DL_LIBS}
   )
   target_compile_options(laufey_backend_common PUBLIC
     ${LAUFEY_COMMON_GTK_CFLAGS_OTHER}
-    ${LAUFEY_COMMON_APPINDICATOR_CFLAGS_OTHER}
   )
-  if(LAUFEY_COMMON_APPINDICATOR_FOUND)
-    target_compile_definitions(laufey_backend_common PUBLIC LAUFEY_HAVE_APPINDICATOR=1)
-  endif()
 endif()
 
 set_target_properties(laufey_backend_common PROPERTIES

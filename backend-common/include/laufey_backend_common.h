@@ -396,13 +396,14 @@ void* BuildGtkMenuFromValue(laufey_value_t* val,
 #endif
 
 // ---------------------------------------------------------------------------
-// Tray / status-bar icon (Linux, libappindicator)
+// Tray / status-bar icon (Linux, appindicator)
 // ---------------------------------------------------------------------------
 //
 // All functions must be called on the GTK main thread; backends with
 // off-main-thread callers should marshal first (CEF uses CefPostTask).
-// When libappindicator is not available (LAUFEY_HAVE_APPINDICATOR not
-// defined), CreateTrayIconLinux returns 0 and all other calls no-op.
+// The Ayatana or legacy appindicator library is dlopen()ed at runtime;
+// when neither is present on the system, CreateTrayIconLinux returns 0
+// and all other calls no-op.
 //
 // AppIndicator has no left-click event — a click anywhere pops the
 // indicator's menu — so SetTrayClickHandlerLinux and
