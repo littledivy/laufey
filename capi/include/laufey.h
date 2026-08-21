@@ -479,10 +479,10 @@ struct laufey_backend_api {
 
   // Application menu. menu_template is a laufey_value_t list of menu items.
   // Each item is a dict with: label, submenu (list), role, type, id,
-  // accelerator. When a custom item (with "id") is clicked, on_click is called
-  // with the id. On macOS the menu is applied to the global menu bar and
-  // swapped on window focus. On Windows/Linux the menu is attached to the
-  // specific window.
+  // accelerator, checked (bool), icon (binary, PNG bytes), tooltip. When a
+  // custom item (with "id") is clicked, on_click is called with the id. On
+  // macOS the menu is applied to the global menu bar and swapped on window
+  // focus. On Windows/Linux the menu is attached to the specific window.
   void (*set_application_menu)(void* backend_data, uint32_t window_id,
                                laufey_value_t* menu_template,
                                laufey_menu_click_fn on_click,

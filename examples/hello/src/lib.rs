@@ -217,7 +217,7 @@ fn hello_main() {
             accelerator: None,
             enabled: true,
             checked: false,
-            icon: Some("examples/hello/icons/bell.png".into()),
+            icon: Some(include_bytes!("../icons/bell.png").to_vec()),
             tooltip: Some("Play a sound".into()),
           },
         ],

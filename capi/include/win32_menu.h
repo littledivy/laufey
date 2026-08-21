@@ -123,20 +123,14 @@ inline void FreeVal(const laufey_backend_api_t* api, laufey_value_t* v) {
     api->value_free(v);
 }
 
-// Decode a PNG file into a 32bpp premultiplied-alpha top-down DIB section
+// Decode PNG bytes into a 32bpp premultiplied-alpha top-down DIB section
 // suitable for a menu item bitmap (hbmpItem). Scaled to the small-icon metric
 // so it lines up with the menu gutter. Returns nullptr on any failure; the
 // caller owns the returned HBITMAP and must DeleteObject it. Unlike macOS,
 // the image is rendered as-is — there is no template tinting on selection.
-inline HBITMAP LoadMenuIconBitmap(const std::string& path) {
-  if (path.empty())
+inline HBITMAP LoadMenuIconBitmap(const void* bytes, size_t len) {
+  if (!bytes || len == 0)
     return nullptr;
-
-  int wlen = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
-  if (wlen <= 0)
-    return nullptr;
-  std::wstring wpath(static_cast<size_t>(wlen - 1), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &wpath[0], wlen);
 
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   IWICImagingFactory* factory = nullptr;
@@ -145,9 +139,14 @@ inline HBITMAP LoadMenuIconBitmap(const std::string& path) {
     return nullptr;
   }
 
+  IWICStream* stream = nullptr;
   IWICBitmapDecoder* decoder = nullptr;
-  factory->CreateDecoderFromFilename(wpath.c_str(), nullptr, GENERIC_READ,
+  if (SUCCEEDED(factory->CreateStream(&stream)) && stream &&
+      SUCCEEDED(stream->InitializeFromMemory((BYTE*)const_cast<void*>(bytes),
+                                             (DWORD)len))) {
+    factory->CreateDecoderFromStream(stream, nullptr,
                                      WICDecodeMetadataCacheOnLoad, &decoder);
+  }
   IWICBitmapFrameDecode* frame = nullptr;
   if (decoder)
     decoder->GetFrame(0, &frame);
@@ -201,6 +200,8 @@ inline HBITMAP LoadMenuIconBitmap(const std::string& path) {
     frame->Release();
   if (decoder)
     decoder->Release();
+  if (stream)
+    stream->Release();
   factory->Release();
   return hbmp;
 }
@@ -327,24 +328,24 @@ inline HMENU BuildMenuFromValue(laufey_value_t* val,
     }
     FreeVal(api, checkedVal);
 
-    // icon -> menu item bitmap (a PNG file path), loaded below after the item
+    // icon -> menu item bitmap (PNG bytes), decoded below after the item
     // exists so it can be attached by command id.
-    std::string iconPath;
+    std::vector<uint8_t> iconPng;
     laufey_value_t* iconVal = api->value_dict_get(itemVal, "icon");
-    if (iconVal && api->value_is_string(iconVal)) {
+    if (iconVal && api->value_is_binary(iconVal)) {
       size_t iconLen = 0;
-      char* iconStr = api->value_get_string(iconVal, &iconLen);
-      if (iconStr) {
-        iconPath = iconStr;
-        api->value_free_string(iconStr);
+      const void* iconBytes = api->value_get_binary(iconVal, &iconLen);
+      if (iconBytes && iconLen > 0) {
+        const uint8_t* p = static_cast<const uint8_t*>(iconBytes);
+        iconPng.assign(p, p + iconLen);
       }
     }
     FreeVal(api, iconVal);
 
     AppendMenuA(menu, flags, cmdId, label.c_str());
 
-    if (!iconPath.empty()) {
-      HBITMAP hbmp = LoadMenuIconBitmap(iconPath);
+    if (!iconPng.empty()) {
+      HBITMAP hbmp = LoadMenuIconBitmap(iconPng.data(), iconPng.size());
       if (hbmp) {
         MENUITEMINFOA mii = {};
         mii.cbSize = sizeof(mii);

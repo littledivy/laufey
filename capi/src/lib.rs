@@ -1664,11 +1664,12 @@ pub enum MenuItem {
     /// Checkmark next to the item (`NSMenuItem.state` / `MFS_CHECKED` /
     /// `GtkCheckMenuItem`). All platforms.
     checked: bool,
-    /// Item icon: a file path to a PNG image. macOS and Windows (Linux
-    /// unsupported — GtkMenuItem has no image slot). On macOS a monochrome
-    /// black+alpha PNG is rendered as a template so it tints to white on
-    /// selection; Windows renders the image as-is.
-    icon: Option<String>,
+    /// Item icon: PNG-encoded image bytes, matching the tray and
+    /// notification icon APIs. macOS and Windows (Linux unsupported —
+    /// GtkMenuItem has no image slot). On macOS a monochrome black+alpha
+    /// PNG is rendered as a template so it tints to white on selection;
+    /// Windows renders the image as-is.
+    icon: Option<Vec<u8>>,
     /// Tooltip shown on hover. macOS only (matches Electron's `toolTip`).
     tooltip: Option<String>,
   },
@@ -1707,7 +1708,7 @@ impl MenuItem {
           dict.insert("checked".to_string(), Value::Bool(true));
         }
         if let Some(icon) = icon {
-          dict.insert("icon".to_string(), Value::String(icon.clone()));
+          dict.insert("icon".to_string(), Value::Binary(icon.clone()));
         }
         if let Some(tooltip) = tooltip {
           dict.insert("tooltip".to_string(), Value::String(tooltip.clone()));
@@ -2862,7 +2863,7 @@ mod tests {
       accelerator: Some("CmdOrCtrl+O".into()),
       enabled: false,
       checked: true,
-      icon: Some("doc".into()),
+      icon: Some(vec![0x89, b'P', b'N', b'G']),
       tooltip: Some("Open a file".into()),
     };
     let v = item.to_value();
@@ -2885,10 +2886,12 @@ mod tests {
       dict_get(&v, "checked").and_then(|v| v.as_bool()),
       Some(true)
     );
-    assert_eq!(
-      dict_get(&v, "icon").and_then(|v| v.as_string()),
-      Some("doc")
-    );
+    // Icon comes through as binary PNG bytes, matching the tray and
+    // notification icon wire format.
+    match dict_get(&v, "icon") {
+      Some(Value::Binary(b)) => assert_eq!(b, &vec![0x89, b'P', b'N', b'G']),
+      _ => panic!("icon must be Value::Binary"),
+    }
     assert_eq!(
       dict_get(&v, "tooltip").and_then(|v| v.as_string()),
       Some("Open a file")
