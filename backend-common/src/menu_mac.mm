@@ -239,21 +239,26 @@ NSMenu* BuildNSMenuFromValue(laufey_value_t* val, const laufey_backend_api_t* ap
       [nsItem setToolTip:[NSString stringWithUTF8String:tooltipStr.c_str()]];
     }
 
-    // icon -> NSMenuItem.image, loaded from a file path. Marked as a template
+    // icon -> NSMenuItem.image, decoded from PNG bytes. Marked as a template
     // image so a monochrome (black + alpha) icon tints correctly: black in the
     // normal state, white when the item is highlighted/selected. (A full-color
     // icon is flattened to its alpha mask under this default, matching the
     // tray-icon behavior.)
-    std::string iconStr = DictString(api, itemVal, "icon");
-    if (!iconStr.empty()) {
-      NSImage* iconImg = [[NSImage alloc]
-          initWithContentsOfFile:[NSString stringWithUTF8String:iconStr.c_str()]];
-      if (iconImg) {
-        [iconImg setSize:NSMakeSize(16, 16)];
-        [iconImg setTemplate:YES];
-        [nsItem setImage:iconImg];
+    laufey_value_t* iconVal = api->value_dict_get(itemVal, "icon");
+    if (iconVal && api->value_is_binary(iconVal)) {
+      size_t iconLen = 0;
+      const void* iconBytes = api->value_get_binary(iconVal, &iconLen);
+      if (iconBytes && iconLen > 0) {
+        NSData* iconData = [NSData dataWithBytes:iconBytes length:iconLen];
+        NSImage* iconImg = [[NSImage alloc] initWithData:iconData];
+        if (iconImg) {
+          [iconImg setSize:NSMakeSize(16, 16)];
+          [iconImg setTemplate:YES];
+          [nsItem setImage:iconImg];
+        }
       }
     }
+    if (iconVal) api->value_free(iconVal);
 
     [menu addItem:nsItem];
   }
