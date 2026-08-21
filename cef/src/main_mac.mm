@@ -40,12 +40,38 @@ void LaufeyOpenExternalURL(const std::string& url) {
 }
 
 - (void)sendEvent:(NSEvent*)event {
-  // Swallow Cmd+Q so Chromium's "Hold ⌘Q to Quit" panel never fires and no
-  // default termination happens. Embedders receive the key event through the
-  // normal keyboard pipeline and decide what (if anything) to do.
+  // Cmd+Q must not reach Chromium's dispatch: it would show the "Hold ⌘Q to
+  // Quit" panel and run a default termination. But the keystroke still has to
+  // be observable by the embedder, and both observation paths hang off this
+  // dispatch: menu key equivalents are matched from sendEvent:, and the
+  // keyboard pipeline (OnKeyEvent) is fed by CEF from the browser view the
+  // event would have reached. So instead of dropping the event, first let the
+  // main menu match it — a "quit" role item or a custom Cmd+Q accelerator
+  // fires exactly as if clicked — and otherwise forward it straight to the
+  // embedder's keyboard handler before swallowing it.
   if (event.type == NSEventTypeKeyDown &&
       (event.modifierFlags & NSEventModifierFlagCommand) &&
       [event.charactersIgnoringModifiers isEqualToString:@"q"]) {
+    CefScopedSendingEvent sendingEventScoper;
+    if ([[NSApp mainMenu] performKeyEquivalent:event]) {
+      return;
+    }
+    uint32_t wid = RuntimeLoader::GetInstance()->GetLaufeyIdForNSWindow(
+        (__bridge void*)event.window);
+    if (wid != 0) {
+      uint32_t modifiers = LAUFEY_MOD_META;
+      if (event.modifierFlags & NSEventModifierFlagShift)
+        modifiers |= LAUFEY_MOD_SHIFT;
+      if (event.modifierFlags & NSEventModifierFlagControl)
+        modifiers |= LAUFEY_MOD_CONTROL;
+      if (event.modifierFlags & NSEventModifierFlagOption)
+        modifiers |= LAUFEY_MOD_ALT;
+      std::string key = laufey_common::NSEventKeyToKey((__bridge void*)event);
+      std::string code = laufey_common::NSEventKeyToCode(event.keyCode);
+      RuntimeLoader::GetInstance()->DispatchKeyboardEvent(
+          wid, LAUFEY_KEY_PRESSED, key.c_str(), code.c_str(), modifiers,
+          event.isARepeat);
+    }
     return;
   }
   CefScopedSendingEvent sendingEventScoper;
