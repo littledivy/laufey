@@ -198,6 +198,17 @@ elseif(OS_WINDOWS)
 
   add_executable(${CEF_TARGET} WIN32 ${LAUFEY_SRCS_COMMON} ${LAUFEY_SRCS_WIN})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
+
+  # Embed the application manifest (win/laufey.exe.manifest merged with
+  # win/compatibility.manifest, same layout as cefclient). CEF's toolchain
+  # links with /MANIFEST:NO, so without this post-build mt.exe step the exe
+  # ships with no manifest at all. The Win10 supportedOS GUID in the
+  # compatibility section is load-bearing: GetVersionEx caps the reported OS
+  # version at Windows 8 for unmanifested exes, and Chromium then treats the
+  # OS as unsupported and disables all GPU acceleration (WebGL included) —
+  # see denoland/deno#36523.
+  ADD_WINDOWS_MANIFEST("${CMAKE_CURRENT_SOURCE_DIR}/win" "${CEF_TARGET}" "exe")
+
   target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_LIB_RELEASE} ${CEF_STANDARD_LIBS} laufey_backend_common)
   target_include_directories(${CEF_TARGET} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${LAUFEY_INCLUDE_DIR}")
 
