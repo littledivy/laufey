@@ -1,8 +1,8 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
-// Linux-specific backend implementations: tray (via libappindicator) and
-// context menu (via GtkMenu popup). Neither needs a GtkWindow parent, so
-// both work alongside CEF Views' raw X11 windows.
+// Linux-specific backend implementations: tray (via appindicator, dlopened
+// in backend-common) and context menu (via GtkMenu popup). Neither needs a
+// GtkWindow parent, so both work alongside CEF Views' raw X11 windows.
 //
 // set_application_menu (an in-window menu bar) is NOT implemented here: it
 // requires packing a GtkMenuBar into a GtkBox above the browser widget,
@@ -26,12 +26,6 @@
 #include "runtime_loader.h"
 #include "laufey.h"
 #include "laufey_backend_common.h"
-
-#ifdef LAUFEY_HAVE_APPINDICATOR
-extern "C" {
-#include <libappindicator/app-indicator.h>
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // GTK lazy init. CEF's Chromium process initializes GTK internally for its
@@ -87,7 +81,7 @@ void Backend_ShowContextMenu_Linux(void* data, uint32_t window_id, int /*x*/,
 }
 
 // ---------------------------------------------------------------------------
-// Tray / status-bar icon (libappindicator)
+// Tray / status-bar icon (appindicator)
 // ---------------------------------------------------------------------------
 //
 // Trampolines over backend-common/src/tray_linux.cc, which handles its

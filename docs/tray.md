@@ -30,3 +30,13 @@ the desktop theme and does not deliver click or double-click events, and the
 StatusNotifierItem specification has no tooltip, so click handlers, tooltips,
 and dark-mode swapping have no effect there. The CEF backend also uses
 AppIndicator on Linux, so a tray icon does not require a browser window.
+
+On Linux, the CEF and WebView backends load the appindicator library at runtime
+— `libayatana-appindicator3.so.1` first, falling back to the legacy
+`libappindicator3.so.1`. If neither is installed, tray creation returns id `0`
+and all tray calls are no-ops; the rest of the application is unaffected. If you
+package an application that uses a tray icon as a `.deb`/`.rpm`, declare a
+dependency on the distro's Ayatana runtime package (Debian/Ubuntu:
+`libayatana-appindicator3-1`; Fedora: `libayatana-appindicator-gtk3`). The
+desktop must also run a StatusNotifier host for the icon to show (GNOME needs
+the AppIndicator extension; KDE, Cinnamon, and most others ship one).

@@ -336,9 +336,23 @@ fn e2e_main() {
     // Tray: id == 0 means the backend can't create tray icons here. Keep the
     // binding alive past this block (it destroys the native icon on drop) so
     // the Layer-1 D-Bus observer can introspect it during the hold below.
+    //
+    // On Linux the cef/webview tray is dlopen-gated on an appindicator
+    // runtime library, so id 0 normally reads as N/A. A CI leg that installs
+    // the library sets LAUFEY_E2E_REQUIRE_TRAY so a stub tray FAILS instead
+    // of passing silently (issue #63).
+    let require_tray =
+      std::env::var("LAUFEY_E2E_REQUIRE_TRAY").is_ok_and(|v| !v.is_empty());
     let tray = TrayIcon::new();
     if tray.id() == 0 {
-      na("tray (backend has no tray support on this platform)");
+      if require_tray {
+        check(
+          "create_tray_icon returned nonzero id (LAUFEY_E2E_REQUIRE_TRAY)",
+          false,
+        );
+      } else {
+        na("tray (backend has no tray support on this platform)");
+      }
     } else {
       check("create_tray_icon returned nonzero id", true);
       tray.set_icon(TINY_PNG);

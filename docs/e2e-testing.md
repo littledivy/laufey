@@ -235,7 +235,8 @@ On Linux, both native-chrome implementations expose the tray over the
 freedesktop **StatusNotifierItem** spec and the menu over
 **`com.canonical.dbusmenu`**:
 
-- CEF/WebView: libayatana-appindicator (`backend-common/src/tray_linux.cc`).
+- CEF/WebView: appindicator, dlopened at runtime — Ayatana or legacy
+  (`backend-common/src/tray_linux.cc`).
 - Winit: the `tray-icon` crate's internal StatusNotifier logic.
 
 So a **single D-Bus driver validates both**. The driver _is_ the desktop shell:
@@ -461,7 +462,7 @@ backends:
    launching the shared runtime under the right wrapper:
 
    ```
-   # Linux (covers cef/webview libappindicator AND winit tray-icon):
+   # Linux (covers cef/webview appindicator AND winit tray-icon):
    xvfb-run -a dbus-run-session -- sni-driver <backend-bin> --runtime libnative_e2e.so
    # macOS (self-AX + readback, in-process, no permission):
    <backend-bin> --runtime libnative_e2e.dylib
