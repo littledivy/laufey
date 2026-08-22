@@ -738,6 +738,20 @@ void Backend_SetDockReopenHandler_Mac(void* /*data*/,
   laufey_common::SetDockReopenHandlerMac(handler, user_data);
 }
 
+// --- Deep links / custom URL schemes (macOS) ---
+//
+// Storage and the cold-start buffer live in backend-common;
+// LaufeyAppDelegate's application:openURLs: (main_mac.mm) is what feeds them.
+
+void Backend_SetOpenUrlHandler_Mac(void* /*data*/, laufey_open_url_fn handler,
+                                   void* user_data) {
+  laufey_common::SetOpenUrlHandlerMac(handler, user_data);
+}
+
+bool Backend_TestTriggerOpenUrl_Mac(void* /*data*/, const char* url) {
+  return laufey_common::TestTriggerOpenUrlMac(url);
+}
+
 // --- Tray / status-bar icon (macOS) ---
 //
 // Thin trampolines over backend-common/src/tray_mac.mm.

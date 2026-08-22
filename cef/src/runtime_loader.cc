@@ -1097,6 +1097,10 @@ extern void Backend_SetDockVisible_Mac(void* data, bool visible);
 extern void Backend_SetDockReopenHandler_Mac(void* data,
                                              laufey_dock_reopen_fn handler,
                                              void* user_data);
+extern void Backend_SetOpenUrlHandler_Mac(void* data,
+                                          laufey_open_url_fn handler,
+                                          void* user_data);
+extern bool Backend_TestTriggerOpenUrl_Mac(void* data, const char* url);
 
 extern uint32_t Backend_CreateTrayIcon_Mac(void* data);
 extern void Backend_DestroyTrayIcon_Mac(void* data, uint32_t tray_id);
@@ -1883,6 +1887,12 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_dock_menu = Backend_SetDockMenu_Mac;
   backend_api_.set_dock_visible = Backend_SetDockVisible_Mac;
   backend_api_.set_dock_reopen_handler = Backend_SetDockReopenHandler_Mac;
+  // Deep links: macOS-only by design (see set_open_url_handler in laufey.h).
+  // Windows/Linux receive the URL as argv in a new process, which only the
+  // embedder can turn into "focus the running app", so the pointers stay
+  // NULL there and an embedder can detect the absence.
+  backend_api_.set_open_url_handler = Backend_SetOpenUrlHandler_Mac;
+  backend_api_.test_trigger_open_url = Backend_TestTriggerOpenUrl_Mac;
 #elif defined(_WIN32)
   backend_api_.bounce_dock = Backend_BounceDock_Win;
   backend_api_.set_dock_badge = Backend_SetDockBadge_TitlePrefix;

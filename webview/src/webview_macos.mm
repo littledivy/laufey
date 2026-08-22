@@ -125,6 +125,9 @@ class WKWebViewBackend : public LaufeyBackend {
   void SetDockReopenHandler(laufey_dock_reopen_fn handler,
                             void* user_data) override;
 
+  void SetOpenUrlHandler(laufey_open_url_fn handler, void* user_data) override;
+  bool TestTriggerOpenUrl(const char* url) override;
+
   uint32_t CreateTrayIcon() override;
   void DestroyTrayIcon(uint32_t tray_id) override;
   void SetTrayIcon(uint32_t tray_id, const void* png_bytes,
@@ -2072,6 +2075,20 @@ void WKWebViewBackend::SetDockVisible(bool visible) {
 void WKWebViewBackend::SetDockReopenHandler(laufey_dock_reopen_fn handler,
                                             void* user_data) {
   laufey_common::SetDockReopenHandlerMac(handler, user_data);
+}
+
+// --- Deep links / custom URL schemes (macOS) ---
+//
+// Storage and the cold-start buffer live in backend-common; AppDelegate's
+// application:openURLs: (main_mac.mm) is what feeds them.
+
+void WKWebViewBackend::SetOpenUrlHandler(laufey_open_url_fn handler,
+                                         void* user_data) {
+  laufey_common::SetOpenUrlHandlerMac(handler, user_data);
+}
+
+bool WKWebViewBackend::TestTriggerOpenUrl(const char* url) {
+  return laufey_common::TestTriggerOpenUrlMac(url);
 }
 
 // --- Tray / status-bar icon (macOS) ---

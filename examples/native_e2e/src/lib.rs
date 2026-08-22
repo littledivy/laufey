@@ -522,6 +522,56 @@ fn e2e_main() {
       );
     }
 
+    // ---- deep-link (open-url) round-trip -----------------------------------
+    // Capability-probed: the hook is NULL on every non-macOS backend, where
+    // the OS hands deep links to a new process as argv instead of to the
+    // running one (see set_open_url_handler in laufey.h).
+    //
+    // Covers both halves of the delivery contract. The first trigger runs
+    // *before* any handler is registered — the position every cold-start
+    // launch URL is in, since the runtime is still coming up when the OS
+    // routes it — so it must be buffered and replayed on registration, not
+    // dropped.
+    const COLD_URL: &str = "laufeytest://open/document/42";
+    const LIVE_URL: &str = "laufeytest://open/document/43?q=1";
+
+    let seen_urls: Arc<std::sync::Mutex<Vec<String>>> =
+      Arc::new(std::sync::Mutex::new(Vec::new()));
+    let buffered_not_delivered = !laufey::test_trigger_open_url(COLD_URL);
+    {
+      let seen = seen_urls.clone();
+      laufey::on_open_url(move |url| {
+        seen.lock().unwrap().push(url.to_string());
+      });
+    }
+    // Both the flush above and this trigger dispatch synchronously on this
+    // thread, so the assertions below need no waiting.
+    let delivered_live = laufey::test_trigger_open_url(LIVE_URL);
+    let urls = seen_urls.lock().unwrap().clone();
+
+    if !delivered_live && urls.is_empty() {
+      // A registered handler that receives nothing means the hook is absent
+      // (non-macOS backend), not that dispatch is broken.
+      na("deep links (test_trigger_open_url unavailable on this backend)");
+    } else {
+      check(
+        "URL arriving before any handler is buffered, not delivered",
+        buffered_not_delivered,
+      );
+      check(
+        "buffered cold-start URL is replayed on registration",
+        urls.first().map(String::as_str) == Some(COLD_URL),
+      );
+      check(
+        "URL arriving with a handler registered is delivered live",
+        delivered_live && urls.iter().any(|u| u == LIVE_URL),
+      );
+      check(
+        "no URL is delivered twice or lost",
+        urls.len() == 2,
+      );
+    }
+
     // ---- Layer-1 hold ----------------------------------------------------
     // When driven by the D-Bus observer (native_e2e_driver), stay alive with
     // the tray + menu registered so it can read the StatusNotifierItem, walk

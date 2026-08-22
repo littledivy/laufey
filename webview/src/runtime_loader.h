@@ -513,6 +513,16 @@ class LaufeyBackend {
   virtual void SetDockReopenHandler(laufey_dock_reopen_fn /*handler*/,
                                     void* /*user_data*/) {}
 
+  // --- Deep links / custom URL schemes ---
+  // macOS only (AppKit's application:openURLs:); Windows/Linux get the URL as
+  // argv in a brand-new process, which is the embedder's to handle. The
+  // default no-op leaves the C ABI pointer inert on those platforms.
+  virtual void SetOpenUrlHandler(laufey_open_url_fn /*handler*/,
+                                 void* /*user_data*/) {}
+  virtual bool TestTriggerOpenUrl(const char* /*url*/) {
+    return false;
+  }
+
   // --- Tray / status-bar icon ---
   virtual uint32_t CreateTrayIcon() {
     return 0;

@@ -28,7 +28,11 @@ matrix over the C ABI surface, and a phased rollout.
 > (API 31, `§8`) for `set_close_requested_handler`'s defer-until-close_window
 > contract is implemented for all backends and verified green under Winit and
 > WebView on macOS; it rides the same pre-existing CI exclusions above for CEF
-> and the Windows/Linux webview combos, so those aren't gated by it yet.
+> and the Windows/Linux webview combos, so those aren't gated by it yet. The
+> `test_trigger_open_url` hook (API 35, `§8`) for deep-link delivery is
+> implemented wherever deep links are — macOS, for all three backends — and
+> verified green under Winit and WebView there; it reports `N/A` on every other
+> platform, where the ABI pointer is NULL by design.
 
 ---
 
@@ -402,6 +406,31 @@ on macOS; CEF and the Windows/Linux webview backends implement the same plumbing
 but ride the pre-existing `native-e2e` CI exclusions for those combos (`§`
 status note above) — not gated by this change, but not covered by CI for it
 either.
+
+**Implemented (API 35):**
+
+```c
+// Synthesizes a deep-link delivery of `url` through the same dispatch path
+// a real OS-routed URL takes, buffer included: called before any handler is
+// registered, the URL is replayed on registration exactly like a cold-start
+// launch link. Returns true if a handler consumed it, false if it was
+// buffered. NULL on every non-macOS backend (see docs/deep-links.md).
+bool (*test_trigger_open_url)(void* backend_data, const char* url);
+```
+
+Deep links can't be exercised for real without registering a URL scheme with the
+OS and driving it from outside the process — exactly the kind of setup this
+strategy avoids. The hook routes through `FireOpenUrlMac` (CEF + WebView) /
+`open_url::fire` (Winit), the same functions each backend's
+`application:openURLs:` delegate method calls, so the buffer-and-flush behavior
+under test is the shipping one.
+
+The capi exposes `laufey::test_trigger_open_url(url)`. The `native_e2e` runtime
+triggers one URL _before_ registering a handler — the position every cold-start
+launch URL is in — then registers, and asserts the buffered URL was replayed,
+that a subsequent URL is delivered live, and that neither was duplicated or
+lost. Verified green under WebView and Winit on macOS; `N/A` everywhere else,
+where the pointer is NULL by design rather than by omission.
 
 **Not yet added** (future hooks, same append-and-`N/A` pattern):
 

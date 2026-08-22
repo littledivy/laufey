@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define LAUFEY_API_VERSION 34
+#define LAUFEY_API_VERSION 35
 
 // Window handle types for get_window_handle_type
 #define LAUFEY_WINDOW_HANDLE_UNKNOWN 0
@@ -126,11 +126,24 @@ typedef void (*laufey_menu_click_fn)(void* user_data, uint32_t window_id,
 #define LAUFEY_DOCK_BOUNCE_INFORMATIONAL 10
 #define LAUFEY_DOCK_BOUNCE_CRITICAL 0
 
+// How many deep-link URLs a backend buffers while no open-url handler is
+// registered (see set_open_url_handler). A cold start delivers one; the cap
+// only bounds a pathological burst of links clicked before the runtime is up.
+#define LAUFEY_MAX_PENDING_OPEN_URLS 16
+
 // Callback fired when the user clicks the dock / taskbar icon for an app that
 // has no visible windows (macOS only; Windows/Linux have no equivalent event).
 // has_visible_windows is true if any app window is currently on-screen.
 typedef void (*laufey_dock_reopen_fn)(void* user_data,
                                       bool has_visible_windows);
+
+// Callback fired when the OS routes a custom URL scheme (deep link) to this
+// app — e.g. `acme://open/document/42` — either at launch or while the app is
+// already running (macOS only; see set_open_url_handler). `url` is the full
+// URL as the OS delivered it, valid only for the duration of the call, and
+// NOT validated: the embedder must check the scheme against the ones it
+// registered before acting on it.
+typedef void (*laufey_open_url_fn)(void* user_data, const char* url);
 
 // Callback fired when the user left-clicks a tray / status-bar icon.
 // (Right-click is reserved for the tray's menu.)
@@ -841,6 +854,52 @@ struct laufey_backend_api {
   // false if the id is unknown or the backend doesn't support forwarding.
   // NULL on backends older than API version 34.
   bool (*is_click_passthrough_forward)(void* backend_data, uint32_t window_id);
+
+  // --- Deep links / custom URL schemes (API >= 35) ---------------------------
+  //
+  // Register a callback invoked when the OS routes a custom URL scheme this
+  // app has registered — `acme://open/document/42` — to the app. Registering
+  // the scheme itself is NOT laufey's job: the embedder declares it in the
+  // bundle it ships (macOS `CFBundleURLTypes`, Linux `.desktop`
+  // `x-scheme-handler/<scheme>`, Windows `HKCU\Software\Classes\<scheme>`).
+  // See docs/deep-links.md.
+  //
+  // macOS only, for the same reason as set_dock_reopen_handler: AppKit
+  // delivers the URL to the *running* app as an Apple Event
+  // (`application:openURLs:`), so one process handles every link. Windows and
+  // Linux have no equivalent — the OS spawns a NEW process with the URL in
+  // argv, and turning that into "focus the running app" needs a
+  // single-instance lock, an app identity, and a policy on whether a second
+  // instance is even wrong. All three belong to the embedder that owns the
+  // packaging, so those backends leave this pointer NULL and the embedder
+  // reads its own argv.
+  //
+  // Delivery contract:
+  //   - URLs that arrive before a handler is registered are buffered and
+  //     flushed, in order, as soon as one is. A runtime loaded on a worker
+  //     thread is never ready when a launch URL lands, so without this every
+  //     cold-start deep link would be dropped. At most
+  //     LAUFEY_MAX_PENDING_OPEN_URLS are held; older ones are discarded.
+  //   - The callback fires on the backend UI thread, synchronously, like
+  //     every other event handler.
+  //   - Passing a NULL `fn` clears the handler and re-arms buffering.
+  //   - macOS hands over an array of URLs; the backend fans it out into one
+  //     call per URL.
+  //
+  // NULL on backends older than API version 35; callers must null-check.
+  void (*set_open_url_handler)(void* backend_data, laufey_open_url_fn fn,
+                               void* user_data);
+
+  // Test-only. Synthesizes a deep-link delivery of `url` through the same
+  // dispatch path a real OS-routed URL takes — including the buffer, so a
+  // call made before any handler is registered is replayed on registration
+  // just like a cold-start URL. Returns true if the URL was delivered to a
+  // registered handler, false if it was buffered instead. Lets automated e2e
+  // tests cover the round-trip without OS-level scheme registration or Apple
+  // Events. NULL on backends that don't implement it (API < 35, or any
+  // non-macOS backend); callers should treat a NULL hook as unavailable,
+  // like test_click_menu_item.
+  bool (*test_trigger_open_url)(void* backend_data, const char* url);
 };
 
 #ifdef __cplusplus
