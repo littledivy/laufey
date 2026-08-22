@@ -645,6 +645,27 @@ static void Backend_SetDockReopenHandler(void* data,
   }
 }
 
+// --- Deep links / custom URL schemes (macOS only) ---
+#if defined(__APPLE__)
+
+static void Backend_SetOpenUrlHandler(void* data, laufey_open_url_fn handler,
+                                      void* user_data) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (LaufeyBackend* backend = loader->GetBackend()) {
+    backend->SetOpenUrlHandler(handler, user_data);
+  }
+}
+
+static bool Backend_TestTriggerOpenUrl(void* data, const char* url) {
+  RuntimeLoader* loader = static_cast<RuntimeLoader*>(data);
+  if (LaufeyBackend* backend = loader->GetBackend()) {
+    return backend->TestTriggerOpenUrl(url);
+  }
+  return false;
+}
+
+#endif  // defined(__APPLE__)
+
 // --- Tray / status bar ---
 
 static uint32_t Backend_CreateTrayIcon(void* data) {
@@ -843,6 +864,14 @@ void RuntimeLoader::InitializeBackendApi() {
   backend_api_.set_dock_menu = Backend_SetDockMenu;
   backend_api_.set_dock_visible = Backend_SetDockVisible;
   backend_api_.set_dock_reopen_handler = Backend_SetDockReopenHandler;
+
+  // Deep links are macOS-only (see set_open_url_handler in laufey.h). Leave
+  // the pointers NULL elsewhere so an embedder can detect the absence rather
+  // than register a handler that silently never fires.
+#if defined(__APPLE__)
+  backend_api_.set_open_url_handler = Backend_SetOpenUrlHandler;
+  backend_api_.test_trigger_open_url = Backend_TestTriggerOpenUrl;
+#endif
 
   backend_api_.create_tray_icon = Backend_CreateTrayIcon;
   backend_api_.destroy_tray_icon = Backend_DestroyTrayIcon;

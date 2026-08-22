@@ -7,6 +7,13 @@ fn hello_main() {
       println!("dock reopen fired; has_visible_windows = {}", has_visible);
     });
 
+    // Deep links. Fires for `hello://…` once the bundle claims the scheme in
+    // its Info.plist — including the URL that launched the app, which is
+    // buffered until this handler exists. See docs/deep-links.md.
+    laufey::on_open_url(|url| {
+      println!("open url: {url}");
+    });
+
     // BADGE-DIAGNOSIS: tray temporarily disabled.
     // let _tray = ...;
 

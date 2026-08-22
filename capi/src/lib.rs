@@ -29,7 +29,7 @@ pub use mouse::*;
 /// (`github.com/denoland/laufey/releases/tag/v{VERSION}`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const LAUFEY_API_VERSION: u32 = 34;
+pub const LAUFEY_API_VERSION: u32 = 35;
 
 /// Creation-time window style flags for [`Window::new_with_options`].
 /// Mirror the `LAUFEY_WINDOW_FLAG_*` constants in `laufey.h`.
@@ -67,6 +67,9 @@ static DOCK_MENU_HANDLER: OnceLock<
 > = OnceLock::new();
 static DOCK_REOPEN_HANDLER: OnceLock<
   Mutex<Option<Box<dyn Fn(bool) + Send + Sync>>>,
+> = OnceLock::new();
+static OPEN_URL_HANDLER: OnceLock<
+  Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>,
 > = OnceLock::new();
 static TRAY_MENU_HANDLERS: OnceLock<
   Mutex<HashMap<u32, Box<dyn Fn(&str) + Send + Sync>>>,
@@ -1652,6 +1655,28 @@ pub fn test_trigger_close_requested(window_id: u32) -> bool {
   unsafe { f(api.backend_data, window_id) }
 }
 
+/// Test-only. Synthesizes a deep-link delivery of `url` through the same
+/// dispatch path a real OS-routed URL takes, buffer included: called before
+/// any [`on_open_url`] handler is registered, the URL is replayed on
+/// registration exactly like a cold-start link. Returns `true` if a handler
+/// consumed it, `false` if it was buffered — or if the backend does not
+/// implement the test hook (API < 35, or any non-macOS backend).
+///
+/// Intended for automated e2e tests, so a deep-link round-trip can be covered
+/// without registering a URL scheme with the OS. See `examples/native_e2e`
+/// and `docs/e2e-testing.md`.
+pub fn test_trigger_open_url(url: &str) -> bool {
+  let api = api();
+  let Some(f) = api.test_trigger_open_url else {
+    return false;
+  };
+  let Ok(c_url) = CString::new(url) else {
+    return false;
+  };
+  // SAFETY: `c_url` outlives the call; the backend only reads the string.
+  unsafe { f(api.backend_data, c_url.as_ptr()) }
+}
+
 /// A menu item in an application menu template.
 #[derive(Clone, Debug)]
 pub enum MenuItem {
@@ -1936,6 +1961,72 @@ where
       f(
         api.backend_data,
         Some(dock_reopen_callback),
+        std::ptr::null_mut(),
+      );
+    }
+  }
+}
+
+// --- Deep links / custom URL schemes ---
+
+fn open_url_handler() -> &'static Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>
+{
+  OPEN_URL_HANDLER.get_or_init(|| Mutex::new(None))
+}
+
+unsafe extern "C" fn open_url_callback(
+  _user_data: *mut c_void,
+  url: *const c_char,
+) {
+  if url.is_null() {
+    return;
+  }
+  // The OS is the source here, so don't assume well-formed UTF-8.
+  let url = CStr::from_ptr(url).to_string_lossy();
+  if let Some(handler) = open_url_handler().lock().unwrap().as_ref() {
+    handler(&url);
+  }
+}
+
+/// Register a callback invoked when the OS routes a custom URL scheme this app
+/// has registered — `acme://open/document/42` — to the app, either at launch
+/// or while it is already running.
+///
+/// Registering the scheme with the OS is *not* laufey's job: the embedder
+/// declares it in the bundle it ships (macOS `CFBundleURLTypes`, Linux
+/// `.desktop` `x-scheme-handler/<scheme>`, Windows
+/// `HKCU\Software\Classes\<scheme>`). See `docs/deep-links.md`.
+///
+/// URLs that arrive before this is called — which a launch URL always does,
+/// since the runtime is still coming up — are buffered by the backend and
+/// delivered as soon as the handler is registered.
+///
+/// The URL is whatever the OS handed over, unvalidated: check the scheme
+/// against the ones you registered before acting on it.
+///
+/// macOS only, for the same reason as [`on_dock_reopen`]: AppKit delivers the
+/// URL to the running app as an Apple Event, so one process handles every
+/// link. Windows and Linux spawn a new process with the URL in argv instead,
+/// which needs a single-instance lock and an app identity that only the
+/// embedder has — read `std::env::args` there. No-op on those platforms.
+pub fn on_open_url<F>(handler: F)
+where
+  F: Fn(&str) + Send + Sync + 'static,
+{
+  // Install the Rust-side handler first: the backend flushes buffered URLs
+  // synchronously inside the call below, and they'd be dropped if the slot
+  // were still empty.
+  {
+    let mut slot = open_url_handler().lock().unwrap();
+    *slot = Some(Box::new(handler));
+  }
+
+  let api = api();
+  if let Some(f) = api.set_open_url_handler {
+    unsafe {
+      f(
+        api.backend_data,
+        Some(open_url_callback),
         std::ptr::null_mut(),
       );
     }

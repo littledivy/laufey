@@ -4,6 +4,7 @@ pub use winit;
 
 pub mod dock;
 pub mod notification;
+pub mod open_url;
 pub mod permission;
 pub mod tray;
 
@@ -33,7 +34,7 @@ use winit::window::{Window, WindowLevel};
 // Bumping this in lockstep with the capi is mandatory: the capi's `init_api`
 // rejects any backend whose reported `version` differs, and the vtable layout
 // below must match the `laufey_backend_api` struct as of this version.
-pub const LAUFEY_API_VERSION: u32 = 34;
+pub const LAUFEY_API_VERSION: u32 = 35;
 
 /// Creation-time window style flags (mirror `LAUFEY_WINDOW_FLAG_*` in laufey.h).
 pub const LAUFEY_WINDOW_FLAG_FRAMELESS: u32 = 1 << 0;
@@ -564,6 +565,23 @@ pub struct LaufeyBackendApi {
     Option<unsafe extern "C" fn(*mut c_void, u32, bool)>,
   pub is_click_passthrough_forward:
     Option<unsafe extern "C" fn(*mut c_void, u32) -> bool>,
+
+  // --- Deep links / custom URL schemes (API >= 35) ---
+  // macOS only (a runtime-added `application:openURLs:` on winit's delegate —
+  // see open_url.rs). Both pointers stay None on Windows/Linux, where the OS
+  // hands the URL to a new process as argv and only the embedder can act on
+  // it. The fields MUST still be declared to keep the struct layout in sync
+  // with the `laufey_backend_api` the capi reads through the backend's
+  // pointer.
+  pub set_open_url_handler: Option<
+    unsafe extern "C" fn(
+      *mut c_void,
+      Option<open_url::LaufeyOpenUrlFn>,
+      *mut c_void,
+    ),
+  >,
+  pub test_trigger_open_url:
+    Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> bool>,
 }
 
 unsafe impl Send for LaufeyBackendApi {}
@@ -1206,6 +1224,9 @@ pub fn create_api_base() -> LaufeyBackendApi {
     // observation API.
     set_click_passthrough_forward: None,
     is_click_passthrough_forward: None,
+    // Deep links (API >= 35): filled by fill_common_api on macOS only.
+    set_open_url_handler: None,
+    test_trigger_open_url: None,
   }
 }
 
@@ -2526,6 +2547,29 @@ macro_rules! define_common_backend_fns {
       $crate::dispatch_menu_click_by_id(&id)
     }
 
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" fn backend_set_open_url_handler(
+      _data: *mut ::std::ffi::c_void,
+      handler: Option<$crate::open_url::LaufeyOpenUrlFn>,
+      user_data: *mut ::std::ffi::c_void,
+    ) {
+      $crate::open_url::set_handler(handler.map(|h| (h, user_data as usize)));
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe extern "C" fn backend_test_trigger_open_url(
+      _data: *mut ::std::ffi::c_void,
+      url: *const ::std::ffi::c_char,
+    ) -> bool {
+      if url.is_null() {
+        return false;
+      }
+      let url = unsafe { ::std::ffi::CStr::from_ptr(url) }
+        .to_string_lossy()
+        .into_owned();
+      $crate::open_url::test_trigger(&url)
+    }
+
     unsafe extern "C" fn backend_set_application_menu(
       _data: *mut ::std::ffi::c_void,
       window_id: u32,
@@ -2960,6 +3004,14 @@ macro_rules! fill_common_api {
     $api.test_click_menu_item = Some(backend_test_click_menu_item);
     $api.test_trigger_close_requested =
       Some(backend_test_trigger_close_requested);
+    // Deep links are macOS-only (see open_url.rs). Leaving the pointers None
+    // elsewhere lets an embedder detect the absence instead of registering a
+    // handler that silently never fires.
+    #[cfg(target_os = "macos")]
+    {
+      $api.set_open_url_handler = Some(backend_set_open_url_handler);
+      $api.test_trigger_open_url = Some(backend_test_trigger_open_url);
+    }
   };
 }
 
@@ -3846,6 +3898,12 @@ pub fn find_runtime_library() -> Option<PathBuf> {
 }
 
 pub fn load_and_start_runtime(api: LaufeyBackendApi) {
+  // Install `application:openURLs:` before the runtime comes up: AppKit only
+  // routes a launch URL to a delegate that already responds to the selector,
+  // and the runtime that registers the handler starts on the thread below.
+  #[cfg(target_os = "macos")]
+  open_url::install_delegate_methods();
+
   let runtime_path = find_runtime_library();
   match runtime_path {
     Some(path) => {

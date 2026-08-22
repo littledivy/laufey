@@ -115,6 +115,25 @@ void LaufeyOpenExternalURL(const std::string& url) {
   return NO;
 }
 
+// Deep links. AppKit routes the kAEGetURL Apple Event here for every scheme
+// the bundle claims in CFBundleURLTypes, both at launch and while running.
+// Implementing this selector is what makes AppKit install its own handler for
+// that event, so there's no NSAppleEventManager registration to do.
+//
+// This delegate is installed before [NSApp run], so no launch URL is missed:
+// AppKit can't dispatch the event before the run loop starts. It can still
+// arrive before the runtime registers a handler, which is what the buffer in
+// FireOpenUrlMac covers.
+- (void)application:(NSApplication*)application
+           openURLs:(NSArray<NSURL*>*)urls {
+  for (NSURL* url in urls) {
+    NSString* absolute = [url absoluteString];
+    if (absolute) {
+      laufey_common::FireOpenUrlMac([absolute UTF8String]);
+    }
+  }
+}
+
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
   return laufey_common::GetDockMenuMac();
 }

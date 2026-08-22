@@ -145,6 +145,23 @@ void EnsureEditMenu(NSMenu* menubar) {
   return NO;
 }
 
+// Deep links. AppKit routes the kAEGetURL Apple Event here for every scheme
+// the bundle claims in CFBundleURLTypes, both at launch and while running.
+// Implementing this selector is what makes AppKit install its own handler for
+// that event, so there's no NSAppleEventManager registration to do.
+//
+// A launch URL lands before the runtime finished loading on its worker
+// thread, so FireOpenUrlMac buffers until a handler registers.
+- (void)application:(NSApplication*)application
+           openURLs:(NSArray<NSURL*>*)urls {
+  for (NSURL* url in urls) {
+    NSString* absolute = [url absoluteString];
+    if (absolute) {
+      laufey_common::FireOpenUrlMac([absolute UTF8String]);
+    }
+  }
+}
+
 - (NSMenu*)applicationDockMenu:(NSApplication*)sender {
   return laufey_common::GetDockMenuMac();
 }

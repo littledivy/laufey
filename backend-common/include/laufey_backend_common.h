@@ -319,6 +319,27 @@ void SetDockReopenHandlerMac(laufey_dock_reopen_fn handler, void* user_data);
 void FireDockReopenMac(bool has_visible_windows);
 
 // ---------------------------------------------------------------------------
+// Deep links / custom URL schemes (macOS)
+// ---------------------------------------------------------------------------
+//
+// Stores the open-url handler set by Backend_SetOpenUrlHandler_Mac /
+// WKWebViewBackend::SetOpenUrlHandler. Each backend's AppDelegate calls
+// FireOpenUrlMac() once per URL from application:openURLs:.
+//
+// A launch URL always arrives before the runtime (loaded on a worker thread)
+// can register anything, so FireOpenUrlMac buffers up to
+// LAUFEY_MAX_PENDING_OPEN_URLS URLs while no handler is set and
+// SetOpenUrlHandlerMac flushes them, in order, on registration. Passing a
+// null handler clears it and re-arms buffering.
+void SetOpenUrlHandlerMac(laufey_open_url_fn handler, void* user_data);
+void FireOpenUrlMac(const char* url);
+
+// Test-only. Backs the C ABI `test_trigger_open_url` hook: routes `url`
+// through FireOpenUrlMac and reports whether a handler consumed it (true) or
+// it was buffered for a later registration (false).
+bool TestTriggerOpenUrlMac(const char* url);
+
+// ---------------------------------------------------------------------------
 // NSMenu builder (macOS)
 // ---------------------------------------------------------------------------
 //

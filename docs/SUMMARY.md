@@ -14,6 +14,7 @@
 - [Window events](window-events.md)
 - [Window handles](window-handles.md)
 - [Dock / taskbar](dock-taskbar.md)
+- [Deep links](deep-links.md)
 - [Tray / status bar](tray.md)
 - [Notifications](notifications.md)
 - [Clipboard](clipboard.md)
