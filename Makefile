@@ -47,8 +47,8 @@ else
   LIB_EXT := .a
 endif
 
-CEF_VERSION := 149.0.5
-CEF_FULL_VERSION := 149.0.5+g6770623+chromium-149.0.7827.197
+CEF_VERSION := 150.0.14
+CEF_FULL_VERSION := 150.0.14+g7c1aa68+chromium-150.0.7871.129
 CEF_URL_VERSION := $(subst +,%2B,$(CEF_FULL_VERSION))
 CEF_DOWNLOAD_URL := https://cef-builds.spotifycdn.com/cef_binary_$(CEF_URL_VERSION)_$(CEF_ARCH)_minimal.tar.bz2
 CEF_DIR := $(CURDIR)/vendor/cef/$(CEF_FULL_VERSION)/$(CEF_ARCH)

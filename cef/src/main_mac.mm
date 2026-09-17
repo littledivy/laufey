@@ -390,8 +390,18 @@ int main(int argc, char* argv[]) {
     // libdispatch queue is serviced — required for tray/status items.
     settings.external_message_pump = true;
 
-    std::string cache_path = std::string(NSTemporaryDirectory().UTF8String) +
-                             "laufey_cef_" + std::to_string(getpid());
+    std::string cache_path;
+    if (const char* profile_path = getenv("LAUFEY_CEF_PROFILE_PATH");
+        profile_path && *profile_path) {
+      NSString* expanded_path = [[NSString stringWithUTF8String:profile_path]
+          stringByExpandingTildeInPath];
+      cache_path = std::string(expanded_path.UTF8String);
+      CefString(&settings.cache_path) = cache_path;
+      settings.persist_session_cookies = true;
+    } else {
+      cache_path = std::string(NSTemporaryDirectory().UTF8String) +
+                   "laufey_cef_" + std::to_string(getpid());
+    }
     CefString(&settings.root_cache_path) = cache_path;
 
     if (const char* port_env = getenv("LAUFEY_REMOTE_DEBUGGING_PORT")) {
