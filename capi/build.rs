@@ -13,9 +13,13 @@ fn main() {
     .allowlist_type("laufey_.*")
     .allowlist_var("LAUFEY_.*");
 
-  // MSVC's bundled clang headers conflict with the system LLVM clang headers.
-  // Add compatibility flags to resolve wchar_t typedef redefinition and
-  // __declspec attribute errors.
+  // Parse the Windows SDK / MSVC headers the way MSVC does (`__declspec` and
+  // other Microsoft extensions). laufey.h is C, where `wchar_t` is not a
+  // builtin type: the UCRT headers typedef it themselves unless
+  // `_WCHAR_T_DEFINED` is already set, so that macro (and
+  // `_NATIVE_WCHAR_T_DEFINED`, which claims a builtin `wchar_t`) must not be
+  // predefined — with it, Windows SDK 10.0.26100's corecrt.h fails with
+  // "unknown type name 'wchar_t'".
   if cfg!(target_os = "windows") {
     // Pass the real target triple so clang parses with the correct arch on both
     // x64 and ARM64 Windows (aarch64-pc-windows-msvc). Both are LLP64 so the
@@ -33,9 +37,7 @@ fn main() {
       .clang_arg("-fdelayed-template-parsing")
       .clang_arg("-fmsc-version=1950")
       .clang_arg("-Wno-everything")
-      .clang_arg(format!("--target={clang_arch}-pc-windows-msvc"))
-      .clang_arg("-D_WCHAR_T_DEFINED")
-      .clang_arg("-D_NATIVE_WCHAR_T_DEFINED");
+      .clang_arg(format!("--target={clang_arch}-pc-windows-msvc"));
   }
 
   let bindings = builder.generate().expect("Unable to generate bindings");
