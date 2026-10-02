@@ -126,6 +126,26 @@ fn e2e_main() {
 
     check("window id is nonzero", win.id() != 0);
 
+    // ---- the runtime sees the host's arguments intact --------------------
+    // scripts/native-e2e-run.sh launches the host with
+    // `--laufey-e2e-argv e2e-arg-one "e2e arg two"` and sets LAUFEY_E2E_ARGV.
+    // On CEF/Linux, Chromium sets the process title by rewriting argv in place
+    // (setproctitle), which used to garble what the runtime read back (two
+    // arguments came through as one). Checked after a window exists, i.e.
+    // after the engine started.
+    if std::env::var_os("LAUFEY_E2E_ARGV").is_some() {
+      let args: Vec<String> = std::env::args().collect();
+      let intact = args
+        .windows(3)
+        .any(|w| w == ["--laufey-e2e-argv", "e2e-arg-one", "e2e arg two"]);
+      if !intact {
+        eprintln!("[e2e] runtime argv: {args:?}");
+      }
+      check("runtime reads the host's arguments intact", intact);
+    } else {
+      na("runtime argv (host not launched by native-e2e-run.sh)");
+    }
+
     // ---- race probe: native handle immediately after creation ------------
     // Regression guard for denoland/deno#35785. The winit/raw backend creates
     // the OS window asynchronously, so reading the handle *right now* — with no

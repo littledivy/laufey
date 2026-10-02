@@ -53,8 +53,12 @@ if [ "$mode" = "--layer1" ]; then
 fi
 
 # Layer 0: run the backend directly. On Linux, headless via Xvfb + a private
-# session bus (some tray impls need a session bus to even initialize).
+# session bus (some tray impls need a session bus to even initialize). The
+# extra arguments are read back by the runtime ("runtime reads the host's
+# arguments intact").
+argv_check=(--laufey-e2e-argv e2e-arg-one "e2e arg two")
+export LAUFEY_E2E_ARGV=1
 if is_linux; then
-  exec xvfb-run -a dbus-run-session -- "$bin"
+  exec xvfb-run -a dbus-run-session -- "$bin" "${argv_check[@]}"
 fi
-exec "$bin"
+exec "$bin" "${argv_check[@]}"
