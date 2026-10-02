@@ -386,6 +386,8 @@ fn e2e_main() {
       }
     }
 
+    tray_click_reaches_app().await;
+
     // Verifying menu/tray *structure* against the OS (that the widget was
     // really registered, not just that set_menu was accepted) needs main-thread
     // UI access. Linux is covered out-of-process by the D-Bus driver (Layer 1).
@@ -546,6 +548,81 @@ fn e2e_main() {
     // backend, which is where the teardown crash lives.
     unsafe { libc_exit(if failed { 1 } else { 0 }) };
   });
+}
+
+/// A click on the tray icon reaches the app's on_click handler. The click is
+/// posted to the tray's message-only window exactly as Shell_NotifyIcon
+/// delivers it (WM_LAUFEY_COMMON_TRAYICON, see backend-common/src/tray_win.cc),
+/// so the message path under test is the shipping one; only the OS-side click
+/// is synthesized. WebView2 used to create that window on the runtime's
+/// thread, which never pumps messages, so tray clicks never arrived
+/// (denoland/deno#36778). Windows WebView2 / CEF only (their shared
+/// tray_win.cc).
+#[cfg(target_os = "windows")]
+async fn tray_click_reaches_app() {
+  #[link(name = "user32")]
+  extern "system" {
+    fn FindWindowExW(
+      parent: isize,
+      child_after: isize,
+      class: *const u16,
+      window: *const u16,
+    ) -> isize;
+    fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize)
+      -> i32;
+  }
+  const HWND_MESSAGE: isize = -3;
+  const WM_APP: u32 = 0x8000;
+  const WM_LBUTTONUP: isize = 0x0202;
+  let backend = std::env::var("LAUFEY_E2E_BACKEND").unwrap_or_default();
+  if backend != "webview" && backend != "cef" {
+    na("tray click via the tray window (Windows WebView2 / CEF tray only)");
+    return;
+  }
+  let clicked = Arc::new(AtomicBool::new(false));
+  let tray = {
+    let clicked = clicked.clone();
+    TrayIcon::new().icon(TINY_PNG).on_click(move || {
+      clicked.store(true, Ordering::SeqCst);
+    })
+  };
+  if tray.id() == 0 {
+    check("tray created for the click check", false);
+    return;
+  }
+  let class: Vec<u16> = "LaufeyCommonTrayWindow\0".encode_utf16().collect();
+  let find = || unsafe {
+    FindWindowExW(HWND_MESSAGE, 0, class.as_ptr(), std::ptr::null())
+  };
+  // CEF creates it on its UI thread after create_tray_icon returns.
+  let _ = wait_for(|| find() != 0, 100, 50).await;
+  let hwnd = find();
+  check("tray message window exists", hwnd != 0);
+  if hwnd == 0 {
+    return;
+  }
+  // WM_LAUFEY_COMMON_TRAYICON: wParam = tray id, LOWORD(lParam) = the mouse
+  // message. The click handler is installed on the UI thread asynchronously
+  // (CEF posts it as a task, which may run after a message posted now), so
+  // re-post until it lands.
+  let mut posted = false;
+  let mut reached = false;
+  for _ in 0..20 {
+    posted |= unsafe {
+      PostMessageW(hwnd, WM_APP + 65, tray.id() as usize, WM_LBUTTONUP)
+    } != 0;
+    if wait_for(|| clicked.load(Ordering::SeqCst), 10, 50).await {
+      reached = true;
+      break;
+    }
+  }
+  check("tray click posted", posted);
+  check("a tray icon click reaches on_click", reached);
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn tray_click_reaches_app() {
+  na("tray click via the tray window (Windows WebView2 / CEF tray only)");
 }
 
 extern "C" {
