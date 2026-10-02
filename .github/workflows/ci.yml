@@ -61,6 +61,36 @@ jobs:
       - run: cargo test -p laufey --lib
       - run: cargo test -p laufey --doc
 
+  # The cross-thread rendezvous behind the synchronous UI-thread calls
+  # (backend-common/include/laufey_sync_call.h: cef_invoke_sync,
+  # gtk_invoke_sync). Under ThreadSanitizer, a notify after the waiter may have
+  # destroyed its condition variable is reported as a data race on the first
+  # call it happens to; on macOS a plain run hangs within seconds.
+  sync-call:
+    name: sync_call_test / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: tsan, os: ubuntu-24.04, flags: -fsanitize=thread }
+          - { name: macos, os: macos-14, flags: "" }
+    env:
+      TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v7
+      # The runner kernel randomizes mmap with 32 bits, which ThreadSanitizer's
+      # shadow memory layout doesn't support ("unexpected memory mapping").
+      - name: Allow ThreadSanitizer's memory layout
+        if: runner.os == 'Linux'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: sync_call_test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -O1 -g -pthread ${{ matrix.flags }} \
+            -Ibackend-common/include \
+            backend-common/tests/sync_call_test.cc -o "$RUNNER_TEMP/sync_call_test"
+          "$RUNNER_TEMP/sync_call_test"
+
   build-winit:
     name: winit / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}

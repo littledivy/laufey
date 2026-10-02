@@ -6,6 +6,7 @@
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
 #include "laufey_json.h"
+#include "laufey_sync_call.h"
 #include "init_script.h"
 #include <webkit2/webkit2.h>
 #include <JavaScriptCore/JavaScript.h>
@@ -29,30 +30,22 @@ static void gtk_invoke_sync(F&& fn) {
     fn();
     return;
   }
-  std::mutex mtx;
-  std::condition_variable cv;
-  bool done = false;
+  // `ctx` lives in this frame; Done() is the idle callback's last access to
+  // it (laufey_sync_call.h).
   struct Ctx {
     F* fn;
-    std::mutex* mtx;
-    std::condition_variable* cv;
-    bool* done;
+    laufey_common::SyncCall call;
   };
-  Ctx ctx{&fn, &mtx, &cv, &done};
+  Ctx ctx{&fn, {}};
   g_idle_add(
       [](gpointer data) -> gboolean {
         auto* c = static_cast<Ctx*>(data);
         (*c->fn)();
-        {
-          std::lock_guard<std::mutex> lock(*c->mtx);
-          *c->done = true;
-        }
-        c->cv->notify_one();
+        c->call.Done();
         return G_SOURCE_REMOVE;
       },
       &ctx);
-  std::unique_lock<std::mutex> lock(mtx);
-  cv.wait(lock, [&done] { return done; });
+  ctx.call.Wait();
 }
 
 namespace keyboard {

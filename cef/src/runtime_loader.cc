@@ -3,6 +3,7 @@
 #include "runtime_loader.h"
 #include "app.h"
 #include "laufey_backend_common.h"
+#include "laufey_sync_call.h"
 #include "scheme_handler.h"
 
 #ifndef _WIN32
@@ -137,22 +138,17 @@ static void cef_invoke_sync(F&& fn) {
     fn();
     return;
   }
-  std::mutex mtx;
-  std::condition_variable cv;
-  bool done = false;
+  // `call` lives in this frame and Done() is the UI task's last access to it:
+  // Done() notifies under the lock, since this thread returns (destroying
+  // `call`) as soon as it sees the call complete. See laufey_sync_call.h.
+  laufey_common::SyncCall call;
   CefPostTask(TID_UI, base::BindOnce(
-                          [](F* fn, std::mutex* mtx,
-                             std::condition_variable* cv, bool* done) {
+                          [](F* fn, laufey_common::SyncCall* call) {
                             (*fn)();
-                            {
-                              std::lock_guard<std::mutex> lock(*mtx);
-                              *done = true;
-                            }
-                            cv->notify_one();
+                            call->Done();
                           },
-                          &fn, &mtx, &cv, &done));
-  std::unique_lock<std::mutex> lock(mtx);
-  cv.wait(lock, [&done] { return done; });
+                          &fn, &call));
+  call.Wait();
 }
 
 // --- Backend API functions (cross-platform, using CEF Views) ---
