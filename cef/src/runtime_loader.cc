@@ -1618,8 +1618,8 @@ static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
   auto* loader = RuntimeLoader::GetInstance();
   uint32_t window_id = loader->AllocateWindowId();
 
-  CefPostTask(TID_UI,
-              base::BindOnce(
+  bool posted = CefPostTask(
+      TID_UI, base::BindOnce(
                   [](uint32_t wid, uint32_t window_flags) {
                     auto* handler = LaufeyHandler::GetInstance();
                     if (!handler)
@@ -1646,8 +1646,18 @@ static uint32_t Backend_CreateWindowImpl(void* data, uint32_t flags) {
                   window_id, flags));
 
   // Block until the browser is registered by OnAfterCreated, so that
-  // subsequent calls (navigate, set_title, etc.) can find it.
-  loader->WaitForBrowser(window_id);
+  // subsequent calls (navigate, set_title, etc.) can find it: until then they
+  // are dropped. The wait returns as soon as the browser exists; its bound
+  // only guards against a creation that never completes. A cold start on a
+  // slow machine takes several seconds per browser (over 5 s, the old bound,
+  // on a Windows CI runner, which dropped the window's first navigation).
+  // (Nothing to wait for when CEF is no longer taking UI tasks.)
+  constexpr int kBrowserCreateTimeoutMs = 30000;
+  if (posted && !loader->WaitForBrowser(window_id, kBrowserCreateTimeoutMs)) {
+    std::cerr << "laufey: the browser for window " << window_id
+              << " was not created within " << kBrowserCreateTimeoutMs / 1000
+              << " s; calls on the window are ignored until it is" << std::endl;
+  }
 
   return window_id;
 }
