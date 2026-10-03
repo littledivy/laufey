@@ -6,6 +6,8 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <queue>
 #include <map>
@@ -41,7 +43,14 @@ class RuntimeLoader {
 
   bool Start();
 
-  void Shutdown();
+  // Tells the runtime to shut down and waits for its thread. With `bounded`
+  // (once the backend's loop has ended) the wait is limited to
+  // kRuntimeShutdownTimeout, after which the thread is detached; without it
+  // (a headless worker, whose runtime decides when it is done) the wait is
+  // unbounded. Returns false while a detached runtime thread may still be
+  // running: the caller must then leave the backend alive, since that thread
+  // can still call into it.
+  bool Shutdown(bool bounded = true);
 
   void SetBackend(LaufeyBackend* backend) {
     backend_ = backend;
@@ -291,6 +300,15 @@ class RuntimeLoader {
 
   std::thread runtime_thread_;
   std::atomic<bool> running_{false};
+  // Set as RuntimeThread returns, so Shutdown can wait for the thread with a
+  // bound (std::thread has no timed join).
+  std::mutex runtime_exit_mutex_;
+  std::condition_variable runtime_exit_cv_;
+  bool runtime_exited_ = false;
+  // Set when Shutdown gave up waiting and detached the runtime thread.
+  bool runtime_detached_ = false;
+  // How long Shutdown waits for the runtime thread before exiting without it.
+  static constexpr std::chrono::milliseconds kRuntimeShutdownTimeout{10000};
 
   LaufeyBackend* backend_ = nullptr;
   laufey_backend_api_t backend_api_;

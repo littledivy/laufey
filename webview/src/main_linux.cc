@@ -112,8 +112,11 @@ int main(int argc, char* argv[]) {
 
   backend->Run();
 
-  loader->Shutdown();
-  delete backend;
+  // A runtime thread that outlived the bounded wait may still call into the
+  // backend: leave it alive then (the process is exiting).
+  if (loader->Shutdown()) {
+    delete backend;
+  }
 
   return 0;
 }

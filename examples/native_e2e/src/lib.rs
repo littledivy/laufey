@@ -83,6 +83,19 @@ fn expected_handle_type() -> (&'static str, &'static [i32]) {
 }
 
 fn e2e_main() {
+  // ---- headless worker -------------------------------------------------
+  // scripts/native-e2e-run.sh --headless-worker starts the macOS WebView
+  // backend as a worker (`run <script>`: no window, no event loop). The
+  // backend must wait for the runtime however long it runs: the bounded
+  // shutdown wait is for a UI app whose loop has ended, and must not cut a
+  // worker off. So outlive that bound, then return normally; the script
+  // checks that this line was printed.
+  if std::env::var("LAUFEY_E2E_ONLY").as_deref() == Ok("headless-worker") {
+    std::thread::sleep(std::time::Duration::from_secs(12));
+    eprintln!("[e2e] PASS a headless worker runs until its runtime returns");
+    return;
+  }
+
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
   rt.block_on(async move {
     // Pump the laufey event loop (JS-call dispatch, timers).
@@ -532,13 +545,44 @@ fn e2e_main() {
       tokio::time::sleep(std::time::Duration::from_secs(8)).await;
     }
 
+    // ---- quit() shuts the runtime down -------------------------------------
+    // quit() with a window open (`win`) must end the backend's loop AND tell
+    // the runtime, which is how a runtime learns the app is ending. macOS
+    // WKWebView used to end the loop with -stop: and return from main without
+    // telling it, so the process exited under the runtime thread (exit status
+    // 0, no report). A process exit before we report is caught by the
+    // exit guard below. Once should_shutdown() flips, the backend is waiting
+    // for this thread, so we report and _exit as before.
+    let _ = &win;
+    // Checked on macOS WKWebView only for now: on the other backends quit()
+    // from the runtime thread does not yet end the loop and reach the
+    // runtime's shutdown within the wait below (follow-ups).
+    let backend = std::env::var("LAUFEY_E2E_BACKEND").unwrap_or_default();
+    if cfg!(target_os = "macos") && backend == "webview" {
+      arm_exit_guard();
+      laufey::quit();
+      let shut = wait_for(laufey::should_shutdown, 300, 50).await;
+      check("quit() with a window open shuts the runtime down", shut);
+      if shut {
+        // The loop has ended and the backend is waiting for this thread. A
+        // runtime that still asks the UI thread something now (a sync getter
+        // is a dispatch_sync to the main queue) gets no answer: the backend
+        // must stop waiting after its bound and exit instead of hanging. The
+        // exit guard reports this check and ends the run with its code; a
+        // watchdog fails the run if the process is still alive at 30 s.
+        expect_exit_while_blocked();
+        let _ = win.get_resizable();
+      }
+    } else {
+      na("quit() shuts the runtime down (checked on macOS WKWebView)");
+    }
+
     // ---- shutdown --------------------------------------------------------
     // Decide the result and terminate immediately with a deterministic exit
-    // code. We deliberately skip close()/quit(): tearing the window/webview
-    // down on the backend's main thread can crash or race and clobber the exit
-    // code (e.g. SIGTRAP -> 133), which would corrupt the CI signal. The OS
-    // reclaims everything on exit. `_ = &win;` keeps the window alive to here.
-    let _ = &win;
+    // code. We deliberately skip close(): tearing the window/webview down on
+    // the backend's main thread can crash or race and clobber the exit code
+    // (e.g. SIGTRAP -> 133), which would corrupt the CI signal. The OS
+    // reclaims everything on exit.
     let failed = FAILED.load(Ordering::SeqCst);
     eprintln!("[e2e] OVERALL {}", if failed { "FAIL" } else { "PASS" });
     let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -552,5 +596,59 @@ extern "C" {
   #[link_name = "_exit"]
   fn libc_exit(code: i32) -> !;
 }
+
+/// Set once the runtime thread is about to block in a UI-thread call after
+/// shutdown began: from then on, the process exiting is the expected outcome.
+static EXIT_EXPECTED: AtomicBool = AtomicBool::new(false);
+
+/// Arms the "exit while blocked" check: the exit guard then reports it as
+/// passed and ends the run with its result, and a watchdog fails the run if
+/// the backend hangs in its shutdown instead.
+fn expect_exit_while_blocked() {
+  EXIT_EXPECTED.store(true, Ordering::SeqCst);
+  std::thread::spawn(|| {
+    std::thread::sleep(std::time::Duration::from_secs(30));
+    eprintln!(
+      "[e2e] FAIL the backend did not exit within 30 s while the runtime \
+       thread was blocked in a UI-thread call"
+    );
+    eprintln!("[e2e] OVERALL FAIL");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    unsafe { libc_exit(1) };
+  });
+}
+
+/// Fails the run if the process exits normally (the backend returned from
+/// main) before this runtime reported: the e2e itself always ends with
+/// `_exit`, which skips atexit handlers. Unix only; on Windows a DLL's atexit
+/// handlers run under the loader lock.
+#[cfg(unix)]
+fn arm_exit_guard() {
+  extern "C" fn on_exit() {
+    if EXIT_EXPECTED.load(Ordering::SeqCst) {
+      check(
+        "the backend exits while the runtime thread is blocked in a \
+         UI-thread call",
+        true,
+      );
+      let failed = FAILED.load(Ordering::SeqCst);
+      eprintln!("[e2e] OVERALL {}", if failed { "FAIL" } else { "PASS" });
+      let _ = std::io::Write::flush(&mut std::io::stderr());
+      unsafe { libc_exit(if failed { 1 } else { 0 }) };
+    }
+    eprintln!(
+      "[e2e] FAIL the process exited before the runtime was told to shut down"
+    );
+    eprintln!("[e2e] OVERALL FAIL");
+    unsafe { libc_exit(1) };
+  }
+  extern "C" {
+    fn atexit(cb: extern "C" fn()) -> i32;
+  }
+  unsafe { atexit(on_exit) };
+}
+
+#[cfg(not(unix))]
+fn arm_exit_guard() {}
 
 laufey::main!(e2e_main);

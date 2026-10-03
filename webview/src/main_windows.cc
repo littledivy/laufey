@@ -102,8 +102,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
   backend->Run();
 
-  loader->Shutdown();
-  delete backend;
+  // A runtime thread that outlived the bounded wait may still call into the
+  // backend: leave it alive then (the process is exiting).
+  if (loader->Shutdown()) {
+    delete backend;
+  }
 
   CoUninitialize();
   return 0;

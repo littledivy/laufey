@@ -63,6 +63,7 @@ void EnsureEditMenu(NSMenu* menubar) {
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, assign) LaufeyBackend* backend;
 @property(nonatomic, copy) NSString* runtimePath;
+- (void)shutDownRuntime;
 @end
 
 @implementation AppDelegate
@@ -128,8 +129,19 @@ void EnsureEditMenu(NSMenu* menubar) {
 }
 
 - (void)applicationWillTerminate:(NSNotification*)notification {
-  RuntimeLoader::GetInstance()->Shutdown();
-  delete self.backend;
+  [self shutDownRuntime];
+}
+
+// Tells the runtime the app is ending and waits for its thread. Safe to call
+// twice: the loop can end through -terminate: (this delegate's
+// applicationWillTerminate:) or through quit()'s -stop: (after [NSApp run]
+// returns in main), and which one wins is a race.
+- (void)shutDownRuntime {
+  // A runtime thread that outlived the bounded wait may still call into the
+  // backend: leave it alive then (the process is exiting).
+  if (RuntimeLoader::GetInstance()->Shutdown()) {
+    delete self.backend;
+  }
   self.backend = nullptr;
 }
 
@@ -189,8 +201,8 @@ static int run_headless(const char* runtimePath) {
     return 1;
   }
 
-  // Wait for the runtime thread to finish
-  loader->Shutdown();
+  // Wait for the runtime thread to finish, however long the worker runs.
+  loader->Shutdown(/*bounded=*/false);
   return 0;
 }
 
@@ -276,6 +288,13 @@ int main(int argc, char* argv[]) {
 
     [NSApp activateIgnoringOtherApps:YES];
     [NSApp run];
+
+    // quit() ends the loop with -stop:, which returns here without
+    // -terminate:'s applicationWillTerminate:. Unless AppKit's own
+    // terminate-after-last-window check got in first, the runtime has not
+    // been told yet; returning would exit the process under it, so shut it
+    // down here, as the other backends do after their loop.
+    [delegate shutDownRuntime];
   }
 
   return 0;

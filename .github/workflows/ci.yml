@@ -244,6 +244,14 @@ jobs:
           LAUFEY_E2E_REQUIRE_TRAY: ${{ (runner.os == 'Linux' && matrix.backend == 'cef') && '1' || '' }}
         run: scripts/native-e2e-run.sh ${{ matrix.backend }}
 
+      # The macOS WebView backend run as a headless worker (`run <script>`)
+      # waits for its runtime however long it runs (the runtime here outlives
+      # the 10 s shutdown bound a UI app gets once its loop has ended).
+      - name: Headless worker waits for its runtime
+        if: runner.os == 'macOS' && matrix.backend == 'webview'
+        shell: bash
+        run: scripts/native-e2e-run.sh webview --headless-worker
+
       # Layer 1 (Linux D-Bus StatusNotifier/dbusmenu observer) is built above
       # (compile-checked on real Linux) but not run here yet: the cef leg now
       # creates a real appindicator tray (runtime lib installed above), so
