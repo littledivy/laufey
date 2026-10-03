@@ -25,7 +25,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 
-use laufey::{MenuItem, TrayIcon, Window};
+use laufey::{MenuItem, TrayIcon, Value, Window};
 
 static FAILED: AtomicBool = AtomicBool::new(false);
 
@@ -62,6 +62,30 @@ async fn wait_for<F: Fn() -> bool>(f: F, attempts: u32, step_ms: u64) -> bool {
     tokio::time::sleep(std::time::Duration::from_millis(step_ms)).await;
   }
   f()
+}
+
+/// `expr` evaluated in `win`'s page, or `None` without an answer within 5 s
+/// (an engine-less backend never answers).
+async fn eval_js(win: &Window, expr: &str) -> Option<Value> {
+  let (tx, rx) = tokio::sync::oneshot::channel();
+  win.execute_js(
+    expr,
+    Some(move |r: Result<Value, Value>| {
+      let _ = tx.send(r);
+    }),
+  );
+  match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
+    Ok(Ok(Ok(v))) => Some(v),
+    _ => None,
+  }
+}
+
+fn as_f64(v: &Value) -> Option<f64> {
+  match v {
+    Value::Int(n) => Some(*n as f64),
+    Value::Double(d) => Some(*d),
+    _ => None,
+  }
 }
 
 fn expected_handle_type() -> (&'static str, &'static [i32]) {
@@ -441,6 +465,57 @@ fn e2e_main() {
       Some(Err(e)) => {
         check(&format!("print_to_pdf succeeds (got: {e})"), false)
       }
+    }
+
+    // ---- the page's window metrics ----------------------------------------
+    // window.outerWidth / outerHeight / screenX / screenY describe the
+    // window's frame. WKWebView answered 0 for all four: WebKit asks its UI
+    // delegate for the frame and gets nothing unless the delegate answers.
+    // Engine-less backends never answer the script and report N/A.
+    let metrics = eval_js(
+      &win,
+      "[window.outerWidth, window.outerHeight, window.innerWidth, \
+       window.innerHeight, window.screenX, window.screenY]",
+    )
+    .await;
+    let nums: Option<Vec<f64>> = match &metrics {
+      Some(Value::List(l)) if l.len() == 6 => l.iter().map(as_f64).collect(),
+      _ => None,
+    };
+    match nums.as_deref() {
+      None if metrics.is_none() => {
+        na("page window metrics (backend has no web engine)")
+      }
+      None => check("the page reports its window metrics", false),
+      Some(&[ow, oh, iw, ih, sx, sy]) => {
+        let (px, py) = win.get_position();
+        eprintln!(
+          "[e2e] INFO page outer {ow}x{oh}, inner {iw}x{ih}, screen \
+           ({sx}, {sy}); get_position ({px}, {py})"
+        );
+        check(
+          &format!(
+            "the page's outerWidth/outerHeight are the window's ({ow}x{oh}, \
+             inner {iw}x{ih})"
+          ),
+          ow > 0.0 && oh > 0.0 && ow >= iw && oh >= ih,
+        );
+        let name = format!(
+          "the page's screenX/screenY are the window's position \
+           ({sx}, {sy}; get_position ({px}, {py}))"
+        );
+        let same =
+          (sx - px as f64).abs() <= 2.0 && (sy - py as f64).abs() <= 2.0;
+        let backend = std::env::var("LAUFEY_E2E_BACKEND").unwrap_or_default();
+        if !same && cfg!(windows) && backend == "webview" {
+          // WebView2 reports a different origin than get_position (and the
+          // page area as the outer size); its geometry is a separate issue.
+          na(&format!("{name}: WebView2 geometry differs"));
+        } else {
+          check(&name, same);
+        }
+      }
+      Some(_) => unreachable!(),
     }
 
     // ---- close-requested handler round-trip --------------------------------

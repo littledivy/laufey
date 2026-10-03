@@ -22,6 +22,8 @@ for c in \
 done
 [ -n "$rt" ] || { echo "native_e2e_runtime cdylib not found (build it first)"; exit 1; }
 export LAUFEY_RUNTIME_PATH="$rt"
+# Lets the runtime skip checks a backend does not support yet.
+export LAUFEY_E2E_BACKEND="$backend"
 
 # Resolve the backend binary (handles macOS .app bundles).
 case "$backend" in

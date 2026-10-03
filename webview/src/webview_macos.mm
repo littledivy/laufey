@@ -421,6 +421,16 @@ class MacSchemeExchange : public SchemeExchangeBase {
 
 @implementation LaufeyUIDelegate
 
+// The page's window.outerWidth / outerHeight and screenX / screenY. WebKit
+// asks its UI delegate for the window's frame through this informal
+// WKUIDelegatePrivate method (Safari implements it) and answers 0 for all
+// four when the delegate does not. WebKit flips the Cocoa frame itself.
+- (void)_webView:(WKWebView*)webView
+    getWindowFrameWithCompletionHandler:(void (^)(CGRect))completionHandler {
+  NSWindow* window = [webView window];
+  completionHandler(window ? NSRectToCGRect([window frame]) : CGRectZero);
+}
+
 // `target="_blank"` and `window.open()` request a new browsing context, which
 // the Navigation API interceptor never sees. WKWebView has no popup support, so
 // route http(s) destinations to the OS browser and create no new webview.
