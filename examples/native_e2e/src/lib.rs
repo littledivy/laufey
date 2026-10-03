@@ -27,6 +27,8 @@ use std::sync::Arc;
 
 use laufey::{MenuItem, TrayIcon, Window};
 
+mod launch_checks;
+
 static FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Minimal valid 1x1 transparent PNG. Used to give the tray a real icon so the
@@ -87,6 +89,14 @@ fn e2e_main() {
   rt.block_on(async move {
     // Pump the laufey event loop (JS-call dispatch, timers).
     tokio::spawn(async { laufey::run().await });
+
+    // The first window of a fresh launch is on screen and renders frames
+    // (launch_checks.rs). Its windows must be the process's first, so it
+    // runs instead of the battery below.
+    if std::env::var("LAUFEY_E2E_ONLY").as_deref() == Ok("launch-visibility") {
+      launch_checks::run().await;
+      finish();
+    }
 
     // ---- window creation + event-callback wiring -------------------------
     // Resize / move / focus handlers record the last event so we can drive the
@@ -539,13 +549,18 @@ fn e2e_main() {
     // code (e.g. SIGTRAP -> 133), which would corrupt the CI signal. The OS
     // reclaims everything on exit. `_ = &win;` keeps the window alive to here.
     let _ = &win;
-    let failed = FAILED.load(Ordering::SeqCst);
-    eprintln!("[e2e] OVERALL {}", if failed { "FAIL" } else { "PASS" });
-    let _ = std::io::Write::flush(&mut std::io::stderr());
-    // _exit avoids running C++ static destructors / atexit handlers in the
-    // backend, which is where the teardown crash lives.
-    unsafe { libc_exit(if failed { 1 } else { 0 }) };
+    finish();
   });
+}
+
+/// Prints the OVERALL line and ends the process with the run's exit code.
+fn finish() -> ! {
+  let failed = FAILED.load(Ordering::SeqCst);
+  eprintln!("[e2e] OVERALL {}", if failed { "FAIL" } else { "PASS" });
+  let _ = std::io::Write::flush(&mut std::io::stderr());
+  // _exit avoids running C++ static destructors / atexit handlers in the
+  // backend, which is where the teardown crash lives.
+  unsafe { libc_exit(if failed { 1 } else { 0 }) };
 }
 
 extern "C" {

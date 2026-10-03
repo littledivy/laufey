@@ -589,6 +589,35 @@ class MacSchemeExchange : public SchemeExchangeBase {
 
 namespace {
 
+// Shows `window`, a window that may activate the app. The first call in the
+// process also brings it in front of other apps' windows: it activates the
+// app, makes the window key, and orders it front even when the system
+// declines the activation (macOS 14+ only lets an app take activation
+// cooperatively, so one started from a terminal, an IDE or a background agent
+// can stay inactive). Without that the window opens behind the active app's,
+// and WebKit reads a covered window as occluded: the page reports
+// visibilityState "hidden" and requestAnimationFrame stops. Later calls make
+// the window key and order it front within the app, as before. Main thread
+// only; never for a hidden or a non-activating (panel) window.
+void RevealWindowAtLaunch(NSWindow* window) {
+  // Main thread only, so a plain flag is enough.
+  static bool revealed = false;
+  if (revealed) {
+    [window makeKeyAndOrderFront:nil];
+    return;
+  }
+  revealed = true;
+  if (@available(macOS 14.0, *)) {
+    [NSApp activate];
+  } else {
+    [NSApp activateIgnoringOtherApps:YES];
+  }
+  [window makeKeyAndOrderFront:nil];
+  // makeKeyAndOrderFront: orders the window front among this app's windows
+  // only; while the app is inactive that is still behind the active app.
+  [window orderFrontRegardless];
+}
+
 // NSEvent → W3C key/code lives in backend-common
 // (laufey_common::NSEventKeyToKey / NSEventKeyToCode). Local aliases keep the
 // existing callers compiling.
@@ -1141,7 +1170,7 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
         // Show without activating the app / stealing focus.
         [window orderFrontRegardless];
       } else {
-        [window makeKeyAndOrderFront:nil];
+        RevealWindowAtLaunch(window);
       }
     }
   });
@@ -1809,7 +1838,15 @@ void WKWebViewBackend::Show(uint32_t window_id) {
       }
       if (!win)
         return;
-      [win makeKeyAndOrderFront:nil];
+      if ([win styleMask] & NSWindowStyleMaskNonactivatingPanel) {
+        // A tray / menu-bar panel never activates the app.
+        [win makeKeyAndOrderFront:nil];
+      } else {
+        // Revealing a window created hidden (typically once its page has
+        // loaded): at launch it must come in front of the app the user
+        // started it from.
+        RevealWindowAtLaunch(win);
+      }
       if (web)
         [win makeFirstResponder:web];
     }

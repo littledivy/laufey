@@ -515,3 +515,29 @@ new test code.
 - macOS self-AX read of `AXMenuBar` / `AXExtrasMenuBar` and
   `NSMenu.performActionForItem(at:)`: empirically confirmed on macOS 15.5 with
   no accessibility permission granted (`§7.2`).
+
+---
+
+## 14. The first window at launch
+
+`scripts/native-e2e-run.sh <backend> --launch-visibility` runs `native_e2e`'s
+`launch_checks` alone (`LAUFEY_E2E_ONLY=launch-visibility`), on every backend.
+On macOS another process first covers every screen with an ordinary window
+(`scripts/launch-occluder.swift`), the way an editor or a terminal is in front
+when an app is started from it. See
+[window-management.md](window-management.md#the-first-window-at-launch).
+
+- **The launch window**, created hidden and shown once its page has loaded:
+  `get_visible` holds, and the page reads `document.visibilityState` "visible"
+  and runs a `requestAnimationFrame` callback within 2 s (measured from the
+  runtime, script round trips included). `document.hasFocus()` is logged, not
+  checked: whether the system grants the activation is its own decision.
+- **An unfocused window**: a second ordinary window, mostly beside the launch
+  window, left unfocused when the launch window is focused again: its page is
+  visible and draws a frame within 2 s. An engine does not throttle a visible
+  window for lacking focus (a fully covered one is occluded and rightly stops,
+  as in a browser).
+- **A window created hidden** stays hidden through the launch reveal (the
+  WebView backends; CEF and Winit have no hidden-on-create and report N/A).
+
+Winit has no page and reports N/A for the page checks.

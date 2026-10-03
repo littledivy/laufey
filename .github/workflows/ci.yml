@@ -244,6 +244,16 @@ jobs:
           LAUFEY_E2E_REQUIRE_TRAY: ${{ (runner.os == 'Linux' && matrix.backend == 'cef') && '1' || '' }}
         run: scripts/native-e2e-run.sh ${{ matrix.backend }}
 
+      # The first window of a fresh launch (launch_checks.rs): on screen, and
+      # its page visible and drawing a frame within 2 s; a hidden window left
+      # hidden. On macOS another process's window covers the screen first, as
+      # an editor or a terminal would when the app is started from it. Winit
+      # has no page and reports N/A for those checks.
+      - name: Launch visibility — first window on screen, frames drawn
+        timeout-minutes: 10
+        shell: bash
+        run: scripts/native-e2e-run.sh ${{ matrix.backend }} --launch-visibility
+
       # Layer 1 (Linux D-Bus StatusNotifier/dbusmenu observer) is built above
       # (compile-checked on real Linux) but not run here yet: the cef leg now
       # creates a real appindicator tray (runtime lib installed above), so

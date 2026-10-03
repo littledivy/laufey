@@ -3,13 +3,19 @@
 # Run the backend-agnostic native_e2e_runtime under a given backend and
 # propagate its PASS/FAIL exit code. See docs/e2e-testing.md.
 #
-#   scripts/native-e2e-run.sh <winit|webview|cef> [--layer1]
+#   scripts/native-e2e-run.sh <winit|webview|cef> [--layer1|--launch-visibility]
 #
 # --layer1 (Linux only) wraps the run in the D-Bus StatusNotifier/dbusmenu
 # observer (native_e2e_driver) under a private session bus.
+#
+# --launch-visibility runs only the launch checks (launch_checks.rs): the
+# first window of a fresh launch is on screen and its page visible and
+# drawing frames, and a hidden window stays hidden. On macOS a window from
+# another process covers the screen first (scripts/launch-occluder.swift),
+# as an editor or a terminal would when the app is started from it.
 set -euo pipefail
 
-backend="${1:?usage: native-e2e-run.sh <winit|webview|cef> [--layer1]}"
+backend="${1:?usage: native-e2e-run.sh <winit|webview|cef> [--layer1|--launch-visibility]}"
 mode="${2:-}"
 
 # Locate the runtime cdylib (.so / .dylib / .dll).
@@ -22,6 +28,8 @@ for c in \
 done
 [ -n "$rt" ] || { echo "native_e2e_runtime cdylib not found (build it first)"; exit 1; }
 export LAUFEY_RUNTIME_PATH="$rt"
+# Lets the runtime skip checks a backend does not support yet.
+export LAUFEY_E2E_BACKEND="$backend"
 
 # Resolve the backend binary (handles macOS .app bundles).
 case "$backend" in
@@ -50,6 +58,27 @@ if [ "$mode" = "--layer1" ]; then
   driver="$(ls target/release/native_e2e_driver 2>/dev/null | head -1 || true)"
   [ -n "$driver" ] || { echo "native_e2e_driver not built"; exit 1; }
   exec xvfb-run -a dbus-run-session -- "$driver" "$bin"
+fi
+
+if [ "$mode" = "--launch-visibility" ]; then
+  export LAUFEY_E2E_ONLY=launch-visibility
+  if [ "$(uname -s)" = "Darwin" ]; then
+    occluder="$(mktemp -d "${TMPDIR:-/tmp}/laufey-occluder.XXXXXX")"
+    swiftc -O scripts/launch-occluder.swift -o "$occluder/launch-occluder"
+    "$occluder/launch-occluder" >"$occluder/out" 2>&1 &
+    occluder_pid=$!
+    trap 'kill "$occluder_pid" 2>/dev/null || true' EXIT
+    for _ in $(seq 1 300); do
+      grep -q '^occluder ready' "$occluder/out" 2>/dev/null && break
+      sleep 0.1
+    done
+    grep '^occluder ready' "$occluder/out" ||
+      { cat "$occluder/out"; echo "the occluder did not come up" >&2; exit 1; }
+    # Not exec: the trap must stop the occluder when the backend exits.
+    rc=0
+    "$bin" || rc=$?
+    exit "$rc"
+  fi
 fi
 
 # Layer 0: run the backend directly. On Linux, headless via Xvfb + a private

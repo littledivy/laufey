@@ -151,3 +151,21 @@ does not expose global input. One macOS caveat: global monitors never see events
 delivered to your _own_ application, so if the event lands on another
 (non-passthrough) window of the same app that overlaps the overlay, the
 overlay's handlers do not fire for it.
+
+## The first window at launch
+
+An app is often started by something that stays frontmost: a terminal, an IDE's
+task runner, a CI agent. On macOS 14 and later an app only takes activation
+cooperatively, so such a launch can leave it inactive, and a window that was
+merely made key and ordered front would open behind the active app's windows.
+WebKit reads a fully covered window as occluded: the page reports
+`document.visibilityState` "hidden" and `requestAnimationFrame` stops until the
+window is uncovered. So on the WebView (WKWebView) backend, the first window an
+app shows (at creation, or with `show()` for one created `hidden`) activates the
+app, becomes key and is ordered in front of other apps' windows even when the
+activation is declined. A window created `hidden` is never revealed by this, and
+a non-activating panel (`no_activate`) never activates the app. Later windows
+are made key and ordered front within the app, as before. The CEF backend's
+first window already comes to the front this way. A window that is covered,
+minimized or on a locked screen is still throttled by the engine, as in a
+browser.
