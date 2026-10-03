@@ -426,6 +426,60 @@ void SetTrayDoubleClickHandlerLinux(uint32_t tray_id,
 #endif
 
 // ---------------------------------------------------------------------------
+// App data directory (per-app persistent web storage)
+// ---------------------------------------------------------------------------
+//
+// One directory per process holds the web engine's profile (localStorage,
+// IndexedDB, cookies, caches), so storage is per app and survives relaunches.
+// Resolved from the environment, like LAUFEY_APP_ID, because CEF and WebView2
+// need it before the runtime library is loaded:
+//
+//   1. LAUFEY_DATA_DIR, if set and absolute (a relative value is ignored with
+//      a warning);
+//   2. else <per-user app data>/<LAUFEY_APP_ID>: ~/Library/Application Support
+//      (macOS), $XDG_DATA_HOME or ~/.local/share (Linux), %LOCALAPPDATA%
+//      (Windows). An id outside [A-Za-z0-9._-], ".", or ".." is rejected with
+//      a warning;
+//   3. else none: each backend keeps its previous default storage.
+//
+// Each backend stores its profile in its own subdirectory (CEF/, WebView2/,
+// WebKitGTK/) so two engines never share one profile. See docs/app-data.md.
+
+// The resolved directory (UTF-8, absolute, no trailing separator), or "" when
+// none is configured. Resolved once per process; warnings go to stderr on the
+// first call. Does not create the directory.
+const std::string& AppDataDir();
+
+// `AppDataDir()/name`, created (with parents, owner-only on Unix) if missing.
+// Returns "" when no directory is configured or it can't be created (with a
+// warning), in which case the caller keeps its default storage.
+std::string AppDataSubdir(const char* name);
+
+// Pure resolution step behind AppDataDir(), exposed for tests. Reads nothing
+// from the environment or filesystem: `platform_base` is the per-user app-data
+// directory ("" if unknown). Appends a message to `warnings` (if non-null) for
+// every rejected input.
+std::string ResolveAppDataDirFrom(const std::string& data_dir_env,
+                                  const std::string& app_id_env,
+                                  const std::string& platform_base,
+                                  std::vector<std::string>* warnings);
+
+// True if `id` is usable as a single path component: non-empty, not "." or
+// "..", and only [A-Za-z0-9._-].
+bool IsSafeAppId(const std::string& id);
+
+// True for an absolute path on this platform ("/x"; "C:\x", "C:/x" or
+// "\\server\share" on Windows). Rejects embedded NULs.
+bool IsAbsolutePath(const std::string& path);
+
+// `base` + platform separator + `child`.
+std::string JoinPath(const std::string& base, const std::string& child);
+
+// mkdir -p. New components are created 0700 on Unix. Returns true if `path`
+// is (now) a directory.
+bool EnsureDirectory(const std::string& path);
+
+// ---------------------------------------------------------------------------
 // Test hooks (API >= 30)
 // ---------------------------------------------------------------------------
 

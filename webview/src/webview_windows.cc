@@ -767,8 +767,15 @@ void WebView2Backend::CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
     options = opts;
   }
 
+  // Per-app user data folder (LAUFEY_DATA_DIR / LAUFEY_APP_ID). Without one,
+  // pass nullptr to keep WebView2's default "<exe>.WebView2" next to the exe.
+  // Every window's environment must use the same folder.
+  static const std::wstring user_data_folder =
+      laufey_common::Utf8ToWide(laufey_common::AppDataSubdir("WebView2"));
+
   HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
-      nullptr, nullptr, options.Get(),
+      nullptr, user_data_folder.empty() ? nullptr : user_data_folder.c_str(),
+      options.Get(),
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
           [this, window_id, hwnd, with_app_scheme](
               HRESULT result, ICoreWebView2Environment* env) -> HRESULT {

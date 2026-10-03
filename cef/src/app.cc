@@ -486,6 +486,21 @@ bool LaufeyHandler::OnProcessMessageReceived(
   return false;
 }
 
+bool LaufeyHandleAlreadyRunningAppRelaunch() {
+  std::cerr << "laufey: another launch of this app was ignored (it shares this "
+               "instance's web data directory)"
+            << std::endl;
+  return true;
+}
+
+void LaufeyReportCefInitializeFailure(const std::string& root_cache_path) {
+  if (CefGetExitCode() == CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) {
+    std::cerr << "laufey: another instance is already running with the web "
+                 "data directory \""
+              << root_cache_path << "\"; exiting" << std::endl;
+  }
+}
+
 void LaufeyApp::OnRegisterCustomSchemes(
     CefRawPtr<CefSchemeRegistrar> registrar) {
   registrar->AddCustomScheme(

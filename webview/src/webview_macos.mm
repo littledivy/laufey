@@ -1,6 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
 #import <Cocoa/Cocoa.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <UserNotifications/UserNotifications.h>
 #import <WebKit/WebKit.h>
 
@@ -415,6 +416,62 @@ class MacSchemeExchange : public SchemeExchangeBase {
 }
 
 @end
+
+// ============================================================================
+// Per-app website data store
+// ============================================================================
+
+// Namespace for the name-based (v5) UUIDs below. Fixed forever: changing it
+// would orphan every app's stored data.
+static const uuid_t kLaufeyDataStoreNamespace = {
+    0x91, 0x48, 0x13, 0xaa, 0x31, 0x15, 0x47, 0x24,
+    0x93, 0x7f, 0x29, 0xb5, 0x4f, 0x44, 0x13, 0x56};  // 914813aa-3115-4724-...
+
+// RFC 9562 UUIDv5 (SHA-1) of `name` in kLaufeyDataStoreNamespace.
+static NSUUID* LaufeyNameBasedUUID(const std::string& name) {
+  std::string input(reinterpret_cast<const char*>(kLaufeyDataStoreNamespace),
+                    sizeof(uuid_t));
+  input += name;
+  unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+  // SHA-1 is what RFC 9562 specifies for v5; this is an identifier, not a
+  // security boundary.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  CC_SHA1(input.data(), static_cast<CC_LONG>(input.size()), digest);
+#pragma clang diagnostic pop
+  uuid_t bytes;
+  memcpy(bytes, digest, sizeof(uuid_t));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;  // version 5
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;  // RFC 9562 variant
+  return [[NSUUID alloc] initWithUUIDBytes:bytes];
+}
+
+// The data store every WKWebView uses, or nil for the default store. WKWebView
+// can't be pointed at an arbitrary directory, so a configured app data dir
+// maps to a persistent identifier-based store (macOS 14+) instead: the UUIDv5
+// of LAUFEY_DATA_DIR when that is set, else of LAUFEY_APP_ID. Without either,
+// or before macOS 14, the default store (keyed by the host bundle id) is kept.
+static WKWebsiteDataStore* LaufeyWebsiteDataStore() {
+  static WKWebsiteDataStore* store = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    const std::string& dir = laufey_common::AppDataDir();
+    if (dir.empty())
+      return;
+    // AppDataDir() is non-empty, so it came from a valid LAUFEY_DATA_DIR or,
+    // failing that, from a valid LAUFEY_APP_ID.
+    const char* data_dir = getenv("LAUFEY_DATA_DIR");
+    const char* app_id = getenv("LAUFEY_APP_ID");
+    std::string name = (data_dir && laufey_common::IsAbsolutePath(data_dir))
+                           ? dir
+                           : std::string(app_id ? app_id : "");
+    if (@available(macOS 14.0, *)) {
+      store =
+          [WKWebsiteDataStore dataStoreForIdentifier:LaufeyNameBasedUUID(name)];
+    }
+  });
+  return store;
+}
 
 @interface LaufeyUIDelegate : NSObject <WKUIDelegate>
 @end
@@ -990,6 +1047,9 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       handler.windowId = window_id;
 
       WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
+      if (WKWebsiteDataStore* store = LaufeyWebsiteDataStore()) {
+        config.websiteDataStore = store;
+      }
       [config.userContentController addScriptMessageHandler:handler
                                                        name:@"laufey"];
 

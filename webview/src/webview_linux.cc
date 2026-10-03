@@ -281,6 +281,42 @@ static gboolean on_configure_event(GtkWidget* widget, GdkEventConfigure* event,
   return FALSE;
 }
 
+// The web context every webview (and every URI scheme registration) uses.
+// With a per-app data dir (LAUFEY_DATA_DIR / LAUFEY_APP_ID) this is an owned
+// context whose website data (localStorage, IndexedDB, caches) lives under
+// <dir>/WebKitGTK/{data,cache} and whose cookies persist to
+// <dir>/WebKitGTK/data/cookies.sqlite. Otherwise it is the default context, as
+// before (data under the prgname in the XDG dirs, cookies not persisted). GTK
+// main thread only.
+static WebKitWebContext* LaufeyWebContext() {
+  static WebKitWebContext* ctx = [] {
+    std::string root = laufey_common::AppDataSubdir("WebKitGTK");
+    if (root.empty()) {
+      return webkit_web_context_get_default();
+    }
+    std::string data_dir = laufey_common::JoinPath(root, "data");
+    std::string cache_dir = laufey_common::JoinPath(root, "cache");
+    if (!laufey_common::EnsureDirectory(data_dir) ||
+        !laufey_common::EnsureDirectory(cache_dir)) {
+      std::cerr << "laufey: could not create web data directory \"" << root
+                << "\"; web data will not be persisted per app" << std::endl;
+      return webkit_web_context_get_default();
+    }
+    WebKitWebsiteDataManager* manager = webkit_website_data_manager_new(
+        "base-data-directory", data_dir.c_str(), "base-cache-directory",
+        cache_dir.c_str(), nullptr);
+    WebKitWebContext* context =
+        webkit_web_context_new_with_website_data_manager(manager);
+    std::string cookies = laufey_common::JoinPath(data_dir, "cookies.sqlite");
+    webkit_cookie_manager_set_persistent_storage(
+        webkit_website_data_manager_get_cookie_manager(manager),
+        cookies.c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+    g_object_unref(manager);  // the context keeps its own reference
+    return context;           // owned for the life of the process
+  }();
+  return ctx;
+}
+
 // Fired as a navigation progresses through its load states. We only care about
 // WEBKIT_LOAD_FINISHED, which signals the document and subresources have loaded
 // (and the web process has content to composite). The window_id is passed
@@ -737,7 +773,8 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     g_content_manager_to_laufey_id[content_manager] = window_id;
 
     WebKitWebView* webview = WEBKIT_WEB_VIEW(
-        webkit_web_view_new_with_user_content_manager(content_manager));
+        g_object_new(WEBKIT_TYPE_WEB_VIEW, "web-context", LaufeyWebContext(),
+                     "user-content-manager", content_manager, nullptr));
 
     g_signal_connect(webview, "script-dialog", G_CALLBACK(on_script_dialog),
                      nullptr);
@@ -1682,8 +1719,9 @@ void OnAppSchemeRequest(WebKitURISchemeRequest* request, gpointer) {
 }  // namespace
 
 void WebKitGTKBackend::RegisterSchemeHandler(const std::string& scheme) {
-  // Register on the default web context (shared by all webviews). Must run on
-  // the GTK main thread; the runtime calls this from its own thread.
+  // Register on the web context shared by all webviews (LaufeyWebContext).
+  // Must run on the GTK main thread; the runtime calls this from its own
+  // thread.
   char* scheme_dup = g_strdup(scheme.c_str());
   g_idle_add(
       [](gpointer data) -> gboolean {
@@ -1691,7 +1729,7 @@ void WebKitGTKBackend::RegisterSchemeHandler(const std::string& scheme) {
         static std::atomic<bool> registered{false};
         bool expected = false;
         if (registered.compare_exchange_strong(expected, true)) {
-          WebKitWebContext* ctx = webkit_web_context_get_default();
+          WebKitWebContext* ctx = LaufeyWebContext();
           webkit_web_context_register_uri_scheme(ctx, s, OnAppSchemeRequest,
                                                  nullptr, nullptr);
           WebKitSecurityManager* sm =

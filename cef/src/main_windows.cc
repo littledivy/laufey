@@ -182,6 +182,12 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
     return renderer_app_->GetRenderProcessHandler();
   }
 
+  bool OnAlreadyRunningAppRelaunch(
+      CefRefPtr<CefCommandLine> command_line,
+      const CefString& current_directory) override {
+    return LaufeyHandleAlreadyRunningAppRelaunch();
+  }
+
   void OnBeforeCommandLineProcessing(
       const CefString& process_type,
       CefRefPtr<CefCommandLine> command_line) override {
@@ -303,18 +309,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   settings.no_sandbox = true;
   settings.log_severity = LaufeyCefLogSeverity();
 
-  // Set cache path. CefString decodes std::string as UTF-8, so read the
-  // temp dir wide and convert; GetTempPathA would hand over active-codepage
-  // bytes that garble non-ASCII profile names. On failure leave the cache
-  // path unset (CEF then runs with its in-memory default) rather than
-  // pointing it at garbage.
-  wchar_t tempPath[MAX_PATH + 2];
-  DWORD tempLen = GetTempPathW(MAX_PATH + 2, tempPath);
-  if (tempLen > 0 && tempLen < MAX_PATH + 2) {
-    std::string cache_path = laufey_common::WideToUtf8(tempPath) +
-                             "laufey_cef_" +
-                             std::to_string(GetCurrentProcessId());
+  // Set cache path. With a per-app data dir (LAUFEY_DATA_DIR / LAUFEY_APP_ID)
+  // the profile persists there; cache_path must be set too (equal to the root)
+  // or CEF runs the browser "incognito" and keeps localStorage/cookies in
+  // memory. Without one, keep the throwaway per-process temp root.
+  //
+  // CefString decodes std::string as UTF-8, so read the temp dir wide and
+  // convert; GetTempPathA would hand over active-codepage bytes that garble
+  // non-ASCII profile names. On failure leave the cache path unset (CEF then
+  // runs with its in-memory default) rather than pointing it at garbage.
+  std::string cache_path = laufey_common::AppDataSubdir("CEF");
+  if (!cache_path.empty()) {
     CefString(&settings.root_cache_path) = cache_path;
+    CefString(&settings.cache_path) = cache_path;
+  } else {
+    wchar_t tempPath[MAX_PATH + 2];
+    DWORD tempLen = GetTempPathW(MAX_PATH + 2, tempPath);
+    if (tempLen > 0 && tempLen < MAX_PATH + 2) {
+      cache_path = laufey_common::WideToUtf8(tempPath) + "laufey_cef_" +
+                   std::to_string(GetCurrentProcessId());
+      CefString(&settings.root_cache_path) = cache_path;
+    }
   }
 
   wchar_t port_buf[16];
@@ -330,6 +345,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
   }
 
   if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
+    LaufeyReportCefInitializeFailure(cache_path);
     return 1;
   }
 

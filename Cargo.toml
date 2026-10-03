@@ -13,4 +13,5 @@ members = [
     "examples/cef_e2e",
     "examples/native_e2e",
     "examples/native_e2e_driver",
+    "examples/storage_e2e",
 ]

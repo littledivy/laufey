@@ -67,6 +67,19 @@ inline cef_log_severity_t LaufeyCefLogSeverity() {
 // show.
 extern std::string g_app_id;
 
+// With a persistent profile (LAUFEY_DATA_DIR / LAUFEY_APP_ID), CEF's process
+// singleton allows one instance per root_cache_path: a second launch hands its
+// arguments to the running instance and exits from CefInitialize.
+//
+// Called from each platform's OnAlreadyRunningAppRelaunch in the running
+// instance. Returns true (handled) so CEF doesn't open a default Chrome-style
+// window; the relaunch is otherwise ignored until a single-instance API lands.
+bool LaufeyHandleAlreadyRunningAppRelaunch();
+
+// Called in the launching process when CefInitialize fails; explains the
+// "another instance owns this profile" case on stderr.
+void LaufeyReportCefInitializeFailure(const std::string& root_cache_path);
+
 // Open `url` in the user's default OS browser. Implemented per platform in
 // main_mac.mm / main_windows.cc / main_linux.cc. Used to honor the external
 // link redirect policy (laufey_external_links.h).
@@ -225,6 +238,12 @@ class LaufeyApp : public CefApp, public CefBrowserProcessHandler {
   }
 
   void OnContextInitialized() override;
+
+  bool OnAlreadyRunningAppRelaunch(
+      CefRefPtr<CefCommandLine> command_line,
+      const CefString& current_directory) override {
+    return LaufeyHandleAlreadyRunningAppRelaunch();
+  }
 
   // Register the custom "app" scheme (standard, secure, fetch/CORS-enabled) so
   // the in-process scheme handler can serve pages over app:// like an https

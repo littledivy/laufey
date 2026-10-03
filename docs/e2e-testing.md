@@ -515,3 +515,28 @@ new test code.
 - macOS self-AX read of `AXMenuBar` / `AXExtrasMenuBar` and
   `NSMenu.performActionForItem(at:)`: empirically confirmed on macOS 15.5 with
   no accessibility permission granted (`§7.2`).
+
+---
+
+## 14. Per-app web storage (`storage_e2e`)
+
+[App data & web storage](app-data.md) needs several launches of the backend, so
+it has its own runtime, `examples/storage_e2e`, and driver,
+`scripts/storage-e2e-run.sh <webview|cef>`. Each launch serves a page on a fixed
+loopback port (one origin across launches), writes or reads `localStorage` plus
+a persistent cookie, and quits through the normal path so the engine flushes its
+profile. The driver asserts:
+
+- persistence: a value written under one `LAUFEY_APP_ID` (and under one
+  `LAUFEY_DATA_DIR`) is read back by the next launch;
+- isolation: another app id on the same origin doesn't see it, nor does an
+  unconfigured launch;
+- unchanged defaults: an unconfigured CEF launch still gets a throwaway profile;
+- on-disk layout: `<dir>/CEF`, `<dir>/WebView2` or `<dir>/WebKitGTK` (with
+  `data/cookies.sqlite`), created `0700` on Unix; no directory for WKWebView;
+- CEF only: a second instance of a running app exits during startup and the
+  first is unaffected.
+
+The `native-e2e` CI job runs it after Layer 0 on every webview/cef leg, plus a
+storage-only webview/Linux leg (the Layer-0 battery is excluded there, see the
+status note above).

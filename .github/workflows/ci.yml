@@ -60,6 +60,14 @@ jobs:
       # backends require display servers, so we don't run their tests in CI.
       - run: cargo test -p laufey --lib
       - run: cargo test -p laufey --doc
+      # backend-common's app data directory resolver (plain C++, no deps).
+      - name: backend-common data_dir_test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror \
+            -Ibackend-common/include -Icapi/include \
+            backend-common/tests/data_dir_test.cc backend-common/src/data_dir.cc \
+            -o "$RUNNER_TEMP/data_dir_test"
+          "$RUNNER_TEMP/data_dir_test"
 
   build-winit:
     name: winit / ${{ matrix.target }}
@@ -136,8 +144,6 @@ jobs:
   #                     building a muda menu with no GTK init.
   #   - webview / linux: WebKitGTK/Xlib isn't thread-safe under the worker-thread
   #                      runtime (xcb_xlib_threads_sequence_lost).
-  #   - cef|webview / windows: CEF's Windows dist extraction and the WebView2
-  #                            run are flaky in this job; need hands-on debugging.
   native-e2e:
     name: native-e2e / ${{ matrix.backend }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -150,7 +156,11 @@ jobs:
           - { os: macos-14, backend: cef }
           - { os: windows-latest, backend: winit }
           - { os: windows-latest, backend: webview }
+          - { os: windows-latest, backend: cef }
           - { os: ubuntu-22.04, backend: cef }
+          # Storage e2e only: the Layer-0 battery is excluded on webview/linux
+          # (see above).
+          - { os: ubuntu-22.04, backend: webview, storage_only: true }
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -219,6 +229,9 @@ jobs:
         shell: bash
         run: |
           cargo build --release -p native_e2e_runtime
+          if [ "${{ matrix.backend }}" != "winit" ]; then
+            cargo build --release -p storage_e2e_runtime
+          fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             cargo build --release -p native_e2e_driver
           fi
@@ -227,6 +240,7 @@ jobs:
         if: runner.os == 'Windows' && matrix.backend != 'winit'
 
       - name: Build backend
+        if: ${{ !(runner.os == 'Windows' && matrix.backend == 'cef') }}
         shell: bash
         run: |
           if [ "${{ runner.os }}" = "Windows" ] && [ "${{ matrix.backend }}" = "webview" ]; then
@@ -235,7 +249,15 @@ jobs:
             make ${{ matrix.backend }}
           fi
 
+      # As in build-cef: run make from the default shell (pwsh), where the
+      # Windows tar extracts the CEF dist. Under Git bash, GNU tar reads the
+      # "D:/..." archive path as a remote host and the extraction fails.
+      - name: Build backend (Windows, cef)
+        if: runner.os == 'Windows' && matrix.backend == 'cef'
+        run: make cef
+
       - name: Layer 0 — readback / events / clipboard / menu+tray clicks
+        if: ${{ !matrix.storage_only }}
         shell: bash
         env:
           # On the cef/linux leg the Ayatana runtime lib is installed above, so
@@ -243,6 +265,14 @@ jobs:
           # instead of reporting N/A (issue #63).
           LAUFEY_E2E_REQUIRE_TRAY: ${{ (runner.os == 'Linux' && matrix.backend == 'cef') && '1' || '' }}
         run: scripts/native-e2e-run.sh ${{ matrix.backend }}
+
+      # Per-app web storage (LAUFEY_APP_ID / LAUFEY_DATA_DIR): persistence
+      # across relaunches, isolation between apps, unchanged defaults. See
+      # docs/app-data.md.
+      - name: Storage — per-app persistence / isolation
+        if: matrix.backend != 'winit'
+        shell: bash
+        run: scripts/storage-e2e-run.sh ${{ matrix.backend }}
 
       # Layer 1 (Linux D-Bus StatusNotifier/dbusmenu observer) is built above
       # (compile-checked on real Linux) but not run here yet: the cef leg now

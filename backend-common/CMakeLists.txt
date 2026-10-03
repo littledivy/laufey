@@ -37,6 +37,7 @@ set(LAUFEY_COMMON_SRCS
   src/title_badge.cc
   src/laufey_value.cc
   src/test_hooks.cc
+  src/data_dir.cc
 )
 
 if(APPLE)

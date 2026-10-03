@@ -390,9 +390,19 @@ int main(int argc, char* argv[]) {
     // libdispatch queue is serviced — required for tray/status items.
     settings.external_message_pump = true;
 
-    std::string cache_path = std::string(NSTemporaryDirectory().UTF8String) +
-                             "laufey_cef_" + std::to_string(getpid());
-    CefString(&settings.root_cache_path) = cache_path;
+    // With a per-app data dir (LAUFEY_DATA_DIR / LAUFEY_APP_ID) the profile
+    // persists there; cache_path must be set too (equal to the root) or CEF
+    // runs the browser "incognito" and keeps localStorage/cookies in memory.
+    // Without one, keep the throwaway per-process temp root.
+    std::string cache_path = laufey_common::AppDataSubdir("CEF");
+    if (!cache_path.empty()) {
+      CefString(&settings.root_cache_path) = cache_path;
+      CefString(&settings.cache_path) = cache_path;
+    } else {
+      cache_path = std::string(NSTemporaryDirectory().UTF8String) +
+                   "laufey_cef_" + std::to_string(getpid());
+      CefString(&settings.root_cache_path) = cache_path;
+    }
 
     if (const char* port_env = getenv("LAUFEY_REMOTE_DEBUGGING_PORT")) {
       int port = atoi(port_env);
@@ -408,6 +418,7 @@ int main(int argc, char* argv[]) {
     g_pump = [[LaufeyPumpTarget alloc] init];
 
     if (!CefInitialize(main_args, settings, app.get(), nullptr)) {
+      LaufeyReportCefInitializeFailure(cache_path);
       return CefGetExitCode();
     }
 
