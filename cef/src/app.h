@@ -60,7 +60,8 @@ inline cef_log_severity_t LaufeyCefLogSeverity() {
 }
 
 // Wayland app_id / X11 WM_CLASS for the app's windows. Read at startup from
-// LAUFEY_APP_ID (falling back to LAUFEY_APP_NAME). Empty leaves the
+// LAUFEY_APP_ID or the launch file's "appId" (laufey_launch_config.h),
+// falling back to LAUFEY_APP_NAME. Empty leaves the
 // CEF/Chromium default (the backend binary name). On Wayland the compositor
 // keys the taskbar/overview icon off this app_id matching an installed
 // `<app_id>.desktop`, so it must equal the desktop file's id for the icon to

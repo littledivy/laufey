@@ -60,6 +60,14 @@ jobs:
       # backends require display servers, so we don't run their tests in CI.
       - run: cargo test -p laufey --lib
       - run: cargo test -p laufey --doc
+      # backend-common's launch file reader (plain C++, no deps).
+      - name: backend-common launch_config_test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -Ibackend-common/include \
+            backend-common/tests/launch_config_test.cc \
+            backend-common/src/launch_config.cc \
+            -o "$RUNNER_TEMP/launch_config_test"
+          "$RUNNER_TEMP/launch_config_test"
 
   build-winit:
     name: winit / ${{ matrix.target }}

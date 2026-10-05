@@ -17,6 +17,7 @@
 #include "include/wrapper/cef_helpers.h"
 
 #include "app.h"
+#include "laufey_launch_config.h"
 #include "renderer_app.h"
 #include "runtime_loader.h"
 
@@ -794,12 +795,9 @@ int main(int argc, char* argv[]) {
 
   // Wayland app_id / X11 WM_CLASS for our windows (see LaufeyWindowDelegate::
   // GetLinuxWindowProperties). Prefer the reverse-DNS identifier the embedder
-  // also uses for the `.desktop` file; fall back to the display name.
-  if (const char* app_id = getenv("LAUFEY_APP_ID")) {
-    if (*app_id) {
-      g_app_id = app_id;
-    }
-  }
+  // also uses for the `.desktop` file (LAUFEY_APP_ID, or "appId" in the
+  // launch file); fall back to the display name.
+  g_app_id = laufey_common::LaunchAppId();
   if (g_app_id.empty()) {
     if (const char* app_name = getenv("LAUFEY_APP_NAME")) {
       if (*app_name) {

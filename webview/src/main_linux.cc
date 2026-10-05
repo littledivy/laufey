@@ -1,5 +1,6 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
+#include "laufey_launch_config.h"
 #include "runtime_loader.h"
 
 #include <gtk/gtk.h>
@@ -16,17 +17,14 @@ int main(int argc, char* argv[]) {
 
   // Application identity for the window manager. The embedder (e.g. deno
   // desktop) passes LAUFEY_APP_ID (the reverse-DNS identifier it also uses for
-  // the `.desktop` file) and LAUFEY_APP_NAME (the display name). GTK derives a
-  // Wayland xdg_toplevel app_id from g_get_prgname() and an X11 WM_CLASS from
-  // the program class, so set both to the app id — otherwise they default to
-  // this backend binary's name and the compositor shows a generic placeholder
-  // icon instead of the one from the matching `<app_id>.desktop`.
-  std::string appId;
-  if (const char* env = getenv("LAUFEY_APP_ID")) {
-    if (*env) {
-      appId = env;
-    }
-  }
+  // the `.desktop` file) or ships it as "appId" in laufey-launch.json next to
+  // this binary (see laufey_launch_config.h), and LAUFEY_APP_NAME (the display
+  // name). GTK derives a Wayland xdg_toplevel app_id from g_get_prgname() and
+  // an X11 WM_CLASS from the program class, so set both to the app id —
+  // otherwise they default to this backend binary's name and the compositor
+  // shows a generic placeholder icon instead of the one from the matching
+  // `<app_id>.desktop`.
+  std::string appId = laufey_common::LaunchAppId();
   if (appId.empty()) {
     if (const char* env = getenv("LAUFEY_APP_NAME")) {
       if (*env) {
