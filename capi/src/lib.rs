@@ -270,13 +270,18 @@ impl Value {
           .value_double
           .map(|f| f(bd, *v))
           .unwrap_or(std::ptr::null_mut()),
-        Value::String(s) => {
-          let c_str = CString::new(s.as_str()).unwrap();
-          api
+        // A string with a NUL byte cannot cross the C ABI (C strings end at
+        // the first NUL): it becomes null rather than a truncated string.
+        Value::String(s) => match CString::new(s.as_str()) {
+          Ok(c_str) => api
             .value_string
             .map(|f| f(bd, c_str.as_ptr()))
-            .unwrap_or(std::ptr::null_mut())
-        }
+            .unwrap_or(std::ptr::null_mut()),
+          Err(_) => api
+            .value_null
+            .map(|f| f(bd))
+            .unwrap_or(std::ptr::null_mut()),
+        },
         Value::List(items) => {
           let list = api
             .value_list
@@ -300,7 +305,11 @@ impl Value {
           if !dict.is_null() {
             if let Some(set) = api.value_dict_set {
               for (k, v) in map {
-                let c_key = CString::new(k.as_str()).unwrap();
+                // A key with a NUL byte cannot cross the C ABI: the entry
+                // is left out.
+                let Ok(c_key) = CString::new(k.as_str()) else {
+                  continue;
+                };
                 let raw = v.to_raw();
                 set(dict, c_key.as_ptr(), raw);
               }
@@ -313,6 +322,19 @@ impl Value {
           .map(|f| f(bd, data.as_ptr() as *const c_void, data.len()))
           .unwrap_or(std::ptr::null_mut()),
       }
+    }
+  }
+
+  /// Whether a string or dict key anywhere in this value contains a NUL
+  /// byte (which the C ABI's strings cannot carry).
+  fn has_interior_nul(&self) -> bool {
+    match self {
+      Value::String(s) => s.contains('\0'),
+      Value::List(items) => items.iter().any(Value::has_interior_nul),
+      Value::Dict(map) => map
+        .iter()
+        .any(|(k, v)| k.contains('\0') || v.has_interior_nul()),
+      _ => false,
     }
   }
 
@@ -352,6 +374,9 @@ impl Value {
   }
 }
 
+const NUL_IN_RESULT: &str =
+  "the result contains a NUL byte, which cannot cross the laufey C ABI";
+
 pub struct JsCall {
   pub window_id: u32,
   pub call_id: u64,
@@ -360,7 +385,13 @@ pub struct JsCall {
 }
 
 impl JsCall {
+  /// Answers the call with `value`. A string in `value` (or a dict key)
+  /// containing a NUL byte cannot cross the C ABI, whose strings end at the
+  /// first NUL: the call is then rejected with an error saying so instead.
   pub fn resolve(self, value: Value) {
+    if value.has_interior_nul() {
+      return self.reject(Value::String(NUL_IN_RESULT.into()));
+    }
     let api = api();
     if let Some(respond) = api.js_call_respond {
       let raw = value.to_raw();
@@ -370,7 +401,13 @@ impl JsCall {
     }
   }
 
+  /// Rejects the call with `error` (NUL bytes as for [`JsCall::resolve`]).
   pub fn reject(self, error: Value) {
+    let error = if error.has_interior_nul() {
+      Value::String(NUL_IN_RESULT.into())
+    } else {
+      error
+    };
     let api = api();
     if let Some(respond) = api.js_call_respond {
       let raw = error.to_raw();
@@ -642,10 +679,13 @@ pub fn register_scheme_handler<F>(scheme: &str, handler: F)
 where
   F: Fn(SchemeRequest) + Send + Sync + 'static,
 {
+  // A scheme with a NUL byte is no scheme: nothing is registered.
+  let Ok(c_scheme) = CString::new(scheme) else {
+    return;
+  };
   *scheme_handler_store().lock().unwrap() = Some(Box::new(handler));
   let api = api();
   if let Some(register) = api.register_scheme_handler {
-    let c_scheme = CString::new(scheme).expect("scheme contains NUL");
     unsafe {
       register(
         api.backend_data,
@@ -787,10 +827,11 @@ impl Window {
     self
   }
 
+  /// A `title` containing a NUL byte cannot cross the C ABI; the call is
+  /// then a no-op.
   pub fn set_title(&self, title: &str) {
     let api = api();
-    if let Some(f) = api.set_title {
-      let c_title = CString::new(title).expect("Invalid title");
+    if let (Some(f), Ok(c_title)) = (api.set_title, CString::new(title)) {
       unsafe { f(api.backend_data, self.id, c_title.as_ptr()) };
     }
   }
@@ -800,10 +841,10 @@ impl Window {
     self
   }
 
+  /// A `url` containing a NUL byte is not a URL; the call is then a no-op.
   pub fn navigate(&self, url: &str) {
     let api = api();
-    if let Some(f) = api.navigate {
-      let c_url = CString::new(url).expect("Invalid URL");
+    if let (Some(f), Ok(c_url)) = (api.navigate, CString::new(url)) {
       unsafe { f(api.backend_data, self.id, c_url.as_ptr()) };
     }
   }
@@ -1031,13 +1072,20 @@ impl Window {
     }
   }
 
+  /// A `script` containing a NUL byte cannot cross the C ABI: it is not
+  /// run, and `callback` receives an `Err` saying so.
   pub fn execute_js<F>(&self, script: &str, callback: Option<F>)
   where
     F: FnOnce(Result<Value, Value>) + Send + 'static,
   {
     let api = api();
     if let Some(f) = api.execute_js {
-      let c_script = CString::new(script).expect("Invalid script");
+      let Ok(c_script) = CString::new(script) else {
+        if let Some(cb) = callback {
+          cb(Err(Value::String("script contains a NUL byte".into())));
+        }
+        return;
+      };
 
       match callback {
         Some(cb_fn) => {
@@ -1529,9 +1577,14 @@ fn show_dialog_blocking(
   let Some(f) = api.show_dialog else {
     return (false, None);
   };
-  let c_title = CString::new(title).expect("Invalid title");
-  let c_message = CString::new(message).expect("Invalid message");
-  let c_default = CString::new(default_value).expect("Invalid default value");
+  // Text with a NUL byte cannot cross the C ABI: no dialog, as if cancelled.
+  let (Ok(c_title), Ok(c_message), Ok(c_default)) = (
+    CString::new(title),
+    CString::new(message),
+    CString::new(default_value),
+  ) else {
+    return (false, None);
+  };
   let mut out_input: *mut c_char = std::ptr::null_mut();
   let want_input = dialog_type == LAUFEY_DIALOG_PROMPT;
   // SAFETY: All pointers are valid for the duration of the call. The
@@ -1597,12 +1650,12 @@ pub fn read_clipboard_text() -> Option<String> {
 ///
 /// Passing an empty string clears the clipboard. Mirrors the web
 /// `navigator.clipboard.writeText()` API. No-op if the backend does not
-/// support clipboard access. Must be called on the UI thread.
+/// support clipboard access, or if `text` contains a NUL byte (which cannot
+/// cross the C ABI). Must be called on the UI thread.
 pub fn write_clipboard_text(text: &str) {
   let api = api();
-  if let Some(f) = api.write_clipboard_text {
-    let c_text =
-      CString::new(text).expect("clipboard text contained a NUL byte");
+  if let (Some(f), Ok(c_text)) = (api.write_clipboard_text, CString::new(text))
+  {
     // SAFETY: `c_text` outlives the call; the backend copies the bytes.
     unsafe { f(api.backend_data, c_text.as_ptr()) };
   }
@@ -1826,14 +1879,16 @@ unsafe extern "C" fn dock_reopen_callback(
 
 /// Set a short text badge on the app's dock icon (macOS) or taskbar icon
 /// (Windows), or prefix the focused window's title with `"(text) "` (Linux).
-/// Pass `None` or an empty string to clear the badge.
+/// Pass `None` or an empty string to clear the badge. Text containing a NUL
+/// byte cannot cross the C ABI; the call is then a no-op.
 pub fn set_dock_badge(text: Option<&str>) {
   let api = api();
   if let Some(f) = api.set_dock_badge {
     match text {
       Some(t) if !t.is_empty() => {
-        let c_text = CString::new(t).expect("Invalid badge text");
-        unsafe { f(api.backend_data, c_text.as_ptr()) };
+        if let Ok(c_text) = CString::new(t) {
+          unsafe { f(api.backend_data, c_text.as_ptr()) };
+        }
       }
       _ => unsafe { f(api.backend_data, std::ptr::null()) },
     }
@@ -2186,9 +2241,11 @@ impl TrayIcon {
     let api = api();
     if let Some(f) = api.set_tray_tooltip {
       match text {
+        // Text with a NUL byte cannot cross the C ABI: a no-op.
         Some(t) if !t.is_empty() => {
-          let c_text = CString::new(t).expect("Invalid tooltip");
-          unsafe { f(api.backend_data, self.id, c_text.as_ptr()) };
+          if let Ok(c_text) = CString::new(t) {
+            unsafe { f(api.backend_data, self.id, c_text.as_ptr()) };
+          }
         }
         _ => unsafe { f(api.backend_data, self.id, std::ptr::null()) },
       }
@@ -2279,10 +2336,12 @@ impl Drop for TrayIcon {
 /// laufey::set_js_namespace("MyApp");
 /// // JS code can now use: window.MyApp.greet("world")
 /// ```
+///
+/// A `name` containing a NUL byte is no JS identifier; the call is then a
+/// no-op.
 pub fn set_js_namespace(name: &str) {
   let api = api();
-  if let Some(f) = api.set_js_namespace {
-    let c_name = CString::new(name).unwrap();
+  if let (Some(f), Ok(c_name)) = (api.set_js_namespace, CString::new(name)) {
     unsafe { f(api.backend_data, c_name.as_ptr()) };
   }
 }
@@ -3264,7 +3323,218 @@ mod tests {
   fn install_pdf_fake() {
     let mut fake: LaufeyBackendApi = unsafe { std::mem::zeroed() };
     fake.print_to_pdf = Some(fake_print_to_pdf);
+    nul::install(&mut fake);
     let _ = BACKEND_API.set(Box::leak(Box::new(fake)));
+  }
+
+  // Strings reach the backend as C strings, which end at the first NUL. A
+  // caller-supplied string with a NUL byte (arbitrary JS can produce one)
+  // must make the wrapper fail safely (no backend call, the function's
+  // failure value) and never panic: a panic unwinding across the C ABI
+  // aborts the process.
+  mod nul {
+    use super::super::*;
+    use std::sync::Mutex;
+
+    // What reached the fake backend, by entry point.
+    pub static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    // (result, error) pointers of each js_call_respond.
+    pub static RESPONDED: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
+    // Sentinel "values": the test only needs to tell constructors apart.
+    pub const NULL_VALUE: usize = 0x10;
+    pub const STRING_VALUE: usize = 0x20;
+    pub const DICT_VALUE: usize = 0x30;
+
+    fn seen(what: &str, s: *const c_char) {
+      let text = if s.is_null() {
+        "<null>".to_string()
+      } else {
+        unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned()
+      };
+      SEEN.lock().unwrap().push(format!("{what}:{text}"));
+    }
+
+    unsafe extern "C" fn set_title(_: *mut c_void, _: u32, t: *const c_char) {
+      seen("set_title", t);
+    }
+    unsafe extern "C" fn navigate(_: *mut c_void, _: u32, u: *const c_char) {
+      seen("navigate", u);
+    }
+    unsafe extern "C" fn execute_js(
+      _: *mut c_void,
+      _: u32,
+      script: *const c_char,
+      _: ffi::laufey_js_result_fn,
+      _: *mut c_void,
+    ) {
+      seen("execute_js", script);
+    }
+    unsafe extern "C" fn show_dialog(
+      _: *mut c_void,
+      _: u32,
+      _: c_int,
+      title: *const c_char,
+      _: *const c_char,
+      _: *const c_char,
+      _: *mut *mut c_char,
+    ) -> c_int {
+      seen("show_dialog", title);
+      1
+    }
+    unsafe extern "C" fn write_clipboard_text(
+      _: *mut c_void,
+      t: *const c_char,
+    ) {
+      seen("write_clipboard_text", t);
+    }
+    unsafe extern "C" fn set_dock_badge(_: *mut c_void, t: *const c_char) {
+      seen("set_dock_badge", t);
+    }
+    unsafe extern "C" fn set_tray_tooltip(
+      _: *mut c_void,
+      _: u32,
+      t: *const c_char,
+    ) {
+      seen("set_tray_tooltip", t);
+    }
+    unsafe extern "C" fn set_js_namespace(_: *mut c_void, n: *const c_char) {
+      seen("set_js_namespace", n);
+    }
+    unsafe extern "C" fn register_scheme_handler(
+      _: *mut c_void,
+      scheme: *const c_char,
+      _: ffi::laufey_scheme_request_fn,
+      _: ffi::laufey_scheme_cancel_fn,
+      _: *mut c_void,
+    ) {
+      seen("register_scheme_handler", scheme);
+    }
+    unsafe extern "C" fn value_null(_: *mut c_void) -> *mut LaufeyValue {
+      NULL_VALUE as *mut LaufeyValue
+    }
+    unsafe extern "C" fn value_string(
+      _: *mut c_void,
+      v: *const c_char,
+    ) -> *mut LaufeyValue {
+      seen("value_string", v);
+      STRING_VALUE as *mut LaufeyValue
+    }
+    unsafe extern "C" fn value_dict(_: *mut c_void) -> *mut LaufeyValue {
+      DICT_VALUE as *mut LaufeyValue
+    }
+    unsafe extern "C" fn value_dict_set(
+      _: *mut LaufeyValue,
+      key: *const c_char,
+      _: *mut LaufeyValue,
+    ) -> bool {
+      seen("value_dict_set", key);
+      true
+    }
+    unsafe extern "C" fn js_call_respond(
+      _: *mut c_void,
+      _: u64,
+      result: *mut LaufeyValue,
+      error: *mut LaufeyValue,
+    ) {
+      RESPONDED
+        .lock()
+        .unwrap()
+        .push((result as usize, error as usize));
+    }
+
+    pub fn install(fake: &mut LaufeyBackendApi) {
+      fake.set_title = Some(set_title);
+      fake.navigate = Some(navigate);
+      fake.execute_js = Some(execute_js);
+      fake.show_dialog = Some(show_dialog);
+      fake.write_clipboard_text = Some(write_clipboard_text);
+      fake.set_dock_badge = Some(set_dock_badge);
+      fake.set_tray_tooltip = Some(set_tray_tooltip);
+      fake.set_js_namespace = Some(set_js_namespace);
+      fake.register_scheme_handler = Some(register_scheme_handler);
+      fake.value_null = Some(value_null);
+      fake.value_string = Some(value_string);
+      fake.value_dict = Some(value_dict);
+      fake.value_dict_set = Some(value_dict_set);
+      fake.js_call_respond = Some(js_call_respond);
+    }
+  }
+
+  #[test]
+  fn strings_with_nul_bytes_fail_safely_instead_of_panicking() {
+    use std::sync::mpsc;
+    install_pdf_fake();
+    let seen = || nul::SEEN.lock().unwrap().clone();
+    let w = Window::from_id(5);
+
+    // Unit-returning wrappers: a no-op, the backend is not called.
+    w.set_title("a\0b");
+    w.navigate("app://x/\0");
+    write_clipboard_text("x\0y");
+    set_dock_badge(Some("1\0"));
+    TrayIcon::from_id(3).set_tooltip(Some("t\0"));
+    set_js_namespace("Na\0me");
+    register_scheme_handler("sch\0eme", |_req| {});
+    assert!(seen().is_empty(), "reached the backend: {:?}", seen());
+
+    // execute_js: not run, the callback hears why.
+    let (tx, rx) = mpsc::channel();
+    w.execute_js("1\0", Some(move |r| tx.send(r).unwrap()));
+    let Err(err) = rx.recv().unwrap() else {
+      panic!("execute_js with a NUL ran");
+    };
+    assert!(
+      err.as_string().unwrap().contains("NUL"),
+      "{:?}",
+      err.as_string()
+    );
+
+    // Dialogs: as if cancelled.
+    assert!(!w.confirm("t\0", "m"));
+    assert_eq!(w.prompt("t", "m\0", "d"), None);
+    assert!(!confirm("t", "m\0"));
+
+    // Values: a string becomes null, a key is left out.
+    assert_eq!(
+      Value::String("a\0b".into()).to_raw() as usize,
+      nul::NULL_VALUE
+    );
+    let mut map = HashMap::new();
+    map.insert("k\0".to_string(), Value::Null);
+    assert_eq!(Value::Dict(map).to_raw() as usize, nul::DICT_VALUE);
+    assert!(seen().is_empty(), "reached the backend: {:?}", seen());
+
+    // A JS call answered with a NUL-bearing value is rejected instead.
+    JsCall {
+      window_id: 5,
+      call_id: 9,
+      method: "m".into(),
+      args: vec![],
+    }
+    .resolve(Value::List(vec![Value::String("x\0".into())]));
+    let (result, error) = *nul::RESPONDED.lock().unwrap().last().unwrap();
+    assert_eq!(result, 0, "resolved despite the NUL");
+    assert_eq!(error, nul::STRING_VALUE);
+    assert!(seen()
+      .iter()
+      .any(|s| s.starts_with("value_string:the result")));
+
+    // The same calls without a NUL do reach the backend.
+    nul::SEEN.lock().unwrap().clear();
+    w.set_title("ok");
+    w.navigate("app://x/");
+    set_js_namespace("Name");
+    assert!(w.confirm("t", "m"));
+    let got = seen();
+    for want in [
+      "set_title:ok",
+      "navigate:app://x/",
+      "set_js_namespace:Name",
+      "show_dialog:t",
+    ] {
+      assert!(got.iter().any(|s| s == want), "missing {want}: {got:?}");
+    }
   }
 
   // Regression guard for print_to_pdf's marshaling and file handling,
