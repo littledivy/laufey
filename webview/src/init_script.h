@@ -46,10 +46,16 @@ inline std::string BuildReleaseCallbackScript(uint64_t callback_id) {
 // Builds the page init script. `ns` is the global namespace the proxy is
 // installed under (e.g. "laufey"); `postMessage` is the platform-specific
 // statement that ships the {callId, path, args} message to the host.
+// `prelude` runs first inside the script's closure, at document start, before
+// any page script: a backend declares there what the statement uses and the
+// page must not be able to see or replace (WebKitGTK's per-window token).
 inline std::string BuildInitScript(const std::string& ns,
-                                   const std::string& postMessage) {
+                                   const std::string& postMessage,
+                                   const std::string& prelude = "") {
   return R"JS(
 (function() {
+)JS" + prelude +
+         R"JS(
   const pendingCalls = new Map();
   let nextCallId = 1;
 
