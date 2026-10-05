@@ -454,6 +454,37 @@ jobs:
             laufey-cef-${{ matrix.target }}.tar.gz
             laufey-cef-${{ matrix.target }}.zip
 
+  # The bound on a custom-scheme request body that CEF and WebView2 buffer
+  # before the runtime's handler runs
+  # (backend-common/include/laufey_scheme_body.h).
+  scheme-body:
+    name: scheme_body_test / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-asan, os: ubuntu-24.04 }
+          - { name: windows-msvc, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: scheme_body_test
+        if: runner.os == 'Linux'
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -O1 -g \
+            -fsanitize=address,undefined -fno-sanitize-recover=all \
+            -Ibackend-common/include \
+            backend-common/tests/scheme_body_test.cc -o "$RUNNER_TEMP/scheme_body_test"
+          "$RUNNER_TEMP/scheme_body_test"
+      - name: scheme_body_test
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /EHsc /W4 /WX /Ibackend-common\include backend-common\tests\scheme_body_test.cc /Fe:"%RUNNER_TEMP%\scheme_body_test.exe" /Fo:"%RUNNER_TEMP%\\" || exit /b 1
+          "%RUNNER_TEMP%\scheme_body_test.exe" || exit /b 1
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-winit, build-webview, build-cef]

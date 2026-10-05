@@ -34,6 +34,8 @@
 #include <vector>
 #include <functional>
 
+#include "laufey_scheme_body.h"
+
 using namespace Microsoft::WRL;
 
 namespace keyboard {
@@ -255,6 +257,9 @@ HRESULT HandleAppResourceRequested(
       }
     }
 
+    // The body is read whole before the handler runs. Past
+    // kMaxSchemeRequestBodyBytes the request goes on with no response, so it
+    // fails as a network error (as on CEF), without reaching the handler.
     std::vector<uint8_t> body;
     ComPtr<IStream> content;
     if (SUCCEEDED(request->get_Content(&content)) && content) {
@@ -262,7 +267,15 @@ HRESULT HandleAppResourceRequested(
       ULONG read = 0;
       while (SUCCEEDED(content->Read(chunk, sizeof(chunk), &read)) &&
              read > 0) {
-        body.insert(body.end(), chunk, chunk + read);
+        size_t offset = body.size();
+        if (!laufey_common::GrowSchemeRequestBody(&body, read)) {
+          std::cerr << "laufey: the request body of " << method << " " << url
+                    << " is larger than "
+                    << (laufey_common::kMaxSchemeRequestBodyBytes >> 20)
+                    << " MiB; failing the request" << std::endl;
+          return S_OK;
+        }
+        memcpy(body.data() + offset, chunk, read);
       }
     }
 

@@ -147,6 +147,10 @@ the runtime should stop and call `scheme_response_finish`. Backends predating
 API version 26 leave these pointers `NULL`; the runtime must null-check and fall
 back to a socket transport.
 
+CEF and WebView2 read the whole request body before they invoke `handler`, and
+hold at most 512 MiB of one: a larger body fails the request (the page's `fetch`
+rejects with a network error) without reaching `handler`.
+
 ## Close-requested handler defers the close (API ≥ 31)
 
 As of API 31, registering `set_close_requested_handler` changes the backend's
