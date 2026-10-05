@@ -40,6 +40,32 @@ const TINY_PNG: &[u8] = &[
   0x60, 0x82,
 ];
 
+/// The binding the frame-bridge check's page reports through.
+const BRIDGE_REPORT: &str = "bridgeReport";
+
+/// A page that adds a same-origin sub-frame, posts a `bridgeReport('frame')`
+/// call from it straight to the WebKit message handler (skipping the `Laufey`
+/// namespace, which is main-frame only), then reports `'main'` from the main
+/// frame with whether the frame had a handler to post to. No `%` or `#`: the
+/// data URL is percent-decoded as a whole on some backends.
+const BRIDGE_PAGE: &str = r#"data:text/html,<!doctype html><title>bridge</title><body><script>
+(async () => {
+  for (let i = 0; i < 100; i++) {
+    if (typeof Laufey !== 'undefined' && typeof Laufey.bridgeReport === 'function') break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  const f = document.createElement('iframe');
+  document.body.appendChild(f);
+  const w = f.contentWindow;
+  const h = !!(w && w.webkit && w.webkit.messageHandlers && w.webkit.messageHandlers.laufey);
+  if (h) {
+    w.eval("window.webkit.messageHandlers.laufey.postMessage({callId: 987654321, method: 'bridgeReport', args: ['frame']})");
+    await new Promise(r => setTimeout(r, 500));
+  }
+  await Laufey.bridgeReport('main', h);
+})();
+</script></body>"#;
+
 fn check(name: &str, ok: bool) {
   if ok {
     eprintln!("[e2e] PASS {name}");
@@ -442,6 +468,74 @@ fn e2e_main() {
         check(&format!("print_to_pdf succeeds (got: {e})"), false)
       }
     }
+
+    // ---- JS bridge: calls come from the main frame only ---------------------
+    // WebKit exposes the bridge's script message handler
+    // (window.webkit.messageHandlers.laufey) to every frame, even though the
+    // bridge script itself is main-frame only. A same-origin sub-frame posts
+    // a call to the handler directly; the backend must drop it. The main
+    // frame's own call afterwards is the control: it proves the bridge works
+    // and, since messages are delivered in order, that the frame's call had
+    // its chance to arrive first. Engines whose frames have no such handler
+    // (WebView2, CEF) report N/A, as does a backend with no web engine.
+    let bridge_reports = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let frame_has_handler = Arc::new(AtomicBool::new(false));
+    let bridge_loaded = Arc::new(AtomicBool::new(false));
+    let br = bridge_reports.clone();
+    let fh = frame_has_handler.clone();
+    let bl = bridge_loaded.clone();
+    let bridge_win = Window::new(320, 240)
+      .title("native-e2e-bridge")
+      .on_page_load(move |_e| {
+        bl.store(true, Ordering::SeqCst);
+      })
+      .bind(BRIDGE_REPORT, move |call| {
+        let label = match call.args.first() {
+          Some(laufey::Value::String(s)) => s.clone(),
+          _ => String::new(),
+        };
+        if label == "main" {
+          let has = matches!(call.args.get(1), Some(laufey::Value::Bool(true)));
+          fh.store(has, Ordering::SeqCst);
+        }
+        br.lock().unwrap().push(label);
+        call.resolve(laufey::Value::Bool(true));
+      })
+      .load(BRIDGE_PAGE);
+    let main_reported = wait_for(
+      || bridge_reports.lock().unwrap().iter().any(|l| l == "main"),
+      100,
+      100,
+    )
+    .await;
+    // Give a frame call that slipped through a moment to land, too.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let frame_reached = bridge_reports.lock().unwrap().iter().any(|l| l == "frame");
+    if !main_reported {
+      // The check targets WKWebView, so only macOS requires the control
+      // call to arrive. The WebView2 bridge doesn't deliver it for this
+      // data: page, and frames there have no WebKit handler to post to
+      // anyway, so there is nothing to check.
+      if cfg!(target_os = "macos") && bridge_loaded.load(Ordering::SeqCst) {
+        check("main-frame bridge call reaches its binding", false);
+      } else {
+        na("frame bridge check (the bridge didn't answer this page here)");
+      }
+    } else if !frame_has_handler.load(Ordering::SeqCst) {
+      check("main-frame bridge call reaches its binding", true);
+      na("frame bridge check (frames have no direct message handler here)");
+    } else if cfg!(target_os = "linux") {
+      // This check covers the WKWebView handlers only.
+      check("main-frame bridge call reaches its binding", true);
+      na("frame bridge check (covers WKWebView only)");
+    } else {
+      check("main-frame bridge call reaches its binding", true);
+      check(
+        "a sub-frame's direct message to the bridge never reaches a binding",
+        !frame_reached,
+      );
+    }
+    let _ = &bridge_win;
 
     // ---- close-requested handler round-trip --------------------------------
     // A second window (kept separate from `win`, which must survive to
