@@ -24,6 +24,37 @@
 // this path before it reaches the runtime and opens `url` in the OS browser.
 #define LAUFEY_OPEN_EXTERNAL_METHOD "__laufeyOpenExternal"
 
+// The native check on a URL the page asks to open. The reserved bridge
+// method is reachable by any script in the page, not only by the injected
+// interceptor, so the native side never trusts the page-side filter: only an
+// absolute http(s) URL with a host, and no whitespace or control characters,
+// reaches the OS's open-URL primitive (ShellExecuteW, NSWorkspace, GIO).
+// Anything else (file:, a UNC path, a custom scheme, a shortcut file) could
+// start a program or open a local file.
+inline bool IsAllowedExternalLinkUrl(const std::string& url) {
+  if (url.empty() || url.size() > 32768)
+    return false;
+  for (unsigned char c : url) {
+    if (c <= 0x20 || c == 0x7f)
+      return false;
+  }
+  size_t colon = url.find(':');
+  if (colon == std::string::npos)
+    return false;
+  std::string scheme = url.substr(0, colon);
+  for (char& c : scheme) {
+    if (c >= 'A' && c <= 'Z')
+      c = static_cast<char>(c - 'A' + 'a');
+  }
+  if (scheme != "http" && scheme != "https")
+    return false;
+  if (url.compare(colon, 3, "://") != 0 || url.size() == colon + 3)
+    return false;
+  char first = url[colon + 3];
+  return first != '/' && first != '\\' && first != '?' && first != '#' &&
+         first != '@' && first != ':';
+}
+
 // Builds the page-side interceptor for the namespace `ns` (the global the
 // laufey bridge proxy is installed under, e.g. "laufey").
 //

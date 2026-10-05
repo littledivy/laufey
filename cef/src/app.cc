@@ -186,7 +186,7 @@ bool LaufeyHandler::OnBeforePopup(
   // API listener. Cancel the popup and route http(s) destinations to the OS
   // browser; return true to prevent the new browser from being created.
   std::string url = target_url.ToString();
-  if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0) {
+  if (IsAllowedExternalLinkUrl(url)) {
     LaufeyOpenExternalURL(url);
   }
   return true;
@@ -455,7 +455,7 @@ bool LaufeyHandler::OnProcessMessageReceived(
       if (callArgs && callArgs->GetSize() > 0 &&
           callArgs->GetType(0) == VTYPE_STRING) {
         std::string url = callArgs->GetString(0).ToString();
-        if (!url.empty()) {
+        if (IsAllowedExternalLinkUrl(url)) {
           LaufeyOpenExternalURL(url);
         }
       }

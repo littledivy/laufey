@@ -61,6 +61,22 @@ jobs:
       - run: cargo test -p laufey --lib
       - run: cargo test -p laufey --doc
 
+  # The native check on URLs a page asks the reserved open-external bridge
+  # call to open (capi/include/laufey_external_links.h). Header-only string
+  # fixtures; nothing is opened.
+  external-links:
+    name: external_links_test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: external_links_test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror \
+            -Icapi/include \
+            backend-common/tests/external_links_test.cc \
+            -o "$RUNNER_TEMP/external_links_test"
+          "$RUNNER_TEMP/external_links_test"
+
   build-winit:
     name: winit / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
