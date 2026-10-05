@@ -6,6 +6,7 @@
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
 #include "laufey_json.h"
+#include "laufey_scheme_registry.h"
 #include "init_script.h"
 #include <webkit2/webkit2.h>
 #include <JavaScriptCore/JavaScript.h>
@@ -19,6 +20,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <condition_variable>
 
 // Helper to run a callback synchronously on the GTK main thread.
@@ -445,6 +447,10 @@ class WebKitGTKBackend : public LaufeyBackend {
 
   std::map<uint32_t, LinuxWindowState> windows_;
   std::mutex windows_mutex_;
+
+  // Set once the first web view exists; a RegisterSchemeHandler after that
+  // point breaks the (cross-backend) ordering contract and warns.
+  std::atomic<bool> any_web_view_created_{false};
 };
 
 // Static instance pointer for GTK callbacks
@@ -738,6 +744,7 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
 
     WebKitWebView* webview = WEBKIT_WEB_VIEW(
         webkit_web_view_new_with_user_content_manager(content_manager));
+    any_web_view_created_.store(true);
 
     g_signal_connect(webview, "script-dialog", G_CALLBACK(on_script_dialog),
                      nullptr);
@@ -1555,8 +1562,14 @@ void WebKitGTKBackend::CloseNotification(uint32_t notification_id) {
 }
 
 // ============================================================================
-// Custom app:// scheme handling (in-process transport)
+// Custom URL scheme handling (in-process transport)
 // ============================================================================
+//
+// Serves "app" and every scheme the embedder registered through
+// register_scheme_handler. Each one is registered on the default
+// WebKitWebContext as secure (isSecureContext, crypto.subtle) and CORS-enabled
+// (a page on another origin may fetch it with CORS headers); with a host in
+// the URL WebKit gives it a `<scheme>://<host>` origin and per-origin storage.
 
 namespace {
 
@@ -1639,6 +1652,14 @@ class LinuxSchemeExchange : public SchemeExchangeBase {
         soup_message_headers_new(SOUP_MESSAGE_HEADERS_RESPONSE);
     for (const auto& [k, v] : d->headers) {
       soup_message_headers_append(hdrs, k.c_str(), v.c_str());
+      // WebKit takes the response's MIME type from the content type set on
+      // the WebKitURISchemeResponse, not from the HTTP header list. Without
+      // it the type is empty, the default response policy treats the
+      // navigation as a download, and the load fails with "Frame load
+      // interrupted" — so mirror the Content-Type header into it.
+      if (g_ascii_strcasecmp(k.c_str(), "content-type") == 0) {
+        webkit_uri_scheme_response_set_content_type(resp, v.c_str());
+      }
     }
     // set_http_headers takes ownership of `hdrs`.
     webkit_uri_scheme_response_set_http_headers(resp, hdrs);
@@ -1682,27 +1703,53 @@ void OnAppSchemeRequest(WebKitURISchemeRequest* request, gpointer) {
 }  // namespace
 
 void WebKitGTKBackend::RegisterSchemeHandler(const std::string& scheme) {
+  if (!laufey_common::IsValidSchemeName(scheme)) {
+    std::cerr << "laufey: ignoring invalid URL scheme name \"" << scheme
+              << "\" passed to register_scheme_handler" << std::endl;
+    return;
+  }
+  std::string normalized = laufey_common::NormalizeSchemeName(scheme);
+  bool added = laufey_common::SchemeRegistry::GetInstance()->Add(normalized);
+  if (added && any_web_view_created_.load()) {
+    // WebKitGTK applies the registration to existing web views too (the
+    // schemes live on the shared web context), but the other engines do not;
+    // flag the portability hazard.
+    std::cerr << "laufey: scheme \"" << normalized
+              << "\" was registered after a window was created; WebKitGTK "
+                 "serves it, but other backends will not (register schemes "
+                 "before the first window)"
+              << std::endl;
+  }
+
   // Register on the default web context (shared by all webviews). Must run on
-  // the GTK main thread; the runtime calls this from its own thread.
-  char* scheme_dup = g_strdup(scheme.c_str());
+  // the GTK main thread; the runtime calls this from its own thread. Window
+  // creation is queued on the same main loop, so a scheme registered before
+  // the first CreateWindow is installed before that window's web view exists.
   g_idle_add(
-      [](gpointer data) -> gboolean {
-        char* s = static_cast<char*>(data);
-        static std::atomic<bool> registered{false};
-        bool expected = false;
-        if (registered.compare_exchange_strong(expected, true)) {
-          WebKitWebContext* ctx = webkit_web_context_get_default();
-          webkit_web_context_register_uri_scheme(ctx, s, OnAppSchemeRequest,
-                                                 nullptr, nullptr);
-          WebKitSecurityManager* sm =
-              webkit_web_context_get_security_manager(ctx);
-          webkit_security_manager_register_uri_scheme_as_secure(sm, s);
-          webkit_security_manager_register_uri_scheme_as_cors_enabled(sm, s);
+      [](gpointer) -> gboolean {
+        // Main thread only. Install every registered scheme that isn't yet
+        // known to WebKit — the built-in "app" included, so it is served
+        // whether or not the runtime registered it by name (as the other
+        // backends do). Each name is registered exactly once; a second
+        // registration of the same name is an error.
+        static std::set<std::string> installed;
+        WebKitWebContext* ctx = webkit_web_context_get_default();
+        WebKitSecurityManager* sm =
+            webkit_web_context_get_security_manager(ctx);
+        for (const std::string& s :
+             laufey_common::SchemeRegistry::GetInstance()->Snapshot()) {
+          if (!installed.insert(s).second) {
+            continue;
+          }
+          webkit_web_context_register_uri_scheme(
+              ctx, s.c_str(), OnAppSchemeRequest, nullptr, nullptr);
+          webkit_security_manager_register_uri_scheme_as_secure(sm, s.c_str());
+          webkit_security_manager_register_uri_scheme_as_cors_enabled(
+              sm, s.c_str());
         }
-        g_free(s);
         return G_SOURCE_REMOVE;
       },
-      scheme_dup);
+      nullptr);
 }
 
 // ============================================================================

@@ -18,6 +18,7 @@
 #include "include/wrapper/cef_helpers.h"
 
 #include "app.h"
+#include "custom_schemes.h"
 #include "laufey_backend_common.h"
 #include "renderer_app.h"
 #include "runtime_loader.h"
@@ -180,6 +181,20 @@ class LaufeyCombinedApp : public CefApp, public CefBrowserProcessHandler {
 
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
     return renderer_app_->GetRenderProcessHandler();
+  }
+
+  // "app" plus the schemes declared with --laufey-custom-schemes /
+  // LAUFEY_CUSTOM_SCHEMES become standard, secure, fetch/CORS-enabled schemes
+  // in every process (single-exe model: this runs in the browser and in each
+  // subprocess). See custom_schemes.h.
+  void OnRegisterCustomSchemes(
+      CefRawPtr<CefSchemeRegistrar> registrar) override {
+    laufey_schemes::RegisterAll(registrar);
+  }
+
+  void OnBeforeChildProcessLaunch(
+      CefRefPtr<CefCommandLine> command_line) override {
+    laufey_schemes::ForwardToChild(command_line);
   }
 
   void OnBeforeCommandLineProcessing(

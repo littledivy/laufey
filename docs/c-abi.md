@@ -131,7 +131,11 @@ embedded browser over an in-memory byte channel instead of a TCP loopback.
    `register_scheme_handler(scheme, handler, on_cancel,
    user_data)` with the
    scheme name (e.g. `"app"`, no `://`). The backend registers it as a standard,
-   secure, fetch/CORS-enabled scheme and installs a handler factory.
+   secure, fetch/CORS-enabled scheme and installs a handler factory. Call it
+   once per scheme: every web-engine backend serves the built-in `app`, and an
+   embedder may add its own (`"myapp"`). One handler serves every registered
+   scheme (a later call replaces the handler and adds the scheme), so dispatch
+   on the request URL.
 2. When the webview requests `<scheme>://…`, the backend invokes `handler` with
    request metadata (method, URL, headers) and an opaque
    `laufey_scheme_exchange_t*`. Headers use a flat `name\0value\0…\0` encoding
@@ -146,6 +150,49 @@ finishes, `scheme_response_write` / `scheme_request_read_body` return negative;
 the runtime should stop and call `scheme_response_finish`. Backends predating
 API version 26 leave these pointers `NULL`; the runtime must null-check and fall
 back to a socket transport.
+
+### Registered schemes are real origins
+
+A page served over a registered scheme behaves like an `https` origin on every
+web-engine backend: `location.origin` is `<scheme>://<host>`, `isSecureContext`
+is true (so `crypto.subtle` and other secure-only APIs work), same-origin
+`fetch` gets the response, cross-origin requests carry
+`Origin: <scheme>://<host>` and honor CORS, and `localStorage` / IndexedDB are
+scoped to that origin. On WKWebView, WebKitGTK and CEF the page sees the
+response body as the runtime writes it. WebView2 reads a custom-scheme response
+to the end before the page sees any of it, so there the body arrives once the
+runtime calls `scheme_response_finish`. On the WebView backends storage persists
+across launches; the CEF host keeps its profile in a per-process temporary
+directory, so there it lasts for one run, as for any other origin. Scheme names
+follow the RFC 3986 grammar (a letter, then letters, digits, `+`, `-`, `.`), are
+case-insensitive and stored lowercase; an invalid name is logged and ignored, as
+is a scheme the engines already define (`http`, `https`, `file`, `data`,
+`javascript`, ...; the full list is in [Custom URL schemes](custom-schemes.md)).
+
+**Register every scheme before creating the first window.** The engines read
+their scheme tables when a web view is created — the `WKWebViewConfiguration` on
+macOS, the default `WebKitWebContext` on Linux, the WebView2 environment options
+on Windows — so a scheme registered after a window exists is not served by that
+window. WebView2 goes further: all environments in a process share one user data
+folder and must carry identical custom-scheme registrations, so the backend
+freezes the set at the first window and later registrations are logged and
+ignored. WebKitGTK is the lenient one: its schemes live on the shared web
+context, so a late registration reaches existing windows too — portable code
+must not rely on it. The WebView backends warn on stderr when the contract is
+broken.
+
+The CEF backend needs one more step. Chromium learns custom schemes in
+`CefApp::OnRegisterCustomSchemes`, which runs during `CefInitialize` in every
+process — before the runtime library is loaded and can call
+`register_scheme_handler`. The embedder therefore declares its schemes when it
+launches the CEF host, either as `--laufey-custom-schemes=myapp,other` or as
+`LAUFEY_CUSTOM_SCHEMES=myapp,other` (comma-separated; `app` is implicit). The
+browser process forwards the switch to its renderer and utility processes. On
+CEF, registration timing does not matter for a declared scheme: its handler
+factory is global, so every window serves it from the moment it is registered. A
+scheme that is registered at runtime but was not declared is still served, but
+as a non-standard scheme — opaque origin, insecure context — and the backend
+logs a warning.
 
 ## Close-requested handler defers the close (API ≥ 31)
 

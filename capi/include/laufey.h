@@ -285,6 +285,16 @@ typedef void (*laufey_page_load_fn)(void* user_data, uint32_t window_id);
 // the embedder streams a response back through the scheme_response_* vtable
 // functions. Both request and response bodies are streamed.
 //
+// Every web-engine backend serves the built-in scheme "app". An embedder may
+// register further schemes (e.g. its own "myapp"); each registered scheme is
+// a real origin in the page: `location.origin` is `<scheme>://<host>`, the
+// page is a secure context (crypto.subtle, secure-only APIs), cross-origin
+// fetches carry `Origin: <scheme>://<host>`, CORS works, and localStorage /
+// IndexedDB are per-origin (and persist wherever the backend keeps a
+// persistent profile; the CEF host uses a per-process temporary one). See
+// register_scheme_handler for the ordering contract that makes this hold on
+// every backend.
+//
 // Header lists are encoded as a flat buffer of NUL-terminated strings laid out
 // as name, value, name, value, ... -- `headers_len` is the total byte length
 // including every terminating NUL. Header names are lowercase.
@@ -696,9 +706,31 @@ struct laufey_backend_api {
   // --- Custom URL scheme handler (API >= 26) ---------------------------------
   //
   // Register `handler` to service every request for `scheme` (the scheme name
-  // only, e.g. "app", without "://"). Must be called before any window
-  // navigates to that scheme. A NULL handler unregisters. `on_cancel` may be
-  // NULL. Backends added before API version 26 leave these four pointers NULL;
+  // only, e.g. "app", without "://"; RFC 3986 grammar — a letter followed by
+  // letters, digits, "+", "-" or "."; case-insensitive, stored lowercase; an
+  // invalid name, or one the engines already define such as "http", "file" or
+  // "javascript", is logged and ignored). Call it once per scheme: the built-in
+  // "app" plus any of the embedder's own. One handler serves all registered
+  // schemes — a later call replaces the handler for every scheme and adds the
+  // new scheme — so dispatch on the request URL. A NULL handler unregisters.
+  // `on_cancel` may be NULL.
+  //
+  // ORDERING CONTRACT: register every scheme BEFORE creating the first window.
+  // The engines read their scheme tables when a web view is created (WKWebView
+  // configuration, WebKitGTK web context, WebView2 environment — WebView2 in
+  // particular fixes the set for the process at its first environment), so a
+  // scheme registered after a window exists is not served by that window on
+  // WKWebView and not at all on WebView2 (WebKitGTK, whose web context is
+  // shared, does apply it to existing windows); the WebView backends log a
+  // warning. CEF is different: Chromium learns custom schemes at process
+  // start, before the runtime is loaded, so the embedder must declare them
+  // when launching the CEF host — `--laufey-custom-schemes=myapp,other` or
+  // `LAUFEY_CUSTOM_SCHEMES=myapp,other` (comma-separated; "app" is implicit).
+  // A declared scheme is served in every window whenever it is registered; a
+  // scheme that is registered but was not declared is still served, but as a
+  // non-standard scheme (opaque origin, insecure context), with a warning.
+  //
+  // Backends added before API version 26 leave these four pointers NULL;
   // callers must null-check and fall back to a socket transport.
   void (*register_scheme_handler)(void* backend_data, const char* scheme,
                                   laufey_scheme_request_fn handler,

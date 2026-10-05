@@ -306,6 +306,12 @@ jobs:
             make webview
           fi
 
+      # backend-common's C++ unit tests (scheme registry) — built alongside
+      # the backend, run here. No display needed.
+      - name: Unit tests (ctest)
+        shell: bash
+        run: ctest --test-dir webview/build --output-on-failure
+
       - name: Package
         shell: bash
         run: |

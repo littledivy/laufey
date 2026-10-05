@@ -42,7 +42,9 @@ if(MSVC)
 endif()
 
 # Shared native-API implementations (notifications, tray, dock, dialogs, ...).
-# Each platform branch links laufey_backend_common below.
+# Each platform branch links laufey_backend_common below. enable_testing()
+# registers backend-common's unit tests with `ctest --test-dir cef/build`.
+enable_testing()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend-common
                  ${CMAKE_BINARY_DIR}/backend-common)
 
@@ -72,6 +74,8 @@ if(OS_MAC)
   set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
+    src/custom_schemes.cc
+    src/custom_schemes.h
     src/scheme_handler.cc
     src/scheme_handler.h
     src/runtime_loader.cc
@@ -85,6 +89,8 @@ if(OS_MAC)
 
   set(LAUFEY_HELPER_SRCS
     src/helper.cc
+    src/custom_schemes.cc
+    src/custom_schemes.h
     ${LAUFEY_RENDERER_SRCS}
   )
 
@@ -147,7 +153,12 @@ if(OS_MAC)
     add_executable(${_helper_target} MACOSX_BUNDLE ${LAUFEY_HELPER_SRCS})
     SET_EXECUTABLE_TARGET_PROPERTIES(${_helper_target})
     target_link_libraries(${_helper_target} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
-    target_include_directories(${_helper_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${LAUFEY_INCLUDE_DIR}")
+    # backend-common/include for the header-only scheme-name helpers used by
+    # custom_schemes.cc; the helper does not link laufey_backend_common.
+    target_include_directories(${_helper_target} PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/src"
+      "${LAUFEY_INCLUDE_DIR}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../backend-common/include")
     set_target_properties(${_helper_target} PROPERTIES
       MACOSX_BUNDLE_INFO_PLIST ${_helper_info_plist}
       OUTPUT_NAME ${_helper_output_name}
@@ -185,6 +196,8 @@ elseif(OS_WINDOWS)
   set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
+    src/custom_schemes.cc
+    src/custom_schemes.h
     src/scheme_handler.cc
     src/scheme_handler.h
     src/runtime_loader.cc
@@ -248,6 +261,8 @@ elseif(OS_LINUX)
   set(LAUFEY_SRCS_COMMON
     src/app.cc
     src/app.h
+    src/custom_schemes.cc
+    src/custom_schemes.h
     src/scheme_handler.cc
     src/scheme_handler.h
     src/runtime_loader.cc

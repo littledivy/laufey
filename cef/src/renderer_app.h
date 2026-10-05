@@ -14,6 +14,12 @@ class LaufeyRendererApp : public CefApp {
     return render_handler_;
   }
 
+  // Custom schemes must be registered in every process: mirror the browser
+  // process's set ("app" + --laufey-custom-schemes) in the renderer so
+  // `location.origin`, secure-context and storage checks agree.
+  void OnRegisterCustomSchemes(
+      CefRawPtr<CefSchemeRegistrar> registrar) override;
+
  private:
   CefRefPtr<LaufeyRenderProcessHandler> render_handler_;
 

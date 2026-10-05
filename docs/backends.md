@@ -35,6 +35,12 @@ be packed into a GtkWindow above the browser, and reparenting CEF into a
 client-owned GtkWindow via `CefWindowInfo::SetAsChild` breaks on XWayland).
 Context menus do work, because `GtkMenu` popups need no GtkWindow container.
 
+Custom schemes: Chromium registers them at process start, before the runtime is
+loaded, so besides calling `register_scheme_handler` the embedder declares them
+when launching the host — `--laufey-custom-schemes=myapp` or
+`LAUFEY_CUSTOM_SCHEMES=myapp` (`cef/src/custom_schemes.h`). See
+[Custom URL schemes](custom-schemes.md).
+
 ## WebView
 
 Delegates to the platform's native web engine — **WKWebView** on macOS,
@@ -46,6 +52,15 @@ Sources live in
 [`webview/`](https://github.com/littledivy/laufey/tree/main/webview), one file
 per platform (`webview_macos.mm`, `webview_windows.cc`, `webview_linux.cc`),
 sharing `backend-common` for menus, tray, dialogs, dock, and notifications.
+
+Custom schemes registered through `register_scheme_handler` are installed per
+engine — a `WKURLSchemeHandler` per scheme on the `WKWebViewConfiguration`,
+`webkit_web_context_register_uri_scheme` plus the security manager's secure/CORS
+flags on WebKitGTK, `CoreWebView2CustomSchemeRegistration` (TreatAsSecure,
+HasAuthorityComponent) on the WebView2 environment — so each is a real
+`<scheme>://<host>` origin. WKWebView and WebView2 read the set when a web view
+(WebView2: the first one) is created; register schemes before the first window.
+See [Custom URL schemes](custom-schemes.md).
 
 ## Winit
 

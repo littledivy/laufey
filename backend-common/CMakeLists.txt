@@ -37,6 +37,7 @@ set(LAUFEY_COMMON_SRCS
   src/title_badge.cc
   src/laufey_value.cc
   src/test_hooks.cc
+  src/scheme_registry.cc
 )
 
 if(APPLE)
@@ -120,3 +121,18 @@ endif()
 set_target_properties(laufey_backend_common PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
+
+# Unit tests for the platform-independent pieces (plain asserts, no test
+# framework). The parent project calls enable_testing() so these show up in
+# `ctest --test-dir <build>`; -DLAUFEY_BUILD_TESTS=OFF skips them.
+option(LAUFEY_BUILD_TESTS "Build backend-common unit tests" ON)
+if(LAUFEY_BUILD_TESTS)
+  add_executable(laufey_scheme_registry_test tests/scheme_registry_test.cc)
+  target_link_libraries(laufey_scheme_registry_test PRIVATE
+    laufey_backend_common
+  )
+  find_package(Threads REQUIRED)
+  target_link_libraries(laufey_scheme_registry_test PRIVATE Threads::Threads)
+  add_test(NAME laufey_scheme_registry_test
+           COMMAND laufey_scheme_registry_test)
+endif()

@@ -27,6 +27,39 @@ std::string FlattenHeaders(const CefRequest::HeaderMap& headers) {
   return out;
 }
 
+// Split a Content-Type header value ("text/html; charset=utf-8") into its
+// MIME type ("text/html") and charset ("utf-8"; empty if absent).
+void SplitContentType(const std::string& content_type, std::string* mime_type,
+                      std::string* charset) {
+  auto trim = [](std::string s) {
+    size_t first = s.find_first_not_of(" \t");
+    size_t last = s.find_last_not_of(" \t");
+    return first == std::string::npos ? std::string()
+                                      : s.substr(first, last - first + 1);
+  };
+  size_t semi = content_type.find(';');
+  *mime_type = trim(content_type.substr(0, semi));
+  charset->clear();
+  while (semi != std::string::npos) {
+    size_t next = content_type.find(';', semi + 1);
+    std::string param = trim(content_type.substr(semi + 1, next - semi - 1));
+    size_t eq = param.find('=');
+    if (eq != std::string::npos) {
+      std::string key = trim(param.substr(0, eq));
+      std::transform(key.begin(), key.end(), key.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      if (key == "charset") {
+        std::string value = trim(param.substr(eq + 1));
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+          value = value.substr(1, value.size() - 2);
+        }
+        *charset = value;
+      }
+    }
+    semi = next;
+  }
+}
+
 }  // namespace
 
 bool LaufeySchemeHandler::Open(CefRefPtr<CefRequest> request,
@@ -74,18 +107,24 @@ void LaufeySchemeHandler::GetResponseHeaders(CefRefPtr<CefResponse> response,
   response->SetStatus(status_);
 
   CefResponse::HeaderMap header_map;
-  std::string mime_type;
+  std::string content_type;
   for (const auto& [name, value] : response_headers_) {
     if (name == "content-type") {
-      // CefResponse exposes mime type separately; the full content-type
-      // (incl. charset) still round-trips via SetMimeType.
-      mime_type = value;
+      content_type = value;
     }
     header_map.insert({name, value});
   }
   response->SetHeaderMap(header_map);
-  if (!mime_type.empty()) {
+  if (!content_type.empty()) {
+    // CefResponse takes the MIME type and charset separately, and Chromium
+    // does not recognize a MIME type with parameters: "text/html;
+    // charset=utf-8" as the MIME type loads as an empty document.
+    std::string mime_type, charset;
+    SplitContentType(content_type, &mime_type, &charset);
     response->SetMimeType(mime_type);
+    if (!charset.empty()) {
+      response->SetCharset(charset);
+    }
   }
 
   // Streaming: length unknown until FinishResponse.

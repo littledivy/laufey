@@ -1,6 +1,7 @@
 // Copyright 2025 Divy Srivastava. All rights reserved. MIT license.
 
 #include "app.h"
+#include "custom_schemes.h"
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
 #include "laufey_external_links.h"
@@ -488,10 +489,12 @@ bool LaufeyHandler::OnProcessMessageReceived(
 
 void LaufeyApp::OnRegisterCustomSchemes(
     CefRawPtr<CefSchemeRegistrar> registrar) {
-  registrar->AddCustomScheme(
-      LAUFEY_APP_SCHEME, CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
-                             CEF_SCHEME_OPTION_CORS_ENABLED |
-                             CEF_SCHEME_OPTION_FETCH_ENABLED);
+  laufey_schemes::RegisterAll(registrar);
+}
+
+void LaufeyApp::OnBeforeChildProcessLaunch(
+    CefRefPtr<CefCommandLine> command_line) {
+  laufey_schemes::ForwardToChild(command_line);
 }
 
 void LaufeyApp::OnContextInitialized() {

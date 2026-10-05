@@ -34,6 +34,8 @@ endif()
 # (those are desktop-only AppKit/GTK surfaces); it compiles just the value
 # marshalling directly into the target instead.
 if(NOT PLATFORM_IOS)
+  # Registers backend-common's unit tests with `ctest --test-dir webview/build`.
+  enable_testing()
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../backend-common
                    ${CMAKE_BINARY_DIR}/backend-common)
 endif()

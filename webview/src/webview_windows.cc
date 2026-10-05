@@ -3,6 +3,7 @@
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
 #include "laufey_json.h"
+#include "laufey_scheme_registry.h"
 #include "init_script.h"
 #include <win32_menu.h>
 
@@ -103,8 +104,15 @@ struct UiTaskData {
 };
 
 // ============================================================================
-// Custom app:// scheme handling (in-process transport)
+// Custom URL scheme handling (in-process transport)
 // ============================================================================
+//
+// Serves "app" and every scheme the embedder registered through
+// register_scheme_handler. WebView2 learns custom schemes from
+// CoreWebView2CustomSchemeRegistration entries on the *environment options*,
+// so the set is fixed when the first window's environment is created (see
+// SchemesForEnvironment); each is TreatAsSecure (secure context,
+// `<scheme>://<host>` origin, per-origin storage) with an authority component.
 
 namespace {
 
@@ -301,6 +309,10 @@ class WebView2Backend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  // Record a scheme the embedder registered so the WebView2 environment
+  // registers it as a secure custom scheme, next to "app". Must be called
+  // before the first window: WebView2 fixes the set per environment.
+  void RegisterSchemeHandler(const std::string& scheme) override;
   void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
@@ -401,18 +413,26 @@ class WebView2Backend : public LaufeyBackend {
  private:
   WinWindowState* GetWindow(uint32_t window_id);
   void InitializeWebViewForWindow(uint32_t window_id, HWND hwnd);
-  // Creates the WebView2 environment for a window. When `with_app_scheme` is
-  // true the in-process "app://" custom scheme is registered; if that makes
-  // environment creation fail it retries once with the scheme disabled so the
-  // window still opens (only the app:// transport is lost).
+  // The custom schemes to register on a WebView2 environment. Every
+  // environment this process creates shares one user data folder, and
+  // WebView2 requires identical custom-scheme registrations across them
+  // (creation fails otherwise), so the registered-scheme set is frozen on the
+  // first call and reused for every later window. A RegisterSchemeHandler
+  // after that point is logged and has no effect — hence the contract to
+  // register schemes before the first window.
+  std::vector<std::string> SchemesForEnvironment();
+  // Creates the WebView2 environment for a window, registering `schemes`
+  // ("app" plus the embedder's) as secure custom schemes. If that makes
+  // environment creation fail it retries once with no custom schemes so the
+  // window still opens (only the in-process scheme transport is lost).
   void CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
-                                  bool with_app_scheme);
+                                  std::vector<std::string> schemes);
   // Wires up the controller, init script, message + scheme handlers once the
-  // environment is ready. `app_scheme_enabled` reflects whether the "app://"
-  // scheme was registered on the environment.
+  // environment is ready. `schemes` are the custom schemes actually
+  // registered on the environment (empty after the fallback retry).
   void OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                           ICoreWebView2Environment* env,
-                          bool app_scheme_enabled);
+                          std::vector<std::string> schemes);
   static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
                                      LPARAM lParam);
 
@@ -436,6 +456,10 @@ class WebView2Backend : public LaufeyBackend {
   std::map<uint32_t, WinWindowState> windows_;
   std::recursive_mutex windows_mutex_;
   bool class_registered_ = false;
+  // See SchemesForEnvironment.
+  std::mutex schemes_mutex_;
+  bool schemes_frozen_ = false;
+  std::vector<std::string> frozen_schemes_;
   // Thread that constructs the backend (== WinMain / the message-loop thread).
   DWORD ui_thread_id_ = 0;
   // Message-only window owned by the UI thread used to receive marshaled
@@ -740,29 +764,73 @@ void WebView2Backend::CreateWindowEx(uint32_t window_id, int width, int height,
   }
 }
 
-void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
-                                                 HWND hwnd) {
-  // Try with the in-process "app://" custom scheme first. If registering it
-  // makes environment creation fail, CreateEnvironmentForWindow retries
-  // without it so the window still opens for ordinary http(s)/TCP navigations.
-  CreateEnvironmentForWindow(window_id, hwnd, /*with_app_scheme=*/true);
+void WebView2Backend::RegisterSchemeHandler(const std::string& scheme) {
+  // Any thread (the runtime registers from its own thread).
+  if (!laufey_common::IsValidSchemeName(scheme)) {
+    std::cerr << "laufey: ignoring invalid URL scheme name \"" << scheme
+              << "\" passed to register_scheme_handler" << std::endl;
+    return;
+  }
+  bool added = laufey_common::SchemeRegistry::GetInstance()->Add(scheme);
+  std::lock_guard<std::mutex> lock(schemes_mutex_);
+  if (added && schemes_frozen_) {
+    std::cerr << "laufey: scheme \"" << scheme
+              << "\" was registered after the first window was created; "
+                 "WebView2 fixes custom schemes when the environment is "
+                 "created, so it will not be served (register schemes "
+                 "before the first window)"
+              << std::endl;
+  }
 }
 
-void WebView2Backend::CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
-                                                 bool with_app_scheme) {
+std::vector<std::string> WebView2Backend::SchemesForEnvironment() {
+  std::lock_guard<std::mutex> lock(schemes_mutex_);
+  if (!schemes_frozen_) {
+    frozen_schemes_ = laufey_common::SchemeRegistry::GetInstance()->Snapshot();
+    schemes_frozen_ = true;
+  }
+  return frozen_schemes_;
+}
+
+void WebView2Backend::InitializeWebViewForWindow(uint32_t window_id,
+                                                 HWND hwnd) {
+  // Try with the in-process custom schemes ("app" plus any the embedder
+  // registered) first. If registering them makes environment creation fail,
+  // CreateEnvironmentForWindow retries without them so the window still opens
+  // for ordinary http(s)/TCP navigations.
+  CreateEnvironmentForWindow(window_id, hwnd, SchemesForEnvironment());
+}
+
+void WebView2Backend::CreateEnvironmentForWindow(
+    uint32_t window_id, HWND hwnd, std::vector<std::string> schemes) {
   ComPtr<ICoreWebView2EnvironmentOptions> options;
-  if (with_app_scheme) {
-    // Register "app" as a secure custom scheme so the in-process scheme handler
-    // can serve top-level navigations to app:// like a normal origin.
+  // Keep the registration objects alive until the options have consumed
+  // them; SetCustomSchemeRegistrations takes an array of raw pointers.
+  std::vector<ComPtr<CoreWebView2CustomSchemeRegistration>> registrations;
+  if (!schemes.empty()) {
+    // Register each scheme as a secure custom scheme with an authority
+    // component so the in-process scheme handler can serve top-level
+    // navigations to <scheme>://<host>/ like a normal https origin:
+    // TreatAsSecure gives isSecureContext / crypto.subtle / per-origin
+    // storage, HasAuthorityComponent makes `<scheme>://<host>` the origin.
+    // AllowedOrigins is left empty: no other origin may fetch the custom
+    // scheme (pages served over it fetching http(s) origins are governed by
+    // those origins' CORS headers, as with any secure origin).
     auto opts = Make<CoreWebView2EnvironmentOptions>();
     ComPtr<ICoreWebView2EnvironmentOptions4> options4;
     if (SUCCEEDED(opts.As(&options4)) && options4) {
-      auto appScheme = Make<CoreWebView2CustomSchemeRegistration>(L"app");
-      appScheme->put_TreatAsSecure(TRUE);
-      appScheme->put_HasAuthorityComponent(TRUE);
-      ICoreWebView2CustomSchemeRegistration* registrations[] = {
-          appScheme.Get()};
-      options4->SetCustomSchemeRegistrations(1, registrations);
+      std::vector<ICoreWebView2CustomSchemeRegistration*> raw;
+      for (const std::string& scheme : schemes) {
+        std::wstring name = SchemeUtf8ToWide(scheme);
+        auto registration =
+            Make<CoreWebView2CustomSchemeRegistration>(name.c_str());
+        registration->put_TreatAsSecure(TRUE);
+        registration->put_HasAuthorityComponent(TRUE);
+        raw.push_back(registration.Get());
+        registrations.push_back(registration);
+      }
+      options4->SetCustomSchemeRegistrations(static_cast<UINT32>(raw.size()),
+                                             raw.data());
     }
     options = opts;
   }
@@ -770,29 +838,28 @@ void WebView2Backend::CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
   HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
       nullptr, nullptr, options.Get(),
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-          [this, window_id, hwnd, with_app_scheme](
+          [this, window_id, hwnd, schemes](
               HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(result) || !env) {
-              if (with_app_scheme) {
-                // Registering a custom scheme can make environment creation
+              if (!schemes.empty()) {
+                // Registering custom schemes can make environment creation
                 // fail outright — e.g. when the (shared, exe-derived) user
                 // data folder was previously initialized with a different set
                 // of custom schemes, WebView2 returns an error instead of
-                // opening. Retry once without the scheme so the window still
-                // appears; only the in-process app:// transport is lost.
+                // opening. Retry once without them so the window still
+                // appears; only the in-process scheme transport is lost.
                 std::cerr << "WebView2 environment creation failed with the "
-                             "app:// scheme (hr=0x"
+                             "custom schemes (hr=0x"
                           << std::hex << result << std::dec
-                          << "), retrying without it" << std::endl;
-                CreateEnvironmentForWindow(window_id, hwnd,
-                                           /*with_app_scheme=*/false);
+                          << "), retrying without them" << std::endl;
+                CreateEnvironmentForWindow(window_id, hwnd, {});
                 return S_OK;
               }
               std::cerr << "Failed to create WebView2 environment (hr=0x"
                         << std::hex << result << std::dec << ")" << std::endl;
               return result;
             }
-            OnEnvironmentReady(window_id, hwnd, env, with_app_scheme);
+            OnEnvironmentReady(window_id, hwnd, env, schemes);
             return S_OK;
           })
           .Get());
@@ -805,11 +872,11 @@ void WebView2Backend::CreateEnvironmentForWindow(uint32_t window_id, HWND hwnd,
 
 void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                                          ICoreWebView2Environment* env,
-                                         bool app_scheme_enabled) {
+                                         std::vector<std::string> schemes) {
   env->CreateCoreWebView2Controller(
       hwnd,
       Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-          [this, window_id, hwnd, env, app_scheme_enabled](
+          [this, window_id, hwnd, env, schemes](
               HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
             if (FAILED(result) || !controller) {
               std::cerr << "Failed to create WebView2 controller" << std::endl;
@@ -905,15 +972,19 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                     .Get(),
                 nullptr);
 
-            // In-process app:// scheme: intercept requests and
-            // bridge them to the runtime's memory transport. Only
-            // wired up when the "app" scheme was actually registered
-            // on the environment — otherwise an app:// filter would
-            // never fire and the handler is dead weight.
-            if (app_scheme_enabled) {
+            // In-process custom schemes: intercept requests for each
+            // registered scheme and bridge them to the runtime's memory
+            // transport (one handler; the runtime dispatches on the URL).
+            // Only wired up for schemes actually registered on the
+            // environment — otherwise the filter would never fire and the
+            // handler is dead weight.
+            if (!schemes.empty()) {
               ComPtr<ICoreWebView2Environment> envPtr = env;
-              state->webview->AddWebResourceRequestedFilter(
-                  L"app://*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+              for (const std::string& scheme : schemes) {
+                std::wstring filter = SchemeUtf8ToWide(scheme) + L"://*";
+                state->webview->AddWebResourceRequestedFilter(
+                    filter.c_str(), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+              }
               EventRegistrationToken schemeToken;
               state->webview->add_WebResourceRequested(
                   Callback<ICoreWebView2WebResourceRequestedEventHandler>(

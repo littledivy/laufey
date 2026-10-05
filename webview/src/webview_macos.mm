@@ -7,9 +7,11 @@
 #include "runtime_loader.h"
 #include "laufey_backend_common.h"
 #include "laufey_json.h"
+#include "laufey_scheme_registry.h"
 #include "init_script.h"
 
 #include <atomic>
+#include <iostream>
 #include <map>
 #include <mutex>
 
@@ -55,6 +57,9 @@ class WKWebViewBackend : public LaufeyBackend {
   void CloseWindow(uint32_t window_id) override;
 
   void Navigate(uint32_t window_id, const std::string& url) override;
+  // Record a scheme the embedder registered; every window created afterwards
+  // installs the in-process URL scheme handler for it, next to "app".
+  void RegisterSchemeHandler(const std::string& scheme) override;
   void OpenExternalURL(const std::string& url) override;
   void SetTitle(uint32_t window_id, const std::string& title) override;
   void ExecuteJs(uint32_t window_id, const std::string& script,
@@ -179,6 +184,10 @@ class WKWebViewBackend : public LaufeyBackend {
   std::map<uint32_t, MacWindowState> windows_;
   std::mutex windows_mutex_;
 
+  // Set once the first WKWebViewConfiguration has been built, i.e. the
+  // registered-scheme set has been read; a later RegisterSchemeHandler warns.
+  std::atomic<bool> any_window_created_{false};
+
   // Global event monitors (installed once)
   id keyboard_monitor_ = nil;
   id mouse_monitor_ = nil;
@@ -282,7 +291,10 @@ static void UnregisterNSWindow(NSWindow* win) {
 
 @end
 
-// --- Custom app:// scheme handling (in-process transport) ---
+// --- Custom URL scheme handling (in-process transport) ---
+//
+// Serves "app" and every scheme the embedder registered (see
+// RegisterSchemeHandler); the same handler object is installed for each.
 
 // Exchange wrapping a WKURLSchemeTask. WKURLSchemeTask methods must be invoked
 // on the main thread, so each response step hops there; a `stopped_` flag
@@ -993,15 +1005,33 @@ void WKWebViewBackend::CreateWindowEx(uint32_t window_id, int width, int height,
       [config.userContentController addScriptMessageHandler:handler
                                                        name:@"laufey"];
 
-      // Install the in-process app:// scheme handler (must be set on the
-      // configuration before the WKWebView is created). Requests are bridged
-      // into the runtime's memory transport; if no runtime handler is
-      // registered the exchange is finished immediately.
+      // Install the in-process scheme handler for "app" and for every scheme
+      // the embedder registered through register_scheme_handler (must be set
+      // on the configuration before the WKWebView is created, which is why a
+      // scheme has to be registered before its first window). One handler
+      // serves them all: requests are bridged into the runtime's memory
+      // transport, which dispatches on the URL; if no runtime handler is
+      // registered the exchange is finished immediately. WKWebView treats
+      // handled schemes as secure contexts with `<scheme>://<host>` origins,
+      // so nothing else is needed for them to behave like https origins.
       LaufeyURLSchemeHandler* schemeHandler =
           [[LaufeyURLSchemeHandler alloc] init];
       schemeHandler.windowId = window_id;
-      [config setURLSchemeHandler:schemeHandler
-                     forURLScheme:@(LAUFEY_APP_SCHEME)];
+      for (const std::string& scheme :
+           laufey_common::SchemeRegistry::GetInstance()->Snapshot()) {
+        NSString* name = @(scheme.c_str());
+        // WebKit owns http/https/file/data/... and -setURLSchemeHandler:
+        // raises for them; skip rather than crash on a bad registration.
+        if ([WKWebView handlesURLScheme:name]) {
+          std::cerr << "laufey: scheme \"" << scheme
+                    << "\" is handled natively by WebKit; not installing the "
+                       "in-process handler for it"
+                    << std::endl;
+          continue;
+        }
+        [config setURLSchemeHandler:schemeHandler forURLScheme:name];
+      }
+      any_window_created_.store(true);
 
       std::string initScript =
           BuildInitScript(RuntimeLoader::GetInstance()->GetJsNamespace(),
@@ -1177,6 +1207,26 @@ void WKWebViewBackend::OpenExternalURL(const std::string& url) {
       }
     }
   });
+}
+
+void WKWebViewBackend::RegisterSchemeHandler(const std::string& scheme) {
+  // Any thread (the runtime registers from its own thread). The registry is
+  // read when each WKWebViewConfiguration is built, so a scheme registered
+  // after a window exists only reaches windows created later — the documented
+  // contract is to register before the first window.
+  if (!laufey_common::IsValidSchemeName(scheme)) {
+    std::cerr << "laufey: ignoring invalid URL scheme name \"" << scheme
+              << "\" passed to register_scheme_handler" << std::endl;
+    return;
+  }
+  bool added = laufey_common::SchemeRegistry::GetInstance()->Add(scheme);
+  if (added && any_window_created_.load()) {
+    std::cerr << "laufey: scheme \"" << scheme
+              << "\" was registered after a window was created; existing "
+                 "windows will not serve it (register schemes before the "
+                 "first window)"
+              << std::endl;
+  }
 }
 
 void WKWebViewBackend::Navigate(uint32_t window_id, const std::string& url) {

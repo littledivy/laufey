@@ -167,8 +167,25 @@ fires with the right arguments. No OS input required.
 
 ### C. Custom scheme / IPC
 
-Navigate to a custom-scheme URL and assert the registered handler served the
-expected bytes. Same shape as the existing binding round-trip.
+Register a custom scheme _before the first window_, serve a page over it, and
+assert the registered handler served it **as a real origin**. `native_e2e`
+registers `laufey-e2e`, loads `laufey-e2e://app/`, and the page reports back
+through a binding: `location.origin == "laufey-e2e://app"`, `isSecureContext`, a
+working `crypto.subtle.digest`, `localStorage` set/get, a same-origin `fetch`
+whose streamed body arrives intact, and a cross-origin `fetch` to a loopback
+echo server that proves the `Origin: laufey-e2e://app` header. A second window
+loads `app://e2e/` to prove the built-in scheme still works next to the
+registered one. Two negative checks follow: a `fetch` to a scheme nobody
+registered must fail without reaching the handler, and a scheme registered only
+after the window exists must not be served in it (reported, not asserted, on
+WebKitGTK, whose shared web context applies late registrations to existing
+views). `N/A` on engine-less backends. The CEF host must be told the scheme up
+front (`LAUFEY_CUSTOM_SCHEMES=laufey-e2e`, set by `scripts/native-e2e-run.sh`,
+which also exports `LAUFEY_E2E_BACKEND`) because Chromium registers custom
+schemes before the runtime loads; the script also starts the CEF host with
+`--disable-features=LocalNetworkAccessChecks`, since Chromium otherwise holds
+the page's fetch to the loopback echo server for a permission prompt the host
+never shows.
 
 ### D. OS-observer introspection — _for chrome with no getter_
 

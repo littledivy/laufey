@@ -8,6 +8,7 @@
 - [iOS](ios.md)
 - [Window management](window-management.md)
 - [JavaScript interop](javascript-interop.md)
+- [Custom URL schemes](custom-schemes.md)
 - [Menus](menus.md)
 - [Native dialogs](dialogs.md)
 - [Input events](input-events.md)

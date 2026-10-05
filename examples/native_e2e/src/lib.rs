@@ -12,9 +12,11 @@
 //!
 //! This covers Layer 0 (in-process readback + event-callback round-trips),
 //! menu/tray *click* round-trips via the `test_click_menu_item` C ABI hook
-//! (API 30+; `N/A` on backends without it), and the close-handler round-trip
+//! (API 30+; `N/A` on backends without it), the close-handler round-trip
 //! via `test_trigger_close_requested` (API 31+; `N/A` on backends without
-//! it). OS-observer *structure* checks
+//! it), and the custom-scheme origin contract (a page served over the
+//! battery's own `laufey-e2e://` scheme is a secure `<scheme>://<host>`
+//! origin; `N/A` on engine-less backends). OS-observer *structure* checks
 //! (Layer 1: the Linux D-Bus driver; macOS/Windows pending a backend hook)
 //! live outside this runtime. See docs/e2e-testing.md.
 //!
@@ -22,10 +24,11 @@
 //! event-loop pump, PASS/FAIL + exit code) so the existing runtime loader drives
 //! it unchanged.
 
+use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use laufey::{MenuItem, TrayIcon, Window};
+use laufey::{MenuItem, SchemeRequest, TrayIcon, Value, Window};
 
 static FAILED: AtomicBool = AtomicBool::new(false);
 
@@ -82,11 +85,321 @@ fn expected_handle_type() -> (&'static str, &'static [i32]) {
   }
 }
 
+// ---- custom scheme origin (technique C) --------------------------------
+//
+// The battery registers its own scheme and serves a page over it, then reads
+// back what the page observed. On every web-engine backend a registered
+// scheme must be a real origin: `location.origin == "laufey-e2e://app"`, a
+// secure context (crypto.subtle works), same-origin fetch streams, storage
+// works, and a cross-origin fetch carries `Origin: laufey-e2e://app`.
+
+/// The custom scheme this battery registers. Must be declared to the CEF
+/// backend at launch (`LAUFEY_CUSTOM_SCHEMES=laufey-e2e`, done by
+/// scripts/native-e2e-run.sh) — see custom_schemes.h in cef/src.
+const E2E_SCHEME: &str = "laufey-e2e";
+const E2E_ORIGIN: &str = "laufey-e2e://app";
+/// Never registered: fetching it must fail without reaching the handler.
+const UNREGISTERED_SCHEME: &str = "laufey-e2e-unregistered";
+/// Registered only after the first window exists, breaking the ordering
+/// contract on purpose: that window must not serve it. Deliberately left out
+/// of LAUFEY_CUSTOM_SCHEMES — CEF serves a scheme declared at launch in every
+/// window whenever it is registered.
+const LATE_SCHEME: &str = "laufey-e2e-late";
+/// Body of `/stream`, sent as three separate writes with pauses in between.
+const STREAM_CHUNKS: [&str; 3] = ["chunk-1|", "chunk-2|", "chunk-3|"];
+
+/// What the custom-scheme page reported back through the `schemeReport`
+/// binding (see the page script in `serve_scheme_request`).
+#[derive(Clone, Debug, Default)]
+struct SchemeReport {
+  origin: String,
+  secure: bool,
+  subtle: String,
+  digest_bytes: i32,
+  storage: String,
+  storage_prev: String,
+  stream_text: String,
+  stream_chunks: i32,
+  echo_body: String,
+}
+
+fn arg_string(args: &[Value], i: usize) -> String {
+  match args.get(i) {
+    Some(Value::String(s)) => s.clone(),
+    Some(Value::Bool(b)) => b.to_string(),
+    Some(Value::Int(n)) => n.to_string(),
+    Some(Value::Double(d)) => d.to_string(),
+    Some(Value::Null) | None => String::new(),
+    Some(_) => "<non-scalar>".to_string(),
+  }
+}
+
+fn arg_bool(args: &[Value], i: usize) -> bool {
+  args.get(i).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+fn arg_int(args: &[Value], i: usize) -> i32 {
+  match args.get(i) {
+    Some(Value::Int(n)) => *n,
+    Some(Value::Double(d)) => *d as i32,
+    _ => 0,
+  }
+}
+
+/// The page served at `laufey-e2e://app/`. Gathers the origin facts, exercises
+/// crypto.subtle / localStorage / a streamed same-origin fetch / a cross-origin
+/// fetch to the echo server, then reports through the `schemeReport` binding.
+/// Every step is wrapped so one failure still lets the others report.
+fn scheme_page_html(echo_url: &str) -> String {
+  format!(
+    r#"<!doctype html><html><head><meta charset="utf-8"><title>scheme</title></head><body>
+<script>
+// The namespace is a plain object on CEF but a callable Proxy on the WebView
+// backends (typeof 'function'), so test only for the binding itself.
+async function waitForBinding(name) {{
+  for (let i = 0; i < 100; i++) {{
+    if (typeof Laufey !== 'undefined' && typeof Laufey[name] === 'function') return;
+    await new Promise(r => setTimeout(r, 50));
+  }}
+  throw new Error('binding never appeared: ' + name);
+}}
+const r = {{ origin: location.origin, secure: !!window.isSecureContext,
+             subtle: typeof (self.crypto && crypto.subtle), digestBytes: 0,
+             storage: '', storagePrev: '', streamText: '', streamChunks: 0,
+             echoBody: '' }};
+// Whatever happens, the runtime hears about it: an uncaught error is folded
+// into the report instead of leaving the test to time out silently.
+window.addEventListener('error', e => report('uncaught: ' + (e && e.message)));
+window.addEventListener('unhandledrejection', e => report('unhandled: ' + (e && e.reason)));
+let reported = false;
+// Watchdog: if a step hangs (a stream that never ends, a fetch that never
+// settles), report the partial state so the failure says where it stuck.
+setTimeout(() => report('watchdog: stuck with ' + JSON.stringify(r)), 20000);
+async function report(problem) {{
+  if (reported) return;
+  reported = true;
+  if (problem) r.echoBody = problem + ' | ' + r.echoBody;
+  await waitForBinding('schemeReport');
+  await Laufey.schemeReport(r.origin, r.secure, r.subtle, r.digestBytes, r.storage,
+                            r.storagePrev, r.streamText, r.streamChunks, r.echoBody);
+}}
+(async () => {{
+  try {{
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('laufey'));
+    r.digestBytes = d.byteLength;
+  }} catch (e) {{ r.subtle = 'error: ' + (e && e.message); }}
+  try {{
+    r.storagePrev = localStorage.getItem('laufey_e2e') || '';
+    const v = 'run-' + Date.now();
+    localStorage.setItem('laufey_e2e', v);
+    r.storage = localStorage.getItem('laufey_e2e') === v ? 'ok' : 'read back mismatch';
+  }} catch (e) {{ r.storage = 'error: ' + (e && e.message); }}
+  try {{
+    const res = await fetch('/stream');
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    for (;;) {{
+      const {{ value, done }} = await reader.read();
+      if (done) break;
+      r.streamChunks++;
+      r.streamText += dec.decode(value, {{ stream: true }});
+    }}
+    r.streamText += dec.decode();
+  }} catch (e) {{ r.streamText = 'error: ' + (e && e.message); }}
+  const echoUrl = {echo_url:?};
+  if (echoUrl) {{
+    try {{
+      const res = await fetch(echoUrl, {{ mode: 'cors' }});
+      r.echoBody = await res.text();
+    }} catch (e) {{ r.echoBody = 'error: ' + (e && e.message); }}
+  }} else {{
+    r.echoBody = 'skipped';
+  }}
+  await report(null);
+}})().catch(e => report('script: ' + (e && e.message)));
+</script></body></html>"#
+  )
+}
+
+/// The page served at `app://e2e/`: proves the built-in scheme still works
+/// next to the registered one, by reporting its origin through `appPing`.
+const APP_PAGE_HTML: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>app</title></head><body>
+<script>
+(async () => {
+  for (let i = 0; i < 100; i++) {
+    if (typeof Laufey !== 'undefined' && typeof Laufey.appPing === 'function') {
+      await Laufey.appPing(location.origin);
+      return;
+    }
+    await new Promise(r => setTimeout(r, 50));
+  }
+})();
+</script></body></html>"#;
+
+fn respond(req: SchemeRequest, status: i32, content_type: &str, body: &[u8]) {
+  let headers = vec![
+    ("content-type".to_string(), content_type.to_string()),
+    ("cache-control".to_string(), "no-store".to_string()),
+  ];
+  req.exchange.begin(status, &headers);
+  if !body.is_empty() {
+    req.exchange.write(body);
+  }
+  req.exchange.finish();
+}
+
+/// Scheme handler for both `laufey-e2e://app/...` and `app://e2e/...`. One
+/// handler serves every registered scheme (the C ABI contract), so dispatch
+/// on the URL. Every URL it sees is appended to `seen` so the negative checks
+/// can prove a request never reached it. Runs on a backend thread; the
+/// streamed route hops to its own thread so it never blocks the caller.
+fn serve_scheme_request(
+  req: SchemeRequest,
+  echo_url: &str,
+  seen: &Mutex<Vec<String>>,
+) {
+  let url = req.url.clone();
+  seen.lock().unwrap().push(url.clone());
+  // Strip an optional query/fragment; the routes below don't use them.
+  let path = url.split(['?', '#']).next().unwrap_or("");
+  match path {
+    "laufey-e2e://app/" | "laufey-e2e://app" => respond(
+      req,
+      200,
+      "text/html; charset=utf-8",
+      scheme_page_html(echo_url).as_bytes(),
+    ),
+    "laufey-e2e://app/stream" => {
+      std::thread::spawn(move || {
+        let headers = vec![(
+          "content-type".to_string(),
+          "text/plain; charset=utf-8".to_string(),
+        )];
+        req.exchange.begin(200, &headers);
+        for (i, chunk) in STREAM_CHUNKS.iter().enumerate() {
+          if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+          }
+          if req.exchange.write(chunk.as_bytes()) < 0 {
+            break; // consumer went away
+          }
+        }
+        req.exchange.finish();
+      });
+    }
+    "app://e2e/" | "app://e2e" => respond(
+      req,
+      200,
+      "text/html; charset=utf-8",
+      APP_PAGE_HTML.as_bytes(),
+    ),
+    // Target of the negative probes. CORS-open so that, were the engine to
+    // serve the (cross-origin) request, the page's fetch would resolve
+    // rather than fail on CORS — only a real refusal reads as "rejected".
+    p if p.ends_with("://app/probe") => {
+      let headers = vec![
+        ("content-type".to_string(), "text/plain".to_string()),
+        ("access-control-allow-origin".to_string(), "*".to_string()),
+      ];
+      req.exchange.begin(200, &headers);
+      req.exchange.write(b"probe");
+      req.exchange.finish();
+    }
+    _ => respond(req, 404, "text/plain", b"not found"),
+  }
+}
+
+/// Script run in the custom-scheme window: fetch `url` and report through the
+/// `schemeProbe` binding whether the engine served it (`served:<status>`) or
+/// rejected the request (`rejected`).
+fn fetch_probe_js(label: &str, url: &str) -> String {
+  format!(
+    r#"(async () => {{
+  let out;
+  try {{
+    const res = await fetch({url:?});
+    out = 'served:' + res.status;
+  }} catch (e) {{
+    out = 'rejected';
+  }}
+  await Laufey.schemeProbe({label:?}, out);
+}})();"#
+  )
+}
+
+/// A minimal loopback HTTP server that echoes the request's `Origin` header
+/// (`origin=<value>` or `origin=none`) with `Access-Control-Allow-Origin: *`,
+/// so a cross-origin fetch from the custom-scheme page proves which origin
+/// the engine sends. Returns the URL to fetch, or `None` if no socket could
+/// be bound (the check is then N/A).
+fn start_origin_echo_server() -> Option<String> {
+  let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+  let port = listener.local_addr().ok()?.port();
+  std::thread::spawn(move || {
+    for stream in listener.incoming() {
+      let Ok(mut stream) = stream else { continue };
+      let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+      let mut buf = Vec::new();
+      let mut chunk = [0u8; 4096];
+      // Read headers only (GET, no body).
+      while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+        match stream.read(&mut chunk) {
+          Ok(0) | Err(_) => break,
+          Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+      }
+      let text = String::from_utf8_lossy(&buf);
+      let origin = text
+        .lines()
+        .find_map(|l| {
+          let (name, value) = l.split_once(':')?;
+          name
+            .trim()
+            .eq_ignore_ascii_case("origin")
+            .then(|| value.trim().to_string())
+        })
+        .unwrap_or_else(|| "none".to_string());
+      let body = format!("origin={origin}");
+      let response = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n\
+         access-control-allow-origin: *\r\ncontent-length: {}\r\n\
+         connection: close\r\n\r\n{}",
+        body.len(),
+        body
+      );
+      let _ = stream.write_all(response.as_bytes());
+    }
+  });
+  Some(format!("http://127.0.0.1:{port}/echo"))
+}
+
 fn e2e_main() {
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
   rt.block_on(async move {
     // Pump the laufey event loop (JS-call dispatch, timers).
     tokio::spawn(async { laufey::run().await });
+
+    // ---- C. custom scheme registration -----------------------------------
+    // Registered BEFORE the first window: the engines read their scheme
+    // tables when a web view is created (WebView2 fixes the set for the whole
+    // process at its first environment), so this ordering is the documented
+    // contract, not a convenience. "app" is served by the same handler.
+    let scheme_supported = laufey::scheme_handlers_supported();
+    let echo_url = start_origin_echo_server();
+    let seen_urls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let make_handler = {
+      let echo = echo_url.clone().unwrap_or_default();
+      let seen = seen_urls.clone();
+      move || {
+        let (echo, seen) = (echo.clone(), seen.clone());
+        move |req: SchemeRequest| serve_scheme_request(req, &echo, &seen)
+      }
+    };
+    laufey::register_scheme_handler(E2E_SCHEME, make_handler());
+    let scheme_report: Arc<Mutex<Option<SchemeReport>>> =
+      Arc::new(Mutex::new(None));
+    let scheme_probes: Arc<Mutex<std::collections::HashMap<String, String>>> =
+      Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     // ---- window creation + event-callback wiring -------------------------
     // Resize / move / focus handlers record the last event so we can drive the
@@ -121,8 +434,40 @@ fn e2e_main() {
       .on_page_load(move |_e| {
         pl.store(true, Ordering::SeqCst);
       })
-      // Trivial page; a no-op on engine-less backends (Winit navigate is None).
-      .load("data:text/html,<!doctype html><title>native-e2e</title>");
+      // The custom-scheme page reports what it observed (technique C).
+      .bind("schemeReport", {
+        let report = scheme_report.clone();
+        move |call| {
+          let a = &call.args;
+          *report.lock().unwrap() = Some(SchemeReport {
+            origin: arg_string(a, 0),
+            secure: arg_bool(a, 1),
+            subtle: arg_string(a, 2),
+            digest_bytes: arg_int(a, 3),
+            storage: arg_string(a, 4),
+            storage_prev: arg_string(a, 5),
+            stream_text: arg_string(a, 6),
+            stream_chunks: arg_int(a, 7),
+            echo_body: arg_string(a, 8),
+          });
+          call.resolve(Value::Bool(true));
+        }
+      })
+      // Negative probes (unregistered / late scheme) report here.
+      .bind("schemeProbe", {
+        let probes = scheme_probes.clone();
+        move |call| {
+          probes
+            .lock()
+            .unwrap()
+            .insert(arg_string(&call.args, 0), arg_string(&call.args, 1));
+          call.resolve(Value::Bool(true));
+        }
+      })
+      // Serve the main page over the battery's own scheme so the origin
+      // assertions below have something to measure. A no-op on engine-less
+      // backends (Winit navigate is None).
+      .load("laufey-e2e://app/");
 
     check("window id is nonzero", win.id() != 0);
 
@@ -443,6 +788,120 @@ fn e2e_main() {
       }
     }
 
+    // ---- C. custom scheme is a real origin --------------------------------
+    // The page at laufey-e2e://app/ (loaded above) reports back through the
+    // schemeReport binding. Engine-less backends leave register_scheme_handler
+    // NULL -> N/A. On a web-engine backend a missing report is a FAIL: the
+    // scheme was registered before the window, so the page must load.
+    if !scheme_supported {
+      na("custom scheme origin (backend has no scheme handler support)");
+    } else {
+      let reported =
+        wait_for(|| scheme_report.lock().unwrap().is_some(), 300, 100).await;
+      check("custom-scheme page loaded and reported back", reported);
+      if let Some(r) = scheme_report.lock().unwrap().clone() {
+        check(
+          &format!("location.origin is {E2E_ORIGIN} (got {:?})", r.origin),
+          r.origin == E2E_ORIGIN,
+        );
+        check("custom-scheme page is a secure context", r.secure);
+        check(
+          &format!(
+            "crypto.subtle works on the custom scheme (typeof {}, digest {} bytes)",
+            r.subtle, r.digest_bytes
+          ),
+          r.subtle == "object" && r.digest_bytes == 32,
+        );
+        check(
+          &format!("localStorage works on the custom-scheme origin ({})", r.storage),
+          r.storage == "ok",
+        );
+        // Persistence across launches is only observable on the second run;
+        // report it so a manual two-run check has the evidence.
+        eprintln!(
+          "[e2e] INFO localStorage value from a previous run: {:?}",
+          r.storage_prev
+        );
+        let expected_stream: String = STREAM_CHUNKS.concat();
+        check(
+          &format!(
+            "same-origin fetch over the custom scheme delivers the streamed body (got {:?})",
+            r.stream_text
+          ),
+          r.stream_text == expected_stream,
+        );
+        // Chunk arrival is engine-dependent (WebView2 buffers the whole
+        // response before answering); informational only.
+        eprintln!(
+          "[e2e] INFO streamed response arrived in {} read(s) ({} writes)",
+          r.stream_chunks,
+          STREAM_CHUNKS.len()
+        );
+        match &echo_url {
+          Some(_) => check(
+            &format!(
+              "cross-origin fetch from the custom scheme sends Origin: {E2E_ORIGIN} (got {:?})",
+              r.echo_body
+            ),
+            r.echo_body == format!("origin={E2E_ORIGIN}"),
+          ),
+          None => na("cross-origin Origin header (could not bind a loopback echo server)"),
+        }
+      }
+
+      // Negative: a scheme nobody registered is not served — the fetch
+      // fails and the request never reaches the handler.
+      let probe = |label: &'static str, url: String| {
+        let probes = scheme_probes.clone();
+        win.execute_js(&fetch_probe_js(label, &url), None::<fn(_)>);
+        async move {
+          wait_for(|| probes.lock().unwrap().contains_key(label), 100, 100)
+            .await;
+          probes.lock().unwrap().get(label).cloned().unwrap_or_default()
+        }
+      };
+      let reached = |scheme: &str| {
+        let prefix = format!("{scheme}:");
+        seen_urls
+          .lock()
+          .unwrap()
+          .iter()
+          .any(|u| u.starts_with(&prefix))
+      };
+      let got = probe(
+        "unregistered",
+        format!("{UNREGISTERED_SCHEME}://app/probe"),
+      )
+      .await;
+      check(
+        &format!("an unregistered scheme is not served (fetch: {got:?})"),
+        got == "rejected" && !reached(UNREGISTERED_SCHEME),
+      );
+
+      // Negative: registering a scheme after the window exists breaks the
+      // ordering contract, so that window must not serve it (the backend
+      // logs a warning on stderr). WebKitGTK is the exception: its schemes
+      // live on the shared web context, which applies a late registration to
+      // existing web views too — reported, not asserted, there.
+      laufey::register_scheme_handler(LATE_SCHEME, make_handler());
+      tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+      let got = probe("late", format!("{LATE_SCHEME}://app/probe")).await;
+      let backend = std::env::var("LAUFEY_E2E_BACKEND").unwrap_or_default();
+      if cfg!(target_os = "linux") && backend == "webview" {
+        eprintln!(
+          "[e2e] INFO WebKitGTK: scheme registered after the first window, \
+           fetched from it: {got:?}"
+        );
+      } else {
+        check(
+          &format!(
+            "a scheme registered after the first window is not served by it (fetch: {got:?})"
+          ),
+          got == "rejected" && !reached(LATE_SCHEME),
+        );
+      }
+    }
+
     // ---- close-requested handler round-trip --------------------------------
     // A second window (kept separate from `win`, which must survive to
     // shutdown). Registers an on_close_requested handler that *stashes* the
@@ -452,10 +911,31 @@ fn e2e_main() {
     // test_trigger_close_requested (API >= 31, implemented by every in-tree
     // backend — init_api's version check guarantees it's present, so a
     // failure here is a regression, never a missing hook).
+    //
+    // Its page is served over the built-in "app" scheme by the same handler
+    // as laufey-e2e://, proving "app" keeps working next to a registered
+    // scheme (technique C, backward compatibility).
+    let app_origin: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let close_win = Window::new(200, 150)
       .title("native-e2e-close")
-      .load("data:text/html,<!doctype html><title>close</title>");
+      .bind("appPing", {
+        let origin = app_origin.clone();
+        move |call| {
+          *origin.lock().unwrap() = Some(arg_string(&call.args, 0));
+          call.resolve(Value::Bool(true));
+        }
+      })
+      .load("app://e2e/");
     let close_win_id = close_win.id();
+    if scheme_supported {
+      let pinged =
+        wait_for(|| app_origin.lock().unwrap().is_some(), 150, 100).await;
+      let got = app_origin.lock().unwrap().clone().unwrap_or_default();
+      check(
+        &format!("built-in app:// scheme still served next to the registered one (origin {got:?})"),
+        pinged && got == "app://e2e",
+      );
+    }
     let baseline_sized = wait_for(
       || {
         let (w, _h) = close_win.get_size();

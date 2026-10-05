@@ -226,11 +226,18 @@ class LaufeyApp : public CefApp, public CefBrowserProcessHandler {
 
   void OnContextInitialized() override;
 
-  // Register the custom "app" scheme (standard, secure, fetch/CORS-enabled) so
-  // the in-process scheme handler can serve pages over app:// like an https
-  // origin. Called early in every process.
+  // Register the custom "app" scheme plus every scheme declared with
+  // --laufey-custom-schemes / LAUFEY_CUSTOM_SCHEMES (standard, secure,
+  // fetch/CORS-enabled) so the in-process scheme handler can serve pages over
+  // them like an https origin. Called early in every process; see
+  // custom_schemes.h for why the list must come from the command line.
   void OnRegisterCustomSchemes(
       CefRawPtr<CefSchemeRegistrar> registrar) override;
+
+  // Forward the declared custom schemes to renderer / utility processes so
+  // they register the same set.
+  void OnBeforeChildProcessLaunch(
+      CefRefPtr<CefCommandLine> command_line) override;
 
 #if defined(__APPLE__)
   // Drive CefDoMessageLoopWork from the main run loop (external_message_pump)
