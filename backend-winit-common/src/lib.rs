@@ -5,6 +5,8 @@ pub use winit;
 pub mod dock;
 pub mod notification;
 pub mod permission;
+#[cfg(target_os = "windows")]
+mod prompt_win;
 pub mod tray;
 
 use std::cell::RefCell;
@@ -3281,33 +3283,10 @@ fn show_prompt_dialog(
   }
 }
 
+// Windows: an in-process Win32 dialog (src/prompt_win.rs); no page text
+// reaches a shell or a script.
 #[cfg(target_os = "windows")]
-fn show_prompt_dialog(
-  title: &str,
-  message: &str,
-  default_value: &str,
-) -> (bool, Option<String>) {
-  let script = format!(
-    r#"Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('{}', '{}', '{}')"#,
-    message.replace('\'', "''"),
-    title.replace('\'', "''"),
-    default_value.replace('\'', "''"),
-  );
-  match std::process::Command::new("powershell")
-    .args(["-Command", &script])
-    .output()
-  {
-    Ok(output) if output.status.success() => {
-      let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-      if text.is_empty() {
-        (false, None)
-      } else {
-        (true, Some(text))
-      }
-    }
-    _ => (false, None),
-  }
-}
+use prompt_win::show_prompt_dialog;
 
 #[cfg(target_os = "linux")]
 fn show_prompt_dialog(

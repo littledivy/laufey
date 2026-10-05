@@ -40,6 +40,29 @@ jobs:
           find capi cef/src webview/src -name '*.cc' -o -name '*.cpp' -o -name '*.c' -o -name '*.h' -o -name '*.mm' | \
             xargs clang-format --dry-run --Werror
 
+      # The dialog paths show their text in-process and start no program: no
+      # process-spawning or shell API in them (the Windows prompt used to
+      # build a PowerShell command line from the dialog's text).
+      - name: dialog paths call no shell or process API
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='_popen|popen\(|system\(|CreateProcess|ShellExecute|WinExec|powershell|cmd\.exe|std::process::Command'
+          files=(backend-common/src/dialog_win.cc backend-common/src/dialog_mac.mm
+                 backend-common/src/dialog_linux.cc
+                 backend-winit-common/src/prompt_win.rs)
+          status=0
+          for f in "${files[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "missing dialog source: $f" >&2
+              status=1
+            elif grep -HnE "$pattern" "$f"; then
+              echo "$f calls a shell / process API" >&2
+              status=1
+            fi
+          done
+          exit "$status"
+
       - name: deno fmt
         run: deno fmt --check
 
