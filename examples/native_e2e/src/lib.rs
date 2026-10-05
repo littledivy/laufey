@@ -22,6 +22,8 @@
 //! event-loop pump, PASS/FAIL + exit code) so the existing runtime loader drives
 //! it unchanged.
 
+mod close_checks;
+
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 
@@ -442,6 +444,14 @@ fn e2e_main() {
         check(&format!("print_to_pdf succeeds (got: {e})"), false)
       }
     }
+
+    // ---- a window the user closes --------------------------------------
+    // While `win` is still open, so the app has a window left, and before
+    // the close-requested section below registers a handler: with one
+    // registered, every OS close is deferred to the runtime, which then
+    // closes the window through close_window, never the backend's own
+    // destroy path this checks.
+    close_checks::run().await;
 
     // ---- close-requested handler round-trip --------------------------------
     // A second window (kept separate from `win`, which must survive to

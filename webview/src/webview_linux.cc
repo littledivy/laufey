@@ -440,6 +440,11 @@ class WebKitGTKBackend : public LaufeyBackend {
 
   void HandleJsMessage(uint32_t window_id, const char* json);
 
+  // Drops the state of a window GTK destroyed on its own (the user closed it:
+  // delete-event fell through to GTK's default handler). CloseWindow() drops
+  // the state itself and never reaches this. GTK thread.
+  void ForgetDestroyedWindow(uint32_t window_id);
+
  private:
   LinuxWindowState* GetWindow(uint32_t window_id);
 
@@ -473,9 +478,19 @@ static void on_script_message(WebKitUserContentManager* manager,
 // "destroy" fires only after the widget is already being torn down -- too
 // late to veto anything, so it's just final cleanup. The close-requested
 // dispatch (and any veto) happens earlier, from "delete-event" below.
+//
+// A window CloseWindow() closes is unregistered (and its state dropped) before
+// gtk_widget_destroy, so `wid` is 0 here for it -- which also keeps this
+// handler from taking windows_mutex_, which CloseWindow holds while it
+// destroys. A window the user closed still has its id: its state goes here,
+// or every later call naming it would reach the destroyed widgets.
 static void on_window_destroy(GtkWidget* widget, gpointer user_data) {
   uint32_t wid = LaufeyIdForWidget(widget);
   if (wid > 0) {
+    // Lock order windows_mutex_ -> g_widget_mutex: the two are taken one
+    // after the other here, never nested.
+    if (g_gtk_backend)
+      g_gtk_backend->ForgetDestroyedWindow(wid);
     UnregisterWidget(widget);
   }
   // If no more windows, quit
@@ -517,6 +532,17 @@ WebKitGTKBackend::~WebKitGTKBackend() {
   }
   windows_.clear();
   g_gtk_backend = nullptr;
+}
+
+void WebKitGTKBackend::ForgetDestroyedWindow(uint32_t window_id) {
+  std::lock_guard<std::mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return;
+  webkit_user_content_manager_unregister_script_message_handler(
+      state->content_manager, "laufey");
+  g_content_manager_to_laufey_id.erase(state->content_manager);
+  windows_.erase(window_id);
 }
 
 LinuxWindowState* WebKitGTKBackend::GetWindow(uint32_t window_id) {

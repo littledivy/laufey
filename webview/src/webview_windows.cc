@@ -398,6 +398,11 @@ class WebView2Backend : public LaufeyBackend {
 
   void HandleJsMessage(uint32_t window_id, const std::wstring& json);
 
+  // Drops the state of a window that is being destroyed (WM_DESTROY): the
+  // user closed it, or CloseWindow() destroyed it (which erases the entry
+  // itself as well). UI thread.
+  void ForgetDestroyedWindow(uint32_t window_id);
+
  private:
   WinWindowState* GetWindow(uint32_t window_id);
   void InitializeWebViewForWindow(uint32_t window_id, HWND hwnd);
@@ -573,6 +578,14 @@ LRESULT CALLBACK WebView2Backend::WindowProc(HWND hwnd, UINT msg, WPARAM wParam,
       // closes and for CloseWindow()'s direct DestroyWindow alike, so a
       // deferred close resolved via close_window still quits the message
       // loop when the last window goes away.
+      //
+      // A window the user closed (WM_CLOSE -> DestroyWindow) still has its
+      // entry: drop it, or every later call naming the id would reach the
+      // destroyed HWND and its web view. Taken before g_hwnd_mutex, not
+      // inside it: lock order windows_mutex_ -> g_hwnd_mutex, as in
+      // ~WebView2Backend.
+      if (g_win_backend && wid > 0)
+        g_win_backend->ForgetDestroyedWindow(wid);
       std::lock_guard<std::recursive_mutex> lock(g_hwnd_mutex);
       if (g_hwnd_to_laufey_id.erase(hwnd) > 0 && g_hwnd_to_laufey_id.empty()) {
         PostQuitMessage(0);
@@ -673,6 +686,18 @@ WebView2Backend::~WebView2Backend() {
   }
   windows_.clear();
   g_win_backend = nullptr;
+}
+
+void WebView2Backend::ForgetDestroyedWindow(uint32_t window_id) {
+  std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
+  auto* state = GetWindow(window_id);
+  if (!state)
+    return;
+  // WM_DESTROY reaches the parent before its children are destroyed: the
+  // controller can still close cleanly here.
+  if (state->controller)
+    state->controller->Close();
+  windows_.erase(window_id);
 }
 
 WinWindowState* WebView2Backend::GetWindow(uint32_t window_id) {
@@ -818,8 +843,11 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
 
             std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
             auto* state = GetWindow(window_id);
-            if (!state)
+            if (!state) {
+              // The window closed while the web view was being created.
+              controller->Close();
               return S_OK;
+            }
 
             state->controller = controller;
             controller->get_CoreWebView2(&state->webview);
@@ -1023,8 +1051,11 @@ void WebView2Backend::CloseWindow(uint32_t window_id) {
   std::lock_guard<std::recursive_mutex> lock(windows_mutex_);
   auto* state = GetWindow(window_id);
   if (state) {
-    if (state->controller)
+    if (state->controller) {
       state->controller->Close();
+      // WM_DESTROY (below) must not close it a second time.
+      state->controller.Reset();
+    }
     // Deliberately not erased from g_hwnd_to_laufey_id here: WM_DESTROY
     // (sent synchronously by DestroyWindow) owns unregistration and the
     // last-window quit check, for this path and the WM_CLOSE path alike.

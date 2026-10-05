@@ -403,6 +403,18 @@ but ride the pre-existing `native-e2e` CI exclusions for those combos (`§`
 status note above) — not gated by this change, but not covered by CI for it
 either.
 
+**A window the user closes** (`close_checks.rs`): a second window is closed
+through the window system rather than `close_window` — a `WM_CLOSE` posted to it
+on Windows, `gtk_window_close` (what the window manager's close button does) on
+the GTK thread under WebKitGTK; `N/A` elsewhere — while no close-requested
+handler is registered yet (a registered one routes every OS close through
+`close_window`), with a JS call from its page left pending where the engine
+delivers it. Every getter must then read as for an id the backend never handed
+out, `execute_js` must answer as for a missing window, and the setters,
+`navigate` and the answer to the pending call must be no-ops: the backend's own
+destroy path drops the window's state, so none of them reaches the destroyed
+native window.
+
 **Not yet added** (future hooks, same append-and-`N/A` pattern):
 
 ```c
