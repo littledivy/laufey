@@ -17,6 +17,7 @@
 #include "include/wrapper/cef_helpers.h"
 
 #include "app.h"
+#include "private_temp_dir.h"
 #include "renderer_app.h"
 #include "runtime_loader.h"
 
@@ -817,9 +818,14 @@ int main(int argc, char* argv[]) {
   settings.no_sandbox = true;
   settings.log_severity = LaufeyCefLogSeverity();
 
-  // Set cache path
-  std::string cache_path = "/tmp/laufey_cef_" + std::to_string(getpid());
-  CefString(&settings.root_cache_path) = cache_path;
+  // Set cache path: a throwaway per-process profile in a fresh 0700
+  // directory with a random name under $TMPDIR or /tmp, never a fixed name
+  // another user of /tmp could create first. If even that fails the root
+  // stays unset and CEF keeps the profile in memory.
+  std::string cache_path = LaufeyMakePrivateTempDir("", "laufey_cef_");
+  if (!cache_path.empty()) {
+    CefString(&settings.root_cache_path) = cache_path;
+  }
 
   if (const char* port_env = getenv("LAUFEY_REMOTE_DEBUGGING_PORT")) {
     int port = atoi(port_env);

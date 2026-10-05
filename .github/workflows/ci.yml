@@ -61,6 +61,20 @@ jobs:
       - run: cargo test -p laufey --lib
       - run: cargo test -p laufey --doc
 
+  # The CEF Linux profile directory when the app gives no data directory
+  # (cef/src/private_temp_dir.h): a fresh owner-only directory with a random
+  # name under $TMPDIR or /tmp. Header-only, so it builds without CEF.
+  private-temp-dir:
+    name: private_temp_dir_test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: private_temp_dir_test
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -O1 -g -Icef/src \
+            cef/tests/private_temp_dir_test.cc -o "$RUNNER_TEMP/private_temp_dir_test"
+          "$RUNNER_TEMP/private_temp_dir_test"
+
   build-winit:
     name: winit / ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
