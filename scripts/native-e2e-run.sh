@@ -3,13 +3,15 @@
 # Run the backend-agnostic native_e2e_runtime under a given backend and
 # propagate its PASS/FAIL exit code. See docs/e2e-testing.md.
 #
-#   scripts/native-e2e-run.sh <winit|webview|cef> [--layer1]
+#   scripts/native-e2e-run.sh <winit|webview|cef> [--layer1|--scheme-body]
 #
 # --layer1 (Linux only) wraps the run in the D-Bus StatusNotifier/dbusmenu
 # observer (native_e2e_driver) under a private session bus.
+# --scheme-body runs only the custom-scheme request-body round trip (for
+# backends where the full battery can't run in CI).
 set -euo pipefail
 
-backend="${1:?usage: native-e2e-run.sh <winit|webview|cef> [--layer1]}"
+backend="${1:?usage: native-e2e-run.sh <winit|webview|cef> [--layer1|--scheme-body]}"
 mode="${2:-}"
 
 # Locate the runtime cdylib (.so / .dylib / .dll).
@@ -22,6 +24,12 @@ for c in \
 done
 [ -n "$rt" ] || { echo "native_e2e_runtime cdylib not found (build it first)"; exit 1; }
 export LAUFEY_RUNTIME_PATH="$rt"
+
+# Lets the battery skip web-engine checks on the engine-less winit backend.
+export LAUFEY_E2E_BACKEND="$backend"
+if [ "$mode" = "--scheme-body" ]; then
+  export LAUFEY_E2E_ONLY=scheme-body
+fi
 
 # Resolve the backend binary (handles macOS .app bundles).
 case "$backend" in

@@ -14,7 +14,8 @@
 //! menu/tray *click* round-trips via the `test_click_menu_item` C ABI hook
 //! (API 30+; `N/A` on backends without it), and the close-handler round-trip
 //! via `test_trigger_close_requested` (API 31+; `N/A` on backends without
-//! it). OS-observer *structure* checks
+//! it), and a request-body round trip over the `app://` scheme (see
+//! `body_echo.rs`; `N/A` on engine-less backends). OS-observer *structure* checks
 //! (Layer 1: the Linux D-Bus driver; macOS/Windows pending a backend hook)
 //! live outside this runtime. See docs/e2e-testing.md.
 //!
@@ -22,10 +23,13 @@
 //! event-loop pump, PASS/FAIL + exit code) so the existing runtime loader drives
 //! it unchanged.
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Arc;
+mod body_echo;
 
-use laufey::{MenuItem, TrayIcon, Window};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
+
+use laufey::{MenuItem, SchemeRequest, TrayIcon, Value, Window};
 
 static FAILED: AtomicBool = AtomicBool::new(false);
 
@@ -82,11 +86,147 @@ fn expected_handle_type() -> (&'static str, &'static [i32]) {
   }
 }
 
+/// Whether the backend under test has a web engine. Winit has none (its
+/// register_scheme_handler / navigate are no-ops), so web checks are N/A
+/// there. scripts/native-e2e-run.sh exports LAUFEY_E2E_BACKEND.
+fn has_web_engine() -> bool {
+  std::env::var("LAUFEY_E2E_BACKEND").map_or(true, |b| b != "winit")
+}
+
+/// Request-body round trip over `app://` (see body_echo.rs). Opens its own
+/// window and returns it so the caller keeps it alive until exit.
+async fn body_round_trip(received: &body_echo::Received) -> Option<Window> {
+  if !has_web_engine() {
+    na("custom-scheme request bodies (backend has no web engine)");
+    return None;
+  }
+  // CEF on this base registers app:// as a fetch-enabled scheme only in the
+  // browser process, not in the renderer, so fetch() from an app:// page
+  // fails before it reaches the scheme handler (fixed separately by the
+  // registered custom schemes change). CEF buffers request bodies up front
+  // (scheme_handler.cc), so the round trip applies once fetch works.
+  if std::env::var("LAUFEY_E2E_BACKEND").as_deref() == Ok("cef") {
+    na("custom-scheme request bodies (CEF: fetch() to app:// is not enabled in the renderer on this base)");
+    return None;
+  }
+  let reports: body_echo::Reports = Arc::new(Mutex::new(HashMap::new()));
+  let win = Window::new(320, 240)
+    .title("native-e2e-body")
+    .bind("bodyReport", {
+      let reports = reports.clone();
+      move |call| {
+        let a = &call.args;
+        let label = match a.first() {
+          Some(Value::String(s)) => s.clone(),
+          _ => String::new(),
+        };
+        let same = a.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+        let len = match a.get(2) {
+          Some(Value::Int(n)) => *n as i64,
+          Some(Value::Double(d)) => *d as i64,
+          _ => -1,
+        };
+        let detail = match a.get(3) {
+          Some(Value::String(s)) => s.clone(),
+          _ => String::new(),
+        };
+        reports.lock().unwrap().insert(label, (same, len, detail));
+        call.resolve(Value::Bool(true));
+      }
+    })
+    .load(body_echo::PAGE_URL);
+
+  let cases = body_echo::cases();
+  let done = wait_for(
+    || {
+      let r = reports.lock().unwrap();
+      r.contains_key("script")
+        || (cases.iter().all(|c| r.contains_key(c.label))
+          && body_echo::MIME_CHECKS
+            .iter()
+            .all(|(label, _)| r.contains_key(*label)))
+    },
+    600,
+    100,
+  )
+  .await;
+  check("request-body page reported every case", done);
+  let reports = reports.lock().unwrap().clone();
+  if let Some((_, _, detail)) = reports.get("script") {
+    check(&format!("request-body page script ran ({detail})"), false);
+  }
+  let received = received.lock().unwrap().clone();
+  for c in &cases {
+    let (method, body) = received
+      .get(c.label)
+      .cloned()
+      .unwrap_or_else(|| (String::new(), Vec::new()));
+    check(
+      &format!(
+        "{} {} body reaches the scheme handler intact ({} bytes sent, {} received, method {:?})",
+        c.method,
+        c.label,
+        c.body.len(),
+        body.len(),
+        method
+      ),
+      received.contains_key(c.label) && method == c.method && body == c.body,
+    );
+    let (same, len, detail) = reports.get(c.label).cloned().unwrap_or((
+      false,
+      -1,
+      "no report".to_string(),
+    ));
+    check(
+      &format!(
+        "{} echo is byte-identical in the page ({len} bytes, {detail})",
+        c.label
+      ),
+      same && len == c.body.len() as i64,
+    );
+  }
+  for (label, what) in body_echo::MIME_CHECKS {
+    let (ok, _, detail) = reports.get(*label).cloned().unwrap_or((
+      false,
+      -1,
+      "no report".to_string(),
+    ));
+    check(&format!("custom scheme: {what} ({detail})"), ok);
+  }
+  Some(win)
+}
+
 fn e2e_main() {
   let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
   rt.block_on(async move {
     // Pump the laufey event loop (JS-call dispatch, timers).
     tokio::spawn(async { laufey::run().await });
+
+    // ---- custom scheme (app://) -----------------------------------------
+    // Registered before the first window. Serves the request-body round trip
+    // (body_echo.rs); anything else is a 404.
+    let body_received: body_echo::Received =
+      Arc::new(Mutex::new(HashMap::new()));
+    laufey::register_scheme_handler("app", {
+      let received = body_received.clone();
+      move |req: SchemeRequest| {
+        if let Some(req) = body_echo::serve(req, &received) {
+          let headers =
+            vec![("content-type".to_string(), "text/plain".to_string())];
+          req.exchange.begin(404, &headers);
+          req.exchange.write(b"not found");
+          req.exchange.finish();
+        }
+      }
+    });
+
+    // LAUFEY_E2E_ONLY=scheme-body runs just the request-body round trip.
+    // Used where the full battery can't run (webview/linux in CI).
+    if std::env::var("LAUFEY_E2E_ONLY").as_deref() == Ok("scheme-body") {
+      let body_win = body_round_trip(&body_received).await;
+      let _ = &body_win;
+      finish();
+    }
 
     // ---- window creation + event-callback wiring -------------------------
     // Resize / move / focus handlers record the last event so we can drive the
@@ -443,6 +583,9 @@ fn e2e_main() {
       }
     }
 
+    // ---- request body over the custom scheme -----------------------------
+    let body_win = body_round_trip(&body_received).await;
+
     // ---- close-requested handler round-trip --------------------------------
     // A second window (kept separate from `win`, which must survive to
     // shutdown). Registers an on_close_requested handler that *stashes* the
@@ -538,14 +681,19 @@ fn e2e_main() {
     // down on the backend's main thread can crash or race and clobber the exit
     // code (e.g. SIGTRAP -> 133), which would corrupt the CI signal. The OS
     // reclaims everything on exit. `_ = &win;` keeps the window alive to here.
-    let _ = &win;
-    let failed = FAILED.load(Ordering::SeqCst);
-    eprintln!("[e2e] OVERALL {}", if failed { "FAIL" } else { "PASS" });
-    let _ = std::io::Write::flush(&mut std::io::stderr());
-    // _exit avoids running C++ static destructors / atexit handlers in the
-    // backend, which is where the teardown crash lives.
-    unsafe { libc_exit(if failed { 1 } else { 0 }) };
+    let _ = (&win, &body_win);
+    finish();
   });
+}
+
+/// Report the overall result and exit immediately (see "shutdown" above).
+fn finish() -> ! {
+  let failed = FAILED.load(Ordering::SeqCst);
+  eprintln!("[e2e] OVERALL {}", if failed { "FAIL" } else { "PASS" });
+  let _ = std::io::Write::flush(&mut std::io::stderr());
+  // _exit avoids running C++ static destructors / atexit handlers in the
+  // backend, which is where the teardown crash lives.
+  unsafe { libc_exit(if failed { 1 } else { 0 }) };
 }
 
 extern "C" {

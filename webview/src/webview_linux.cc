@@ -14,7 +14,9 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cstring>
 
 #include <iostream>
 #include <map>
@@ -1564,10 +1566,16 @@ namespace {
 // a pipe: a GInputStream over the read end is handed to WebKit (on the GTK main
 // thread), and the runtime writes the body to the write end. WebKit reads the
 // stream as bytes arrive; closing the write end signals EOF.
+//
+// The request body is buffered before the exchange is created (see
+// OnAppSchemeRequest), so ReadRequestBody is a non-blocking copy, as on the
+// other backends.
 class LinuxSchemeExchange : public SchemeExchangeBase {
  public:
-  explicit LinuxSchemeExchange(WebKitURISchemeRequest* request)
-      : request_(WEBKIT_URI_SCHEME_REQUEST(g_object_ref(request))) {}
+  LinuxSchemeExchange(WebKitURISchemeRequest* request,
+                      std::vector<uint8_t> request_body)
+      : request_(WEBKIT_URI_SCHEME_REQUEST(g_object_ref(request))),
+        request_body_(std::move(request_body)) {}
 
   ~LinuxSchemeExchange() override {
     if (write_fd_ >= 0)
@@ -1576,9 +1584,16 @@ class LinuxSchemeExchange : public SchemeExchangeBase {
       g_object_unref(request_);
   }
 
-  // WebKitURISchemeRequest does not expose the request body.
-  intptr_t ReadRequestBody(uint8_t*, size_t) override {
-    return 0;
+  intptr_t ReadRequestBody(uint8_t* buf, size_t cap) override {
+    if (cap == 0)
+      return 0;
+    size_t remaining = request_body_.size() - req_cursor_;
+    if (remaining == 0)
+      return 0;
+    size_t n = std::min(cap, remaining);
+    memcpy(buf, request_body_.data() + req_cursor_, n);
+    req_cursor_ += n;
+    return static_cast<intptr_t>(n);
   }
 
   void Begin(int status, const char* headers, size_t headers_len) override {
@@ -1639,6 +1654,14 @@ class LinuxSchemeExchange : public SchemeExchangeBase {
         soup_message_headers_new(SOUP_MESSAGE_HEADERS_RESPONSE);
     for (const auto& [k, v] : d->headers) {
       soup_message_headers_append(hdrs, k.c_str(), v.c_str());
+      // WebKit takes the response's MIME type from the content type set on
+      // the WebKitURISchemeResponse, not from the HTTP header list. Without
+      // it the type is empty, the default response policy treats the
+      // navigation as a download, and the load fails with "Frame load
+      // interrupted" — so mirror the Content-Type header into it.
+      if (g_ascii_strcasecmp(k.c_str(), "content-type") == 0) {
+        webkit_uri_scheme_response_set_content_type(resp, v.c_str());
+      }
     }
     // set_http_headers takes ownership of `hdrs`.
     webkit_uri_scheme_response_set_http_headers(resp, hdrs);
@@ -1651,11 +1674,129 @@ class LinuxSchemeExchange : public SchemeExchangeBase {
   }
 
   WebKitURISchemeRequest* request_;
+  std::vector<uint8_t> request_body_;
+  size_t req_cursor_ = 0;
   int read_fd_ = -1;
   int write_fd_ = -1;
   std::atomic<bool> failed_{false};
 };
 
+// A scheme request whose body is still being read (see OnAppSchemeRequest).
+struct PendingSchemeRequest {
+  WebKitURISchemeRequest* request;  // owned reference
+  std::string method;
+  std::string uri;
+  std::string flat_headers;
+  std::vector<uint8_t> body;
+};
+
+// Hand a request (with its complete body) to the runtime. Takes `pending`.
+void DispatchPendingSchemeRequest(PendingSchemeRequest* pending) {
+  // window_id is unused by the desktop bridge (it serves a single named
+  // channel), so 0 is fine.
+  auto* exchange =
+      new LinuxSchemeExchange(pending->request, std::move(pending->body));
+  RuntimeLoader::GetInstance()->DispatchSchemeRequest(
+      0, exchange, pending->method, pending->uri, pending->flat_headers);
+  g_object_unref(pending->request);
+  delete pending;
+}
+
+#if WEBKIT_CHECK_VERSION(2, 40, 0)
+// Bytes requested per asynchronous read of a request body.
+constexpr gsize kSchemeBodyChunk = 256 * 1024;
+
+// The most request body bytes buffered for one custom-scheme request. The
+// body is read whole before the handler runs, so without a cap a page could
+// make the host hold any amount of memory; past it the request fails without
+// reaching the runtime.
+constexpr size_t kMaxSchemeRequestBodyBytes = 512u * 1024 * 1024;
+
+// Whether a body already holding `held` bytes may take `more` without passing
+// kMaxSchemeRequestBodyBytes (and without overflowing).
+bool SchemeRequestBodyFits(size_t held, size_t more) {
+  return held <= kMaxSchemeRequestBodyBytes &&
+         more <= kMaxSchemeRequestBodyBytes - held;
+}
+
+void ReadSchemeRequestBodyChunk(GInputStream* body,
+                                PendingSchemeRequest* pending);
+
+// Completion of one body read, on the GTK main thread: append the chunk and
+// read on, dispatch at end of stream, or fail the request on a read error
+// (forwarding a truncated body would be worse than failing the fetch).
+void OnSchemeRequestBodyChunk(GObject* source, GAsyncResult* result,
+                              gpointer data) {
+  GInputStream* body = G_INPUT_STREAM(source);
+  auto* pending = static_cast<PendingSchemeRequest*>(data);
+  GError* error = nullptr;
+  GBytes* chunk = g_input_stream_read_bytes_finish(body, result, &error);
+  if (!chunk) {
+    std::cerr << "laufey: failed to read the request body of "
+              << pending->method << " " << pending->uri << ": "
+              << (error ? error->message : "unknown error") << std::endl;
+    if (error) {
+      webkit_uri_scheme_request_finish_error(pending->request, error);
+      g_error_free(error);
+    } else {
+      GError* fallback = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED,
+                                             "failed to read the request body");
+      webkit_uri_scheme_request_finish_error(pending->request, fallback);
+      g_error_free(fallback);
+    }
+    g_object_unref(pending->request);
+    delete pending;
+    g_object_unref(body);
+    return;
+  }
+  gsize size = 0;
+  const auto* bytes =
+      static_cast<const uint8_t*>(g_bytes_get_data(chunk, &size));
+  if (size == 0) {
+    // End of stream.
+    g_bytes_unref(chunk);
+    g_object_unref(body);
+    DispatchPendingSchemeRequest(pending);
+    return;
+  }
+  if (!SchemeRequestBodyFits(pending->body.size(), size)) {
+    // Past the cap the request fails (the page's fetch rejects) without
+    // reaching the runtime, rather than the whole body being held.
+    std::cerr << "laufey: the request body of " << pending->method << " "
+              << pending->uri << " is larger than "
+              << (kMaxSchemeRequestBodyBytes >> 20)
+              << " MiB; failing the request" << std::endl;
+    GError* too_large =
+        g_error_new_literal(G_IO_ERROR, G_IO_ERROR_MESSAGE_TOO_LARGE,
+                            "the request body is too large");
+    webkit_uri_scheme_request_finish_error(pending->request, too_large);
+    g_error_free(too_large);
+    g_bytes_unref(chunk);
+    g_object_unref(pending->request);
+    delete pending;
+    g_object_unref(body);
+    return;
+  }
+  pending->body.insert(pending->body.end(), bytes, bytes + size);
+  g_bytes_unref(chunk);
+  ReadSchemeRequestBodyChunk(body, pending);
+}
+
+void ReadSchemeRequestBodyChunk(GInputStream* body,
+                                PendingSchemeRequest* pending) {
+  g_input_stream_read_bytes_async(body, kSchemeBodyChunk, G_PRIORITY_DEFAULT,
+                                  nullptr, OnSchemeRequestBodyChunk, pending);
+}
+#endif  // WEBKIT_CHECK_VERSION(2, 40, 0)
+
+// Runs on the GTK main thread. The request body (POST/PUT/PATCH from the page)
+// is exposed by WebKitGTK >= 2.40 as a GInputStream; it is read to the end
+// with asynchronous reads — never blocking the main loop — and the request is
+// dispatched to the runtime once it is complete, so ReadRequestBody is a plain
+// copy (the WKWebView, WebView2 and CEF backends buffer the body up front
+// too). A request without a body (NULL stream) is dispatched at once. Built
+// against WebKitGTK < 2.40, which has no body accessor, every request is
+// forwarded with an empty body.
 void OnAppSchemeRequest(WebKitURISchemeRequest* request, gpointer) {
   const char* uri = webkit_uri_scheme_request_get_uri(request);
   const char* method = webkit_uri_scheme_request_get_http_method(request);
@@ -1671,12 +1812,19 @@ void OnAppSchemeRequest(WebKitURISchemeRequest* request, gpointer) {
       headers.emplace_back(name, value);
     }
   }
-  std::string flat = LaufeyFlattenHeaders(headers);
-  // window_id is unused by the desktop bridge (it serves a single named
-  // channel), so 0 is fine.
-  auto* exchange = new LinuxSchemeExchange(request);
-  RuntimeLoader::GetInstance()->DispatchSchemeRequest(
-      0, exchange, method ? method : "GET", uri ? uri : "", flat);
+  auto* pending = new PendingSchemeRequest;
+  pending->request = WEBKIT_URI_SCHEME_REQUEST(g_object_ref(request));
+  pending->method = method ? method : "GET";
+  pending->uri = uri ? uri : "";
+  pending->flat_headers = LaufeyFlattenHeaders(headers);
+#if WEBKIT_CHECK_VERSION(2, 40, 0)
+  // (transfer full), NULL when the request has no body.
+  if (GInputStream* body = webkit_uri_scheme_request_get_http_body(request)) {
+    ReadSchemeRequestBodyChunk(body, pending);
+    return;
+  }
+#endif
+  DispatchPendingSchemeRequest(pending);
 }
 
 }  // namespace
