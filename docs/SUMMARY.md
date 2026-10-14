@@ -10,6 +10,7 @@
 - [JavaScript interop](javascript-interop.md)
 - [Menus](menus.md)
 - [Native dialogs](dialogs.md)
+- [Downloads](downloads.md)
 - [Input events](input-events.md)
 - [Window events](window-events.md)
 - [Window handles](window-handles.md)

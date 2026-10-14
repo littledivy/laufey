@@ -572,8 +572,47 @@ class MacSchemeExchange : public SchemeExchangeBase {
 
 @end
 
+// Downloads. WKWebView only writes a download when the navigation is turned
+// into one and the host picks a destination, so a page-triggered download (an
+// `<a download>` click, a `Content-Disposition: attachment` response, a blob
+// export) is inert without the delegate methods below. The save panel decides
+// where the bytes go; dismissing it cancels the download. A single instance
+// serves every download of its window (callbacks carry the WKDownload).
+API_AVAILABLE(macos(11.3))
+@interface LaufeyDownloadDelegate : NSObject <WKDownloadDelegate>
+@end
+
+@implementation LaufeyDownloadDelegate
+
+- (void)download:(WKDownload*)download
+    decideDestinationUsingResponse:(NSURLResponse*)response
+                 suggestedFilename:(NSString*)suggestedFilename
+                 completionHandler:
+                     (void (^)(NSURL* _Nullable))completionHandler {
+  NSSavePanel* panel = [NSSavePanel savePanel];
+  panel.nameFieldStringValue = suggestedFilename ?: @"download";
+
+  NSWindow* window = download.webView.window;
+  if (window) {
+    [panel beginSheetModalForWindow:window
+                  completionHandler:^(NSModalResponse response) {
+                    completionHandler(response == NSModalResponseOK ? panel.URL
+                                                                    : nil);
+                  }];
+  } else {
+    NSModalResponse response = [panel runModal];
+    completionHandler(response == NSModalResponseOK ? panel.URL : nil);
+  }
+}
+
+@end
+
 @interface LaufeyNavigationDelegate : NSObject <WKNavigationDelegate>
 @property(nonatomic, assign) uint32_t windowId;
+// LaufeyDownloadDelegate* (macOS 11.3+) — the weak WKDownload.delegate needs
+// an owner that outlives the download, and this delegate is retained by the
+// window's state.
+@property(nonatomic, strong) id downloadDelegate;
 @end
 
 @implementation LaufeyNavigationDelegate
@@ -583,6 +622,55 @@ class MacSchemeExchange : public SchemeExchangeBase {
 - (void)webView:(WKWebView*)webView
     didFinishNavigation:(WKNavigation*)navigation {
   RuntimeLoader::GetInstance()->DispatchPageLoadEvent(self.windowId);
+}
+
+// Downloads are opt-in: the navigation has to be turned into one here or the
+// engine cancels it. `shouldPerformDownload` is set for `<a download>` clicks;
+// a response whose type can't be displayed (an attachment) is the other entry
+// point. Everything else keeps the default allow path untouched.
+- (void)webView:(WKWebView*)webView
+    decidePolicyForNavigationAction:(WKNavigationAction*)navigationAction
+                    decisionHandler:
+                        (void (^)(WKNavigationActionPolicy))decisionHandler {
+  WKNavigationActionPolicy policy = WKNavigationActionPolicyAllow;
+  if (@available(macOS 11.3, *)) {
+    if (navigationAction.shouldPerformDownload) {
+      policy = WKNavigationActionPolicyDownload;
+    }
+  }
+  decisionHandler(policy);
+}
+
+- (void)webView:(WKWebView*)webView
+    decidePolicyForNavigationResponse:(WKNavigationResponse*)navigationResponse
+                      decisionHandler:(void (^)(WKNavigationResponsePolicy))
+                                          decisionHandler {
+  WKNavigationResponsePolicy policy = WKNavigationResponsePolicyAllow;
+  if (@available(macOS 11.3, *)) {
+    if (!navigationResponse.canShowMIMEType) {
+      policy = WKNavigationResponsePolicyDownload;
+    }
+  }
+  decisionHandler(policy);
+}
+
+- (void)adoptDownload:(WKDownload*)download API_AVAILABLE(macos(11.3)) {
+  if (!self.downloadDelegate) {
+    self.downloadDelegate = [[LaufeyDownloadDelegate alloc] init];
+  }
+  download.delegate = (id<WKDownloadDelegate>)self.downloadDelegate;
+}
+
+- (void)webView:(WKWebView*)webView
+     navigationAction:(WKNavigationAction*)navigationAction
+    didBecomeDownload:(WKDownload*)download API_AVAILABLE(macos(11.3)) {
+  [self adoptDownload:download];
+}
+
+- (void)webView:(WKWebView*)webView
+    navigationResponse:(WKNavigationResponse*)navigationResponse
+     didBecomeDownload:(WKDownload*)download API_AVAILABLE(macos(11.3)) {
+  [self adoptDownload:download];
 }
 
 @end

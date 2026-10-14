@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #include <wincodec.h>
 #include <wrl.h>
 
@@ -18,6 +19,7 @@
 #undef CreateWindow
 
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "windowscodecs.lib")
 
 // WebView2 headers
@@ -282,6 +284,51 @@ HRESULT HandleAppResourceRequested(
 }
 
 }  // namespace
+
+// ============================================================================
+// Downloads
+// ============================================================================
+
+// Show the OS save dialog seeded with `suggested_name` and return the chosen
+// path (empty when the user cancels). MUST run on the UI thread: it is called
+// from the WebView2 DownloadStarting callback, which is delivered there.
+static std::wstring ShowSaveDialog(HWND parent,
+                                   const std::wstring& suggested_name) {
+  ComPtr<IFileSaveDialog> dialog;
+  HRESULT hr =
+      CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER,
+                       __uuidof(IFileSaveDialog),
+                       reinterpret_cast<void**>(dialog.GetAddressOf()));
+  if (FAILED(hr) || !dialog) {
+    return std::wstring();
+  }
+
+  DWORD options = 0;
+  dialog->GetOptions(&options);
+  dialog->SetOptions(options | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM |
+                     FOS_NOREADONLYRETURN);
+  if (!suggested_name.empty()) {
+    dialog->SetFileName(suggested_name.c_str());
+  }
+
+  // Cancel returns HRESULT_FROM_WIN32(ERROR_CANCELLED), so a failed Show is
+  // just a cancelled dialog here.
+  if (FAILED(dialog->Show(parent))) {
+    return std::wstring();
+  }
+
+  ComPtr<IShellItem> item;
+  if (FAILED(dialog->GetResult(&item)) || !item) {
+    return std::wstring();
+  }
+  PWSTR path = nullptr;
+  if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) || !path) {
+    return std::wstring();
+  }
+  std::wstring result(path);
+  CoTaskMemFree(path);
+  return result;
+}
 
 // ============================================================================
 // WebView2 Backend
@@ -998,6 +1045,44 @@ void WebView2Backend::OnEnvironmentReady(uint32_t window_id, HWND hwnd,
                     })
                     .Get(),
                 nullptr);
+
+            // Downloads: WebView2's default handling shows its in-app download
+            // UI; a desktop app is expected to ask for a location with the
+            // OS's own save dialog instead. DownloadStarting (ICoreWebView2_4)
+            // lets us suppress the default UI, seed the dialog with WebView2's
+            // suggested name and hand the chosen path back. Dismissing the
+            // dialog cancels the download. On older WebView2 runtimes the
+            // QueryInterface fails and the default handling stays.
+            ComPtr<ICoreWebView2_4> webview4;
+            if (SUCCEEDED(state->webview.As(&webview4))) {
+              webview4->add_DownloadStarting(
+                  Callback<ICoreWebView2DownloadStartingEventHandler>(
+                      [hwnd](ICoreWebView2* sender,
+                             ICoreWebView2DownloadStartingEventArgs* args)
+                          -> HRESULT {
+                        // ResultFilePath is pre-populated with the suggested
+                        // file name in the default download folder.
+                        LPWSTR defaultPath = nullptr;
+                        args->get_ResultFilePath(&defaultPath);
+                        std::wstring suggested =
+                            defaultPath ? PathFindFileNameW(defaultPath)
+                                        : L"download";
+                        if (defaultPath) {
+                          CoTaskMemFree(defaultPath);
+                        }
+
+                        args->put_Handled(TRUE);
+                        std::wstring path = ShowSaveDialog(hwnd, suggested);
+                        if (path.empty()) {
+                          args->put_Cancel(TRUE);
+                        } else {
+                          args->put_ResultFilePath(path.c_str());
+                        }
+                        return S_OK;
+                      })
+                      .Get(),
+                  nullptr);
+            }
 
             state->webview_ready = true;
 
