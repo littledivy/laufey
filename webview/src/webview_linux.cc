@@ -503,6 +503,56 @@ static gboolean on_window_delete_event(GtkWidget* widget, GdkEvent* event,
   return proceed ? FALSE : TRUE;
 }
 
+// --- Downloads --------------------------------------------------------------
+// A webview has no download UI of its own: when a page triggers one (an
+// `<a download>` click, a `Content-Disposition: attachment` response, a blob
+// export) the host is responsible for deciding where the bytes go. Do what a
+// desktop app is expected to do and ask with the platform's save dialog; the
+// download is cancelled if the dialog is dismissed.
+
+static void on_download_decide_destination(WebKitDownload* download,
+                                           const gchar* suggested_filename,
+                                           gpointer /*user_data*/) {
+  // Like the other GTK dialogs in this repo (ShowDialogLinux, the CEF JS
+  // dialogs), the chooser has no transient parent; gtk_dialog_run makes it
+  // modal regardless.
+  GtkWidget* chooser = gtk_file_chooser_dialog_new(
+      "Save File", nullptr, GTK_FILE_CHOOSER_ACTION_SAVE, "_Cancel",
+      GTK_RESPONSE_CANCEL, "_Save", GTK_RESPONSE_ACCEPT, nullptr);
+  gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser),
+                                                 TRUE);
+  if (suggested_filename && *suggested_filename) {
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser),
+                                      suggested_filename);
+  }
+
+  if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+    gchar* path = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+    if (path) {
+      webkit_download_set_destination(download, path);
+      // The chooser already confirmed an overwrite; WebKit refuses to replace
+      // an existing file unless told otherwise.
+      webkit_download_set_allow_overwrite(download, TRUE);
+      g_free(path);
+    } else {
+      webkit_download_cancel(download);
+    }
+  } else {
+    webkit_download_cancel(download);
+  }
+  gtk_widget_destroy(chooser);
+}
+
+static void on_download_started(WebKitWebContext* /*context*/,
+                                WebKitDownload* download,
+                                gpointer /*user_data*/) {
+  // The destination has to be set from this signal's paired
+  // `decide-destination` (which carries the server's suggested filename) or
+  // the download is cancelled.
+  g_signal_connect(download, "decide-destination",
+                   G_CALLBACK(on_download_decide_destination), nullptr);
+}
+
 WebKitGTKBackend::WebKitGTKBackend() {
   g_gtk_backend = this;
 }
@@ -744,6 +794,16 @@ void WebKitGTKBackend::CreateWindowEx(uint32_t window_id, int width, int height,
     g_signal_connect(webview, "load-changed", G_CALLBACK(on_load_changed),
                      GUINT_TO_POINTER(window_id));
     g_signal_connect(webview, "create", G_CALLBACK(on_create), nullptr);
+
+    // Downloads get the platform save dialog (see on_download_started). The
+    // bridge is installed once per WebKit context; every window shares the
+    // default context, and connecting per window would stack one handler —
+    // and one dialog per download — per window.
+    static std::once_flag download_bridge_once;
+    std::call_once(download_bridge_once, [webview] {
+      g_signal_connect(webkit_web_view_get_context(webview), "download-started",
+                       G_CALLBACK(on_download_started), nullptr);
+    });
 
     WebKitSettings* wk_settings = webkit_web_view_get_settings(webview);
     webkit_settings_set_enable_developer_extras(wk_settings, TRUE);

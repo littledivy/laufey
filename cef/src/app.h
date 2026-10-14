@@ -12,6 +12,7 @@
 
 #include "include/cef_app.h"
 #include "include/cef_client.h"
+#include "include/cef_download_handler.h"
 #include "include/cef_jsdialog_handler.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_window.h"
@@ -122,6 +123,7 @@ class LaufeyHandler : public CefClient,
                       public CefDisplayHandler,
                       public CefKeyboardHandler,
                       public CefDragHandler,
+                      public CefDownloadHandler,
                       public CefJSDialogHandler {
  public:
   LaufeyHandler();
@@ -142,6 +144,9 @@ class LaufeyHandler : public CefClient,
     return this;
   }
   CefRefPtr<CefDragHandler> GetDragHandler() override {
+    return this;
+  }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override {
     return this;
   }
 
@@ -169,6 +174,14 @@ class LaufeyHandler : public CefClient,
 
   void OnTitleChange(CefRefPtr<CefBrowser> browser,
                      const CefString& title) override;
+
+  // Page-triggered downloads (`<a download>`, `Content-Disposition:
+  // attachment`, blob exports) show CEF's native "Save As" dialog, so the user
+  // picks the location; dismissing it cancels the download.
+  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefDownloadItem> download_item,
+                        const CefString& suggested_name,
+                        CefRefPtr<CefBeforeDownloadCallback> callback) override;
 
   bool OnKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event,
                   CefEventHandle os_event) override;

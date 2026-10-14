@@ -240,6 +240,19 @@ void LaufeyHandler::OnTitleChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
+bool LaufeyHandler::OnBeforeDownload(
+    CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> download_item,
+    const CefString& suggested_name,
+    CefRefPtr<CefBeforeDownloadCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  // A webview has no download UI of its own; without a handler CEF cancels
+  // page-triggered downloads outright. Show CEF's native "Save As" dialog so
+  // the user picks the location, seeded with the server's suggested name;
+  // dismissing it cancels the download.
+  callback->Continue(suggested_name, /*show_dialog=*/true);
+  return true;
+}
+
 void LaufeyHandler::OnDraggableRegionsChanged(
     CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
     const std::vector<CefDraggableRegion>& regions) {
